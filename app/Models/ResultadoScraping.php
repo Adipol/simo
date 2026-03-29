@@ -13,13 +13,14 @@ class ResultadoScraping extends Model
     protected $fillable = [
         'url', 'keyword', 'sitio_id', 'pais', 'categoria', 'titulo', 'contexto',
         'fecha_encontrado', 'relevance_score', 'found_in_title',
-        'leido', 'relevante', 'notas',
+        'leido', 'relevante', 'descartado', 'notas',
     ];
 
     protected $casts = [
         'found_in_title' => 'boolean',
-        'leido' => 'boolean',
-        'relevante' => 'boolean',
+        'leido'          => 'boolean',
+        'relevante'      => 'boolean',
+        'descartado'     => 'boolean',
         'fecha_encontrado' => 'datetime',
         'relevance_score' => 'integer',
     ];

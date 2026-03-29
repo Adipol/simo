@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Fuente extends Model
@@ -21,6 +22,11 @@ class Fuente extends Model
         'ultimo_check' => 'datetime',
         'created_at' => 'datetime',
     ];
+
+    public function paisRelacion(): BelongsTo
+    {
+        return $this->belongsTo(Pais::class, 'pais', 'codigo');
+    }
 
     public function snapshots(): HasMany
     {

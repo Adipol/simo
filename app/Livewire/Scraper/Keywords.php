@@ -22,6 +22,9 @@ class Keywords extends Component
     public string $categoria = '';
     public bool $activo = true;
 
+    public function updatingBusqueda(): void   { $this->resetPage(); }
+    public function updatingFiltroActivo(): void { $this->resetPage(); }
+
     protected function rules(): array
     {
         $unique = $this->editandoId

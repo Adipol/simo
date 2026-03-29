@@ -1,11 +1,104 @@
-@import 'tailwindcss';
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap');
 
-@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
-@source '../../storage/framework/views/*.php';
-@source '../**/*.blade.php';
-@source '../**/*.js';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-@theme {
-    --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
-        'Segoe UI Symbol', 'Noto Color Emoji';
+@layer base {
+    body {
+        font-family: 'Inter', system-ui, sans-serif;
+        /* zinc-100: suficiente contraste con cards blancas sin ser gris agresivo */
+        background-color: #f4f4f5;
+        color: #18181b;
+        -webkit-font-smoothing: antialiased;
+    }
+}
+
+@layer components {
+
+    /* ── Sidebar ── */
+    .sidebar-link {
+        @apply flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all
+               text-white/50 hover:text-white hover:bg-white/10;
+    }
+    .sidebar-link-active {
+        @apply text-white bg-white/10 font-medium;
+    }
+    .sidebar-icon {
+        @apply w-4 h-4 shrink-0;
+    }
+    .sidebar-section {
+        @apply pt-5 pb-1 px-3 text-[10px] font-semibold uppercase tracking-widest text-white/20;
+    }
+
+    /* ── Cards ──
+       bg-white + border visible: las cards "emergen" del fondo zinc-100
+       sin sombra — tendencia flat/bordered (Linear, Vercel, Raycast)
+    */
+    .simo-card {
+        @apply bg-white rounded-xl border border-zinc-200 p-6;
+    }
+
+    /* ── Badges ──
+       border-transparent por defecto: los colores de bg/text existentes no se rompen.
+       Los badges "neutros" (Inactivo) pasan a border-zinc-200 para tener definición.
+    */
+    .simo-badge {
+        @apply inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border border-transparent;
+    }
+
+    /* ── Buttons ── */
+    .simo-btn {
+        @apply inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-all;
+    }
+    .simo-btn-primary {
+        @apply simo-btn bg-zinc-900 hover:bg-zinc-800 text-white border border-zinc-900;
+    }
+    .simo-btn-ghost {
+        @apply simo-btn bg-transparent hover:bg-zinc-100 text-zinc-600 hover:text-zinc-900 border border-zinc-200;
+    }
+    .simo-btn-danger {
+        @apply simo-btn bg-transparent hover:bg-red-50 text-zinc-400 hover:text-red-600 border border-transparent hover:border-red-200;
+    }
+
+    /* ── Inputs ── */
+    .simo-input {
+        @apply w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm bg-white
+               text-zinc-900 placeholder-zinc-400
+               focus:outline-none focus:ring-2 focus:ring-zinc-900/10
+               focus:border-zinc-400 transition;
+    }
+    .simo-select {
+        @apply border border-zinc-200 rounded-lg px-3 py-2 text-sm bg-white
+               text-zinc-900
+               focus:outline-none focus:ring-2 focus:ring-zinc-900/10
+               focus:border-zinc-400 transition;
+    }
+
+    /* ── Tables ──
+       th: fondo zinc-50 para separarlo del cuerpo
+       td: padding generoso, texto zinc-700
+       tr pares: fondo zinc-50/70 — zebra sutil para leer filas horizontalmente
+    */
+    .simo-table {
+        @apply w-full;
+    }
+    .simo-table thead {
+        @apply border-b border-zinc-200;
+    }
+    .simo-table th {
+        @apply px-5 py-3 text-left text-[11px] font-semibold text-zinc-400 uppercase tracking-wider bg-zinc-50;
+    }
+    .simo-table td {
+        @apply px-5 py-3.5 text-sm text-zinc-700;
+    }
+    .simo-table tbody tr {
+        @apply border-b border-zinc-100 transition-colors;
+    }
+    .simo-table tbody tr:nth-child(even) {
+        @apply bg-zinc-50/60;
+    }
+    .simo-table tbody tr:hover {
+        @apply bg-zinc-100/70;
+    }
 }

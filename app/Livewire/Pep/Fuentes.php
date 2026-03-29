@@ -3,7 +3,9 @@
 namespace App\Livewire\Pep;
 
 use App\Models\Fuente;
+use App\Models\Pais;
 use Livewire\Component;
+use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\WithPagination;
 
@@ -15,6 +17,7 @@ class Fuentes extends Component
     public string $busqueda = '';
     public string $filtroNivel = '';
     public string $filtroActivo = '';
+    public string $filtroPais = '';
 
     // Formulario
     public bool $modalAbierto = false;
@@ -28,6 +31,11 @@ class Fuentes extends Component
     public bool $activo = true;
     public string $selector_css = '';
 
+    public function updatingBusqueda(): void    { $this->resetPage(); }
+    public function updatingFiltroNivel(): void  { $this->resetPage(); }
+    public function updatingFiltroActivo(): void { $this->resetPage(); }
+    public function updatingFiltroPais(): void   { $this->resetPage(); }
+
     protected function rules(): array
     {
         $unique = $this->editandoId
@@ -37,7 +45,7 @@ class Fuentes extends Component
         return [
             'url'         => ['required', 'url', 'max:500', $unique],
             'nombre'      => ['nullable', 'string', 'max:300'],
-            'pais'        => ['nullable', 'string', 'max:100'],
+            'pais'        => ['nullable', 'string', 'size:2', 'exists:paises,codigo'],
             'organismo'   => ['nullable', 'string', 'max:300'],
             'nivel'       => ['required', 'in:nacional,regional,municipal,judicial,legislativo,otro'],
             'tipo'        => ['required', 'in:html,pdf,js'],
@@ -108,9 +116,16 @@ class Fuentes extends Component
         }
         if ($this->filtroNivel)  $q->where('nivel', $this->filtroNivel);
         if ($this->filtroActivo !== '') $q->where('activo', (bool)$this->filtroActivo);
+        if ($this->filtroPais)   $q->where('pais', $this->filtroPais);
 
-        $fuentes = $q->orderBy('nombre')->paginate(20);
+        $fuentes = $q->with('paisRelacion')->orderBy('nombre')->paginate(20);
 
-        return view('livewire.pep.fuentes', compact('fuentes'));
+        return view('livewire.pep.fuentes', ['fuentes' => $fuentes, 'paises' => $this->paises]);
+    }
+
+    #[Computed]
+    public function paises()
+    {
+        return Pais::where('activo', true)->orderBy('nombre')->get();
     }
 }

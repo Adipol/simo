@@ -2,7 +2,9 @@
 
 namespace App\Livewire\Scripts;
 
+use App\Models\ConfigScript;
 use App\Models\LogScript;
+use App\Models\SitioWeb;
 use Livewire\Component;
 use Livewire\Attributes\Layout;
 use Livewire\WithPagination;
@@ -26,12 +28,21 @@ class Estado extends Component
 
         $logs = $q->paginate(30);
 
+        $scraperEjecutando = LogScript::estaEjecutando('scraper');
+        $scraperConfig     = ConfigScript::where('script', 'scraper')->first();
+
+        // Timestamp Unix del inicio del ciclo actual (para contador JS en tiempo real)
+        $scraperInicioTs      = ($scraperEjecutando && $scraperUltimo) ? $scraperUltimo->inicio->timestamp : null;
+        $scraperTimeoutSeg    = $scraperConfig ? $scraperConfig->timeout_minutos * 60 : null;
+
         return view('livewire.scripts.estado', [
-            'scraperUltimo'      => $scraperUltimo,
-            'pepUltimo'          => $pepUltimo,
-            'scraperEjecutando'  => LogScript::estaEjecutando('scraper'),
-            'pepEjecutando'      => LogScript::estaEjecutando('pep_monitor'),
-            'logs'               => $logs,
+            'scraperUltimo'           => $scraperUltimo,
+            'pepUltimo'               => $pepUltimo,
+            'scraperEjecutando'       => $scraperEjecutando,
+            'pepEjecutando'           => LogScript::estaEjecutando('pep_monitor'),
+            'scraperInicioTs'         => $scraperInicioTs,
+            'scraperTimeoutSeg'       => $scraperTimeoutSeg,
+            'logs'                    => $logs,
         ]);
     }
 }

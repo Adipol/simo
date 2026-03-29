@@ -5,7 +5,6 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class SitioWeb extends Model
 {
@@ -32,8 +31,5 @@ class SitioWeb extends Model
         return $this->hasMany(ResultadoScraping::class, 'sitio_id');
     }
 
-    public function palabrasClave(): BelongsToMany
-    {
-        return $this->belongsToMany(PalabraClave::class, 'keyword_paises', 'sitio_id', 'keyword_id');
-    }
+
 }

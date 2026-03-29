@@ -5,6 +5,7 @@ namespace App\Livewire\Scraper;
 use App\Models\Pais;
 use App\Models\SitioWeb;
 use Livewire\Component;
+use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\WithPagination;
 
@@ -22,10 +23,14 @@ class Sitios extends Component
     public ?int $editandoId = null;
     public string $url = '';
     public string $nombre = '';
-    public string $pais = 'BO';
+    public string $pais = '';
     public string $selector_links = '';
     public string $selector_article = '';
     public bool $activo = true;
+
+    public function updatingBusqueda(): void    { $this->resetPage(); }
+    public function updatingFiltroPais(): void   { $this->resetPage(); }
+    public function updatingFiltroActivo(): void { $this->resetPage(); }
 
     protected function rules(): array
     {
@@ -57,8 +62,7 @@ class Sitios extends Component
             $this->selector_article = $s->selector_article ?? '';
             $this->activo           = $s->activo;
         } else {
-            $this->url = $this->nombre = $this->selector_links = $this->selector_article = '';
-            $this->pais = 'BO';
+            $this->url = $this->nombre = $this->pais = $this->selector_links = $this->selector_article = '';
             $this->activo = true;
         }
 
@@ -81,14 +85,21 @@ class Sitios extends Component
             SitioWeb::create($data);
         }
 
+        $mensaje = $this->editandoId ? 'Sitio actualizado.' : 'Sitio creado.';
         $this->cerrarModal();
-        $this->dispatch('guardado');
+        $this->dispatch('notify', mensaje: $mensaje);
     }
 
     public function toggleActivo(int $id): void
     {
         $sitio = SitioWeb::findOrFail($id);
         $sitio->update(['activo' => !$sitio->activo]);
+    }
+
+    #[Computed]
+    public function paises()
+    {
+        return Pais::orderBy('nombre')->get();
     }
 
     public function render()
@@ -103,8 +114,7 @@ class Sitios extends Component
         if ($this->filtroActivo !== '') $q->where('activo', (bool)$this->filtroActivo);
 
         $sitios = $q->orderBy('nombre')->paginate(20);
-        $paises = Pais::orderBy('nombre')->get();
 
-        return view('livewire.scraper.sitios', compact('sitios', 'paises'));
+        return view('livewire.scraper.sitios', ['sitios' => $sitios, 'paises' => $this->paises]);
     }
 }

@@ -21,6 +21,11 @@ class Dashboard extends Component
         return view('livewire.dashboard', [
             'totalResultados'      => ResultadoScraping::count(),
             'resultadosHoy'        => ResultadoScraping::whereDate('fecha_encontrado', today())->count(),
+            'resultadosHoyPorCat'  => ResultadoScraping::whereDate('fecha_encontrado', today())
+                                        ->selectRaw('categoria, COUNT(*) as total')
+                                        ->groupBy('categoria')
+                                        ->orderByRaw("FIELD(categoria,'PEP','OPI'), categoria")
+                                        ->pluck('total', 'categoria'),
             'resultadosSinLeer'    => ResultadoScraping::where('leido', false)->count(),
             'totalFuentes'         => Fuente::where('activo', true)->count(),
             'cambiosSinRevisar'    => Cambio::where('revisado', false)->count(),

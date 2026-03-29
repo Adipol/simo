@@ -1,91 +1,135 @@
 <div>
-    <div class="flex items-center justify-between mb-4">
-        <h1 class="text-2xl font-bold text-gray-800">Palabras Clave</h1>
-        <button wire:click="abrirModal()"
-                class="bg-blue-600 text-white text-sm px-3 py-1.5 rounded hover:bg-blue-700">
+    {{-- Header --}}
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h1 class="text-xl font-semibold text-gray-900">Palabras Clave</h1>
+            <p class="text-sm text-gray-400 mt-0.5">Keywords para filtrar resultados del scraper</p>
+        </div>
+        @can('gestionar keywords')
+        <button wire:click="abrirModal()" class="simo-btn-primary text-sm px-4 py-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+            </svg>
             Nueva keyword
         </button>
+        @endcan
     </div>
 
     {{-- Filtros --}}
-    <div class="bg-white rounded-lg shadow p-3 mb-4 flex gap-2 flex-wrap">
-        <input wire:model.live.debounce.400ms="busqueda" type="text" placeholder="Buscar keyword o categoria..."
-               class="border rounded px-2 py-1.5 text-sm flex-1" />
-        <select wire:model.live="filtroActivo" class="border rounded px-2 py-1.5 text-sm">
+    <div class="simo-card mb-4 flex gap-2 flex-wrap items-center">
+        <div class="flex-1 min-w-[200px]">
+            <input wire:model.live.debounce.400ms="busqueda" type="text"
+                placeholder="Buscar keyword o categoria..."
+                class="simo-input" />
+        </div>
+        <select wire:model.live="filtroActivo" class="simo-select">
             <option value="">Todas</option>
             <option value="1">Activas</option>
             <option value="0">Inactivas</option>
         </select>
     </div>
 
-    <div class="bg-white rounded-lg shadow overflow-hidden">
-        <table class="min-w-full text-sm">
-            <thead class="bg-gray-50 border-b">
+    {{-- Tabla --}}
+    <div class="simo-card p-0 overflow-hidden">
+        <table class="simo-table min-w-full">
+            <thead>
                 <tr>
-                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Keyword</th>
-                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Categoria</th>
-                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
-                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Acciones</th>
+                    <th>Keyword</th>
+                    <th>Categoria</th>
+                    <th>Estado</th>
+                    @can('gestionar keywords')
+                    <th>Acciones</th>
+                    @endcan
                 </tr>
             </thead>
-            <tbody class="divide-y divide-gray-100">
+            <tbody>
                 @forelse($keywords as $k)
-                    <tr class="hover:bg-gray-50">
-                        <td class="px-3 py-2 font-medium text-gray-800">{{ $k->keyword }}</td>
-                        <td class="px-3 py-2 text-xs text-gray-500">{{ $k->categoria ?? '—' }}</td>
-                        <td class="px-3 py-2">
-                            <span class="text-xs px-2 py-0.5 rounded-full {{ $k->activo ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500' }}">
+                    <tr>
+                        <td class="font-medium text-gray-800">{{ $k->keyword }}</td>
+                        <td>
+                            @if($k->categoria)
+                                <span class="simo-badge bg-indigo-50 text-indigo-600">{{ $k->categoria }}</span>
+                            @else
+                                <span class="text-gray-300">—</span>
+                            @endif
+                        </td>
+                        <td>
+                            <span class="simo-badge {{ $k->activo ? 'bg-green-50 text-green-700' : 'bg-zinc-100 text-zinc-500 border-zinc-200' }}">
+                                <span class="w-1.5 h-1.5 rounded-full {{ $k->activo ? 'bg-green-500' : 'bg-zinc-400' }}"></span>
                                 {{ $k->activo ? 'Activa' : 'Inactiva' }}
                             </span>
                         </td>
-                        <td class="px-3 py-2">
-                            <div class="flex gap-1">
+                        @can('gestionar keywords')
+                        <td>
+                            <div class="flex items-center gap-1">
                                 <button wire:click="abrirModal({{ $k->id }})"
-                                        class="text-xs text-blue-600 hover:underline">Editar</button>
+                                        class="simo-btn-ghost text-xs">
+                                    Editar
+                                </button>
                                 <button wire:click="toggleActivo({{ $k->id }})"
-                                        class="text-xs text-gray-500 hover:underline">
+                                        class="simo-btn-ghost text-xs text-gray-400">
                                     {{ $k->activo ? 'Desactivar' : 'Activar' }}
                                 </button>
                             </div>
                         </td>
+                        @endcan
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="4" class="px-4 py-8 text-center text-gray-400">Sin keywords.</td>
+                        <td colspan="4" class="py-12 text-center text-gray-400">
+                            <svg class="w-8 h-8 mx-auto mb-2 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                                    d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z"/>
+                            </svg>
+                            Sin keywords registradas.
+                        </td>
                     </tr>
                 @endforelse
             </tbody>
         </table>
-        <div class="px-4 py-3 border-t">{{ $keywords->links() }}</div>
+        <div class="px-5 py-3 border-t border-gray-100">{{ $keywords->links() }}</div>
     </div>
 
     {{-- Modal --}}
     @if($modalAbierto)
-    <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50" wire:click.self="cerrarModal">
-        <div class="bg-white rounded-lg shadow-xl w-full max-w-md mx-4 p-6">
-            <h2 class="font-semibold text-lg mb-4">{{ $editandoId ? 'Editar keyword' : 'Nueva keyword' }}</h2>
+    <div class="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+         wire:click.self="cerrarModal">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-md">
+            {{-- Modal header --}}
+            <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                <h2 class="font-semibold text-gray-800">{{ $editandoId ? 'Editar keyword' : 'Nueva keyword' }}</h2>
+                <button wire:click="cerrarModal"
+                    class="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition text-lg leading-none">
+                    &times;
+                </button>
+            </div>
 
-            <div class="space-y-3">
+            {{-- Modal body --}}
+            <div class="px-6 py-5 space-y-4">
                 <div>
-                    <label class="text-xs font-medium text-gray-600">Keyword *</label>
-                    <input wire:model="keyword" type="text" class="w-full border rounded px-2 py-1.5 text-sm mt-0.5" />
-                    @error('keyword') <span class="text-xs text-red-500">{{ $message }}</span> @enderror
+                    <label class="block text-xs font-medium text-gray-600 mb-1">Keyword *</label>
+                    <input wire:model="keyword" type="text"
+                        class="simo-input @error('keyword') border-red-400 @enderror" />
+                    @error('keyword') <p class="text-red-500 text-xs mt-1">{{ $message }}</p> @enderror
                 </div>
                 <div>
-                    <label class="text-xs font-medium text-gray-600">Categoria</label>
-                    <input wire:model="categoria" type="text" class="w-full border rounded px-2 py-1.5 text-sm mt-0.5" />
+                    <label class="block text-xs font-medium text-gray-600 mb-1">Categoria <span class="text-gray-400">(opcional)</span></label>
+                    <input wire:model="categoria" type="text" placeholder="ej: politica, economia"
+                        class="simo-input" />
                 </div>
-                <label class="flex items-center gap-2 text-sm cursor-pointer">
-                    <input wire:model="activo" type="checkbox" class="rounded" />
-                    Activa
+                <label class="flex items-center gap-2 text-sm cursor-pointer select-none">
+                    <input wire:model="activo" type="checkbox"
+                        class="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+                    <span class="text-gray-700">Activa</span>
                 </label>
             </div>
 
-            <div class="flex justify-end gap-2 mt-5">
-                <button wire:click="cerrarModal" class="px-4 py-1.5 text-sm border rounded text-gray-600 hover:bg-gray-50">
+            {{-- Modal footer --}}
+            <div class="flex justify-end gap-2 px-6 py-4 border-t border-gray-100 bg-gray-50/50 rounded-b-2xl">
+                <button wire:click="cerrarModal" class="simo-btn-ghost text-sm px-4 py-2 border border-gray-200">
                     Cancelar
                 </button>
-                <button wire:click="guardar" class="px-4 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700">
+                <button wire:click="guardar" class="simo-btn-primary text-sm px-4 py-2">
                     Guardar
                 </button>
             </div>

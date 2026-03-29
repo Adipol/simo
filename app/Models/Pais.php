@@ -23,4 +23,9 @@ class Pais extends Model
     {
         return $this->hasMany(SitioWeb::class, 'pais', 'codigo');
     }
+
+    public function fuentes(): HasMany
+    {
+        return $this->hasMany(Fuente::class, 'pais', 'codigo');
+    }
 }
