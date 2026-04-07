@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
@@ -8,17 +10,21 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class Cambio extends Model
 {
     protected $table = 'cambios';
+
     public $timestamps = false;
 
     protected $fillable = [
         'fuente_id', 'fecha', 'hash_anterior', 'hash_nuevo',
         'lineas_quitadas', 'lineas_nuevas', 'diff_texto',
         'posibles_peps', 'revisado',
+        'gemini_analyzed', 'gemini_analisis_json',
     ];
 
     protected $casts = [
         'fecha' => 'datetime',
         'revisado' => 'boolean',
+        'gemini_analyzed' => 'boolean',
+        'gemini_analisis_json' => 'array',
     ];
 
     public function fuente(): BelongsTo
@@ -31,7 +37,7 @@ class Cambio extends Model
      */
     public function parsedDiff(): array
     {
-        if (!$this->diff_texto) {
+        if (! $this->diff_texto) {
             return [];
         }
 
@@ -54,9 +60,10 @@ class Cambio extends Model
      */
     public function posiblesPepsArray(): array
     {
-        if (!$this->posibles_peps) {
+        if (! $this->posibles_peps) {
             return [];
         }
+
         return array_filter(explode("\n", $this->posibles_peps));
     }
 }

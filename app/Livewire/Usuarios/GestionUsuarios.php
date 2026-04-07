@@ -3,12 +3,12 @@
 namespace App\Livewire\Usuarios;
 
 use App\Models\User;
-use Livewire\Component;
+use Illuminate\Support\Facades\Hash;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Locked;
+use Livewire\Component;
 use Livewire\WithPagination;
 use Spatie\Permission\Models\Role;
-use Illuminate\Support\Facades\Hash;
 
 #[Layout('layouts.app', ['title' => 'Gestion de Usuarios'])]
 class GestionUsuarios extends Component
@@ -18,18 +18,23 @@ class GestionUsuarios extends Component
     public string $buscar = '';
 
     // Modal
-    public bool   $mostrarModal = false;
-    public bool   $esEdicion    = false;
+    public bool $mostrarModal = false;
+
+    public bool $esEdicion = false;
 
     #[Locked]
-    public ?int   $userId = null;
+    public ?int $userId = null;
 
     // Campos del formulario
-    public string $nombre   = '';
-    public string $email    = '';
+    public string $nombre = '';
+
+    public string $email = '';
+
     public string $password = ''; // Cleared after save; $userId is #[Locked] to prevent tampering
-    public string $rol      = 'operador';
-    public bool   $activo   = true;
+
+    public string $rol = 'operador';
+
+    public bool $activo = true;
 
     public function mount(): void
     {
@@ -39,7 +44,7 @@ class GestionUsuarios extends Component
     public function render()
     {
         $usuarios = User::with('roles')
-            ->when($this->buscar, fn($q) => $q->where('name', 'like', "%{$this->buscar}%")
+            ->when($this->buscar, fn ($q) => $q->where('name', 'like', "%{$this->buscar}%")
                 ->orWhere('email', 'like', "%{$this->buscar}%"))
             ->orderBy('name')
             ->paginate(15);
@@ -48,29 +53,29 @@ class GestionUsuarios extends Component
 
         return view('livewire.usuarios.gestion-usuarios', [
             'usuarios' => $usuarios,
-            'roles'    => $roles,
+            'roles' => $roles,
         ]);
     }
 
     public function abrirCrear(): void
     {
         $this->reset(['userId', 'nombre', 'email', 'password', 'rol', 'activo']);
-        $this->rol        = 'operador';
-        $this->activo     = true;
-        $this->esEdicion  = false;
+        $this->rol = 'operador';
+        $this->activo = true;
+        $this->esEdicion = false;
         $this->mostrarModal = true;
     }
 
     public function abrirEditar(int $id): void
     {
         $user = User::findOrFail($id);
-        $this->userId   = $user->id;
-        $this->nombre   = $user->name;
-        $this->email    = $user->email;
+        $this->userId = $user->id;
+        $this->nombre = $user->name;
+        $this->email = $user->email;
         $this->password = '';
-        $this->rol      = $user->roles->first()?->name ?? 'operador';
-        $this->activo   = (bool) $user->activo;
-        $this->esEdicion  = true;
+        $this->rol = $user->roles->first()?->name ?? 'operador';
+        $this->activo = (bool) $user->activo;
+        $this->esEdicion = true;
         $this->mostrarModal = true;
     }
 
@@ -80,23 +85,23 @@ class GestionUsuarios extends Component
 
         $rules = [
             'nombre' => 'required|string|max:100',
-            'email'  => 'required|email|unique:users,email' . ($this->userId ? ",{$this->userId}" : ''),
-            'rol'    => 'required|exists:roles,name',
+            'email' => 'required|email|unique:users,email'.($this->userId ? ",{$this->userId}" : ''),
+            'rol' => 'required|exists:roles,name',
         ];
 
-        if (!$this->esEdicion) {
+        if (! $this->esEdicion) {
             $rules['password'] = 'required|min:8';
         } elseif ($this->password) {
             $rules['password'] = 'min:8';
         }
 
         $this->validate($rules, [
-            'nombre.required'   => 'El nombre es obligatorio.',
-            'email.required'    => 'El email es obligatorio.',
-            'email.unique'      => 'Este email ya esta en uso.',
+            'nombre.required' => 'El nombre es obligatorio.',
+            'email.required' => 'El email es obligatorio.',
+            'email.unique' => 'Este email ya esta en uso.',
             'password.required' => 'La contrasena es obligatoria para nuevos usuarios.',
-            'password.min'      => 'La contrasena debe tener al menos 8 caracteres.',
-            'rol.exists'        => 'El rol seleccionado no es valido.',
+            'password.min' => 'La contrasena debe tener al menos 8 caracteres.',
+            'rol.exists' => 'El rol seleccionado no es valido.',
         ]);
 
         if ($this->esEdicion) {
@@ -108,10 +113,10 @@ class GestionUsuarios extends Component
             $user->update($data);
         } else {
             $user = User::create([
-                'name'     => $this->nombre,
-                'email'    => $this->email,
+                'name' => $this->nombre,
+                'email' => $this->email,
                 'password' => Hash::make($this->password),
-                'activo'   => $this->activo,
+                'activo' => $this->activo,
             ]);
         }
 
@@ -132,7 +137,7 @@ class GestionUsuarios extends Component
             return;
         }
 
-        $user->update(['activo' => !$user->activo]);
+        $user->update(['activo' => ! $user->activo]);
     }
 
     public function eliminar(int $id): void

@@ -1,0 +1,9 @@
+{
+  "candidates": [{
+    "content": {
+      "parts": [{
+        "text": "{\"persona_removida\":\"Carlos López\",\"persona_nueva\":\"Ana García\",\"cargo\":\"Ministro de Hacienda\",\"es_mae\":true,\"riesgo\":\"alto\",\"analisis\":\"Cambio de MAE en cartera sensible de finanzas públicas\"}"
+      }]
+    }
+  }]
+}

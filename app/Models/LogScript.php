@@ -2,8 +2,8 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\MassPrunable;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 
 class LogScript extends Model
@@ -11,6 +11,7 @@ class LogScript extends Model
     use MassPrunable;
 
     protected $table = 'log_scripts';
+
     public $timestamps = false;
 
     /**
@@ -20,10 +21,10 @@ class LogScript extends Model
     public function prunable(): \Illuminate\Database\Eloquent\Builder
     {
         return static::query()->where(function ($q) {
-            $q->where(fn($s) => $s->where('estado', 'interrumpido')->where('inicio', '<', now()->subDays(7)))
-              ->orWhere(fn($s) => $s->where('estado', 'completado')->where('items_resultado', 0)->where('inicio', '<', now()->subHours(24)))
-              ->orWhere(fn($s) => $s->where('estado', 'error')->where('inicio', '<', now()->subDays(30)))
-              ->orWhere(fn($s) => $s->where('estado', 'completado')->where('items_resultado', '>', 0)->where('inicio', '<', now()->subDays(90)));
+            $q->where(fn ($s) => $s->where('estado', 'interrumpido')->where('inicio', '<', now()->subDays(7)))
+                ->orWhere(fn ($s) => $s->where('estado', 'completado')->where('items_resultado', 0)->where('inicio', '<', now()->subHours(24)))
+                ->orWhere(fn ($s) => $s->where('estado', 'error')->where('inicio', '<', now()->subDays(30)))
+                ->orWhere(fn ($s) => $s->where('estado', 'completado')->where('items_resultado', '>', 0)->where('inicio', '<', now()->subDays(90)));
         });
     }
 
@@ -76,9 +77,9 @@ class LogScript extends Model
             ->whereNull('fin')
             ->where('inicio', '<', now()->subMinutes($timeoutMin))
             ->update([
-                'estado'            => 'interrumpido',
-                'fin'               => now(),
-                'mensaje_error'     => 'Proceso interrumpido: no se registró fin dentro del timeout.',
+                'estado' => 'interrumpido',
+                'fin' => now(),
+                'mensaje_error' => 'Proceso interrumpido: no se registró fin dentro del timeout.',
                 'duracion_segundos' => DB::raw('TIMESTAMPDIFF(SECOND, inicio, NOW())'),
             ]);
     }

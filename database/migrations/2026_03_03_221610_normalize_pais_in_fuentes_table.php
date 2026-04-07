@@ -2,8 +2,8 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -12,18 +12,18 @@ return new class extends Migration
         // 1. Normalizar los valores existentes a código ISO (best-effort)
         DB::table('fuentes')->whereNotNull('pais')->get()->each(function ($f) {
             $codigo = match (strtoupper(trim($f->pais ?? ''))) {
-                'BOLIVIA', 'BO'           => 'BO',
-                'HONDURAS', 'HN'          => 'HN',
-                'PARAGUAY', 'PY'          => 'PY',
-                'NICARAGUA', 'NI'         => 'NI',
-                'GUATEMALA', 'GT'         => 'GT',
-                'EL SALVADOR', 'SV'       => 'SV',
-                'PERU', 'PERÚ', 'PE'      => 'PE',
-                'ARGENTINA', 'AR'         => 'AR',
-                'CHILE', 'CL'             => 'CL',
-                'COLOMBIA', 'CO'          => 'CO',
-                'MEXICO', 'MÉXICO', 'MX'  => 'MX',
-                default                   => null,
+                'BOLIVIA', 'BO' => 'BO',
+                'HONDURAS', 'HN' => 'HN',
+                'PARAGUAY', 'PY' => 'PY',
+                'NICARAGUA', 'NI' => 'NI',
+                'GUATEMALA', 'GT' => 'GT',
+                'EL SALVADOR', 'SV' => 'SV',
+                'PERU', 'PERÚ', 'PE' => 'PE',
+                'ARGENTINA', 'AR' => 'AR',
+                'CHILE', 'CL' => 'CL',
+                'COLOMBIA', 'CO' => 'CO',
+                'MEXICO', 'MÉXICO', 'MX' => 'MX',
+                default => null,
             };
             DB::table('fuentes')->where('id', $f->id)->update(['pais' => $codigo]);
         });

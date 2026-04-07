@@ -85,18 +85,32 @@ class RolesPermisosSeeder extends Seeder
             'ver estado scripts',
         ]);
 
-        // ── Usuario admin por defecto ─────────────────────────────────────
+        // ── Usuarios admin ─────────────────────────────────────
+
+        // Admin local (desarrollo)
         $adminUser = User::firstOrCreate(
             ['email' => 'admin@simo.local'],
             [
-                'name'     => 'Administrador',
+                'name' => 'Administrador',
                 'password' => Hash::make('password'),
-                'activo'   => true,
+                'activo' => true,
             ]
         );
         $adminUser->syncRoles(['admin']);
 
-        $this->command->info('Roles, permisos y usuario admin creados correctamente.');
-        $this->command->info('  Login: admin@simo.local / password');
+        // Admin producción
+        $siriUser = User::firstOrCreate(
+            ['email' => 'siri@email.com'],
+            [
+                'name' => 'Siri Admin',
+                'password' => Hash::make('siri0213'),
+                'activo' => true,
+            ]
+        );
+        $siriUser->syncRoles(['admin']);
+
+        $this->command->info('Roles, permisos y usuarios admin creados correctamente.');
+        $this->command->info('  Login desarrollo: admin@simo.local / password');
+        $this->command->info('  Login producción: siri@email.com / siri0213');
     }
 }

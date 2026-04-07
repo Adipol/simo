@@ -8,9 +8,13 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class Pais extends Model
 {
     protected $table = 'paises';
+
     protected $primaryKey = 'codigo';
+
     protected $keyType = 'string';
+
     public $incrementing = false;
+
     public $timestamps = false;
 
     protected $fillable = ['codigo', 'nombre', 'activo'];

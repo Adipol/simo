@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class Snapshot extends Model
 {
     protected $table = 'snapshots';
+
     public $timestamps = false;
 
     protected $fillable = ['fuente_id', 'hash', 'texto', 'metodo', 'fecha'];

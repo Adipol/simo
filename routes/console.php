@@ -13,3 +13,9 @@ Schedule::command('simo:limpiar-logs')->dailyAt('03:00');
 
 // Poda de modelos con Prunable (LogScript si se activa el trait)
 Schedule::command('model:prune')->dailyAt('03:30');
+
+// Gemini: dispatch jobs para registros pendientes (safety net para Python)
+Schedule::command('simo:analizar-gemini')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->onOneServer();

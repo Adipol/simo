@@ -1,0 +1,9 @@
+{
+  "candidates": [{
+    "content": {
+      "parts": [{
+        "text": "{\"is_pep\":true,\"nombre\":\"Juan Pérez\",\"cargo\":\"Ministro de Economía\",\"categoria\":\"PEP\",\"confianza\":95,\"motivo\":\"Cargo ejecutivo de alto nivel en cartera ministerial\"}"
+      }]
+    }
+  }]
+}

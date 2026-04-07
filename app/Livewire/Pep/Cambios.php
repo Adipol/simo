@@ -4,8 +4,8 @@ namespace App\Livewire\Pep;
 
 use App\Models\Cambio;
 use App\Models\Fuente;
-use Livewire\Component;
 use Livewire\Attributes\Layout;
+use Livewire\Component;
 use Livewire\WithPagination;
 
 #[Layout('layouts.app', ['title' => 'Cambios PEP'])]
@@ -14,11 +14,20 @@ class Cambios extends Component
     use WithPagination;
 
     public string $filtroFuente = '';
+
     public string $filtroRevisado = '';
+
     public ?int $verDiffId = null;
 
-    public function updatingFiltroFuente(): void   { $this->resetPage(); }
-    public function updatingFiltroRevisado(): void  { $this->resetPage(); }
+    public function updatingFiltroFuente(): void
+    {
+        $this->resetPage();
+    }
+
+    public function updatingFiltroRevisado(): void
+    {
+        $this->resetPage();
+    }
 
     public function marcarRevisado(int $id): void
     {
@@ -39,11 +48,15 @@ class Cambios extends Component
     {
         $q = Cambio::with('fuente')->orderBy('fecha', 'desc');
 
-        if ($this->filtroFuente)  $q->where('fuente_id', $this->filtroFuente);
-        if ($this->filtroRevisado !== '') $q->where('revisado', (bool)$this->filtroRevisado);
+        if ($this->filtroFuente) {
+            $q->where('fuente_id', $this->filtroFuente);
+        }
+        if ($this->filtroRevisado !== '') {
+            $q->where('revisado', (bool) $this->filtroRevisado);
+        }
 
-        $cambios  = $q->paginate(20);
-        $fuentes  = Fuente::orderBy('nombre')->get(['id', 'nombre', 'organismo']);
+        $cambios = $q->paginate(20);
+        $fuentes = Fuente::orderBy('nombre')->get(['id', 'nombre', 'organismo']);
 
         $cambioDetalle = $this->verDiffId
             ? Cambio::with('fuente')->find($this->verDiffId)

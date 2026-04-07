@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class ConfigScript extends Model
 {
     protected $table = 'config_scripts';
+
     public $timestamps = false;
 
     protected $fillable = [
@@ -29,10 +30,10 @@ class ConfigScript extends Model
         return static::firstOrCreate(
             ['script' => $script],
             [
-                'habilitado'        => true,
+                'habilitado' => true,
                 'intervalo_minutos' => $script === 'scraper' ? 60 : 300,
-                'timeout_minutos'   => 120,
-                'dias_semana'       => '1,2,3,4,5,6,7',
+                'timeout_minutos' => 120,
+                'dias_semana' => '1,2,3,4,5,6,7',
             ]
         );
     }
@@ -51,9 +52,12 @@ class ConfigScript extends Model
     public function intervaloLabel(): string
     {
         $min = $this->intervalo_minutos;
-        if ($min < 60) return "{$min} minutos";
+        if ($min < 60) {
+            return "{$min} minutos";
+        }
         $h = intdiv($min, 60);
         $m = $min % 60;
+
         return $m > 0 ? "{$h}h {$m}min" : ($h === 1 ? '1 hora' : "{$h} horas");
     }
 }

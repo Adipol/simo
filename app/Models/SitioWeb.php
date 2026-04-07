@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class SitioWeb extends Model
 {
     protected $table = 'sitios_web';
+
     public $timestamps = false;
 
     protected $fillable = [
@@ -30,6 +31,4 @@ class SitioWeb extends Model
     {
         return $this->hasMany(ResultadoScraping::class, 'sitio_id');
     }
-
-
 }

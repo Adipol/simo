@@ -7,7 +7,8 @@ use Illuminate\Console\Command;
 
 class LimpiarLogs extends Command
 {
-    protected $signature   = 'simo:limpiar-logs';
+    protected $signature = 'simo:limpiar-logs';
+
     protected $description = 'Limpia huerfanos y aplica politica de retencion en log_scripts';
 
     public function handle(): int
@@ -27,7 +28,7 @@ class LimpiarLogs extends Command
                 ['Interrumpidos (>7d)',        $resultado['interrumpidos']],
                 ['Completados vacios (>24h)',   $resultado['completados_vacios']],
                 ['Errores (>30d)',              $resultado['errores_viejos']],
-                ['Completados con datos (>90d)',$resultado['completados_viejos']],
+                ['Completados con datos (>90d)', $resultado['completados_viejos']],
             ]
         );
 

@@ -3,8 +3,8 @@
 namespace App\Livewire\Configuracion;
 
 use App\Models\Pais;
-use Livewire\Component;
 use Livewire\Attributes\Layout;
+use Livewire\Component;
 use Livewire\WithPagination;
 
 #[Layout('layouts.app', ['title' => 'Países'])]
@@ -14,15 +14,19 @@ class Paises extends Component
 
     // Filtros
     public string $busqueda = '';
+
     public string $filtroActivo = '';
 
     // Modal
     public bool $modalAbierto = false;
+
     public bool $esEdicion = false;
 
     // Campos del formulario
     public string $codigo = '';
+
     public string $nombre = '';
+
     public bool $activo = true;
 
     protected function rules(): array
@@ -40,11 +44,11 @@ class Paises extends Component
 
     protected $messages = [
         'codigo.required' => 'El código es obligatorio.',
-        'codigo.size'     => 'El código debe tener exactamente 2 letras.',
-        'codigo.alpha'    => 'El código solo puede contener letras.',
-        'codigo.unique'   => 'Ya existe un país con ese código.',
+        'codigo.size' => 'El código debe tener exactamente 2 letras.',
+        'codigo.alpha' => 'El código solo puede contener letras.',
+        'codigo.unique' => 'Ya existe un país con ese código.',
         'nombre.required' => 'El nombre es obligatorio.',
-        'nombre.min'      => 'El nombre debe tener al menos 2 caracteres.',
+        'nombre.min' => 'El nombre debe tener al menos 2 caracteres.',
     ];
 
     public function updatingBusqueda(): void
@@ -69,9 +73,9 @@ class Paises extends Component
     public function abrirEditar(string $codigo): void
     {
         $pais = Pais::findOrFail($codigo);
-        $this->codigo  = $pais->codigo;
-        $this->nombre  = $pais->nombre;
-        $this->activo  = $pais->activo;
+        $this->codigo = $pais->codigo;
+        $this->nombre = $pais->nombre;
+        $this->activo = $pais->activo;
         $this->esEdicion = true;
         $this->resetValidation();
         $this->modalAbierto = true;
@@ -105,18 +109,16 @@ class Paises extends Component
     public function toggleActivo(string $codigo): void
     {
         $pais = Pais::findOrFail($codigo);
-        $pais->update(['activo' => !$pais->activo]);
+        $pais->update(['activo' => ! $pais->activo]);
     }
 
     public function render()
     {
         $paises = Pais::withCount(['sitiosWeb', 'fuentes'])
-            ->when($this->busqueda, fn($q) =>
-                $q->where('nombre', 'like', '%' . $this->busqueda . '%')
-                  ->orWhere('codigo', 'like', '%' . $this->busqueda . '%')
+            ->when($this->busqueda, fn ($q) => $q->where('nombre', 'like', '%'.$this->busqueda.'%')
+                ->orWhere('codigo', 'like', '%'.$this->busqueda.'%')
             )
-            ->when($this->filtroActivo !== '', fn($q) =>
-                $q->where('activo', (bool) $this->filtroActivo)
+            ->when($this->filtroActivo !== '', fn ($q) => $q->where('activo', (bool) $this->filtroActivo)
             )
             ->orderBy('nombre')
             ->paginate(20);

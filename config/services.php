@@ -35,4 +35,14 @@ return [
         ],
     ],
 
+    'gemini' => [
+        'api_key' => env('GEMINI_API_KEY'),
+        'enabled' => env('GEMINI_ENABLED', true),
+        'flash_model' => env('GEMINI_FLASH_MODEL', 'gemini-1.5-flash'),
+        'pro_model' => env('GEMINI_PRO_MODEL', 'gemini-1.5-pro'),
+        'timeout' => (int) env('GEMINI_TIMEOUT', 90),
+        'flash_delay' => (int) env('GEMINI_FLASH_DELAY', 4),
+        'pro_delay' => (int) env('GEMINI_PRO_DELAY', 30),
+    ],
+
 ];

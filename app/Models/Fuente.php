@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class Fuente extends Model
 {
     protected $table = 'fuentes';
+
     // Solo tiene created_at, sin updated_at (compatible con el script Python)
     const UPDATED_AT = null;
 

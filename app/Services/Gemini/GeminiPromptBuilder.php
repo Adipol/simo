@@ -1,0 +1,128 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Services\Gemini;
+
+class GeminiPromptBuilder
+{
+    private const MAX_DIFF_CHARS = 12000;
+
+    private const MAX_DIFF_FOR_FULL = 8000;
+
+    private const MAX_DIFF_FOR_EXCERPT = 15000;
+
+    /**
+     * Build a prompt for Gemini Flash to classify PEP/OPI.
+     */
+    public function filtroPEP(string $texto, string $pais, string $categoria): string
+    {
+        return <<<PROMPT
+Sos un experto en análisis de riesgo financiero y compliance AML/CFT en {$pais}.
+Tu tarea: analizar el siguiente texto y determinar si menciona a una persona que sea PEP (Persona Políticamente Expuesta) u OPI (persona vinculada a crimen organizado o bajo investigación judicial).
+
+DEFINICIONES:
+- PEP: ministros, legisladores, jueces, directores de entes públicos, militares de alto rango, embajadores
+- OPI: líderes de organizaciones criminales, personas bajo investigación por lavado de activos o narcotráfico
+
+Devolvé ÚNICAMENTE el siguiente JSON, sin explicaciones adicionales:
+{"is_pep":boolean,"nombre":string|null,"cargo":string|null,"categoria":"PEP"|"OPI"|null,"confianza":0-100,"motivo":string}
+
+EJEMPLOS:
+
+[PEP+] "El ministro de Economía Juan Pérez firmó el decreto de aumento salarial"
+→ {"is_pep":true,"nombre":"Juan Pérez","cargo":"Ministro de Economía","categoria":"PEP","confianza":95,"motivo":"Cargo ejecutivo de alto nivel en cartera ministerial"}
+
+[OPI+] "El líder de la organización criminal Rodrigo Vargas fue capturado en Operativo Sur"
+→ {"is_pep":true,"nombre":"Rodrigo Vargas","cargo":null,"categoria":"OPI","confianza":92,"motivo":"Líder de organización criminal vinculado al narcotráfico"}
+
+[NEG] "El delantero Carlos Torres anotó el gol del campeonato en el estadio Luna"
+→ {"is_pep":false,"nombre":null,"cargo":null,"categoria":null,"confianza":90,"motivo":"Texto deportivo sin mención de cargos públicos ni actividad criminal"}
+
+Categoría investigada: {$categoria}
+País: {$pais}
+
+TEXTO:
+{$texto}
+PROMPT;
+    }
+
+    /**
+     * Build a prompt for Gemini Pro to analyze a government source change.
+     */
+    public function analisisCambio(string $diff, string $fuente, string $organismo): string
+    {
+        $truncatedDiff = $this->truncarDiff($diff);
+
+        return <<<PROMPT
+Sos un experto en gobierno corporativo y análisis de cambios en organismos públicos de Latinoamérica.
+Analizá el siguiente diff de {$organismo} (fuente: {$fuente}) para detectar cambio de autoridades.
+
+PASOS:
+1. Identificá personas removidas (líneas que empiezan con -)
+2. Identificá personas nuevas (líneas que empiezan con +)
+3. Determiná si el cargo es MAE (Máxima Autoridad Ejecutiva: ministro, secretario ejecutivo, director general)
+4. Evaluá riesgo AML: alto (MAE o cargo clave), medio (gerencia), bajo (técnico/administrativo)
+5. Escribí análisis conciso (máx 300 caracteres)
+
+JSON de salida (SOLO JSON válido):
+{"persona_removida":string|null,"persona_nueva":string|null,"cargo":string|null,"es_mae":boolean,"riesgo":"alto"|"medio"|"bajo","analisis":string}
+
+ANTES:
+(sin datos específicos, diff contiene los cambios)
+
+DESPUÉS:
+{$truncatedDiff}
+PROMPT;
+    }
+
+    /**
+     * Intelligently truncate a diff to fit within token limits.
+     */
+    public function truncarDiff(string $diff): string
+    {
+        $len = strlen($diff);
+
+        // Case 1: Small enough to send complete
+        if ($len <= self::MAX_DIFF_FOR_FULL) {
+            return $diff;
+        }
+
+        // Case 2: Medium size - send first and last 4000 chars
+        if ($len <= self::MAX_DIFF_FOR_EXCERPT) {
+            $first = substr($diff, 0, 4000);
+            $last = substr($diff, -4000);
+
+            return $first."\n\n[... contenido truncado ...]\n\n".$last;
+        }
+
+        // Case 3: Large - extract only +/- lines with context
+        $lines = explode("\n", $diff);
+        $changeLines = [];
+
+        foreach ($lines as $i => $line) {
+            $trimmed = trim($line);
+            if (str_starts_with($trimmed, '+') || str_starts_with($trimmed, '-')) {
+                // Get the change line plus some context before and after
+                $start = max(0, $i - 2);
+                $end = min(count($lines) - 1, $i + 2);
+                for ($j = $start; $j <= $end; $j++) {
+                    $changeLines[] = $lines[$j];
+                }
+                $changeLines[] = '---';
+            }
+        }
+
+        $result = implode("\n", array_unique($changeLines));
+
+        // Case 4: Still too long - cut middle
+        if (strlen($result) > self::MAX_DIFF_CHARS) {
+            $half = (int) (self::MAX_DIFF_CHARS / 2);
+            $result = substr($result, 0, $half)
+                ."\n\n[... contenido truncado ...]\n\n"
+                .substr($result, -$half);
+        }
+
+        return $result;
+    }
+}

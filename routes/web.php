@@ -1,19 +1,19 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\ProfileController;
+use App\Livewire\Configuracion\Paises;
 use App\Livewire\Dashboard;
-use App\Livewire\Scraper\Resultados;
-use App\Livewire\Scraper\Sitios;
-use App\Livewire\Scraper\Keywords;
 use App\Livewire\Pep\Cambios;
 use App\Livewire\Pep\Fuentes;
-use App\Livewire\Scripts\Estado;
+use App\Livewire\Scraper\Keywords;
+use App\Livewire\Scraper\Resultados;
+use App\Livewire\Scraper\Sitios;
 use App\Livewire\Scripts\Configuracion;
+use App\Livewire\Scripts\Estado;
 use App\Livewire\Usuarios\GestionUsuarios;
-use App\Livewire\Configuracion\Paises;
-use App\Http\Controllers\ProfileController;
+use Illuminate\Support\Facades\Route;
 
-Route::get('/', fn() => redirect()->route('login'));
+Route::get('/', fn () => redirect()->route('login'));
 
 // Rutas de autenticacion (Breeze)
 require __DIR__.'/auth.php';

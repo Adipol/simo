@@ -33,6 +33,10 @@
                                     {{ count($c->posiblesPepsArray()) }} posibles PEPs
                                 </span>
                             @endif
+                            {{-- MAE Badge if Gemini detected it --}}
+                            @if(($c->gemini_analisis_json['es_mae'] ?? false))
+                                <span class="simo-badge bg-red-100 text-red-700 border-red-200">MAE</span>
+                            @endif
                         </div>
                     </div>
                     <div class="flex items-center gap-2 shrink-0">
@@ -62,6 +66,38 @@
                                         <span class="simo-badge bg-violet-100 text-violet-800">{{ $pep }}</span>
                                     @endforeach
                                 </div>
+                            </div>
+                        @endif
+
+                        {{-- Análisis Gemini --}}
+                        @if($cambioDetalle->gemini_analyzed && $cambioDetalle->gemini_analisis_json)
+                            @php $analisis = $cambioDetalle->gemini_analisis_json; @endphp
+                            <div class="px-5 py-3 bg-indigo-50/60 border-b border-indigo-100">
+                                <p class="text-xs font-semibold text-indigo-700 mb-2">Análisis Gemini</p>
+                                <div class="grid grid-cols-2 gap-3 text-xs">
+                                    @if($analisis['persona_removida'] ?? null)
+                                        <div><span class="text-gray-500">Removido:</span> <span class="font-medium text-gray-800">{{ $analisis['persona_removida'] }}</span></div>
+                                    @endif
+                                    @if($analisis['persona_nueva'] ?? null)
+                                        <div><span class="text-gray-500">Nuevo:</span> <span class="font-medium text-gray-800">{{ $analisis['persona_nueva'] }}</span></div>
+                                    @endif
+                                    <div><span class="text-gray-500">Cargo:</span> <span class="font-medium">{{ $analisis['cargo'] ?? '—' }}</span></div>
+                                    <div class="flex items-center gap-2">
+                                        @if($analisis['es_mae'] ?? false)
+                                            <span class="simo-badge bg-red-100 text-red-700 border-red-200">MAE</span>
+                                        @else
+                                            <span class="simo-badge bg-gray-100 text-gray-500">No MAE</span>
+                                        @endif
+                                        @php
+                                            $riesgoColors = ['alto' => 'bg-red-50 text-red-600', 'medio' => 'bg-amber-50 text-amber-600', 'bajo' => 'bg-emerald-50 text-emerald-600'];
+                                            $riesgo = $analisis['riesgo'] ?? 'bajo';
+                                        @endphp
+                                        <span class="simo-badge {{ $riesgoColors[$riesgo] ?? $riesgoColors['bajo'] }}">Riesgo: {{ ucfirst($riesgo) }}</span>
+                                    </div>
+                                </div>
+                                @if($analisis['analisis'] ?? null)
+                                    <p class="text-xs text-gray-600 mt-2 bg-white rounded p-2">{{ $analisis['analisis'] }}</p>
+                                @endif
                             </div>
                         @endif
 

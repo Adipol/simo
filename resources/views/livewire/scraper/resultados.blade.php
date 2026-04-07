@@ -38,6 +38,14 @@
                 <option value="1">Descartados</option>
                 <option value="">Todos</option>
             </select>
+
+            <select wire:model.live="filtroGemini" class="simo-select">
+                <option value="">Gemini: Todos</option>
+                <option value="pending">Sin analizar</option>
+                <option value="pep">PEP confirmado</option>
+                <option value="opi">OPI confirmado</option>
+                <option value="not_pep">No relevante</option>
+            </select>
         </div>
 
         <button wire:click="exportarCsv"
@@ -87,6 +95,19 @@
                                         @endif
                                         @if($r->descartado)
                                             <span class="simo-badge bg-zinc-100 text-zinc-500 border-zinc-200" style="font-size:9px">descartado</span>
+                                        @endif
+                                        {{-- Gemini analysis badge --}}
+                                        @if(!$r->gemini_analyzed)
+                                            <span class="simo-badge bg-zinc-100 text-zinc-500 border-zinc-200" style="font-size:9px">Pendiente</span>
+                                        @elseif($r->gemini_is_pep)
+                                            <span class="simo-badge {{ $r->gemini_categoria === 'PEP' ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-600' }}" style="font-size:9px">
+                                                {{ $r->gemini_categoria }}
+                                            </span>
+                                            @if($r->gemini_nombre)
+                                                <span class="text-[10px] text-gray-600">{{ Str::limit($r->gemini_nombre, 30) }}</span>
+                                            @endif
+                                        @else
+                                            <span class="simo-badge bg-zinc-100 text-zinc-400" style="font-size:9px">No relevante</span>
                                         @endif
                                     </div>
                                     @if($r->titulo)
@@ -148,6 +169,12 @@
                                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
                                         </svg>
                                     </button>
+                                    @if($r->gemini_analyzed)
+                                        <button wire:click="$set('verAnalisisId', {{ $r->id }})"
+                                            class="simo-btn-ghost text-indigo-500 hover:text-indigo-600">
+                                            Ver análisis
+                                        </button>
+                                    @endif
                                 @endif
                             </div>
                         </td>
@@ -165,4 +192,27 @@
             {{ $resultados->links() }}
         </div>
     </div>
+
+    {{-- Modal Análisis Gemini --}}
+    @if($verAnalisisId && $resultadoAnalisis)
+    <div class="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+        wire:click.self="$set('verAnalisisId', null)">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg">
+            <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                <h2 class="font-semibold text-gray-800">Análisis Gemini</h2>
+                <button wire:click="$set('verAnalisisId', null)"
+                    class="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 text-lg">&times;</button>
+            </div>
+            <div class="px-6 py-5 space-y-3">
+                <div class="grid grid-cols-2 gap-4">
+                    <div><p class="text-xs text-gray-500">Nombre</p><p class="text-sm font-medium text-gray-800">{{ $resultadoAnalisis->gemini_nombre ?? '—' }}</p></div>
+                    <div><p class="text-xs text-gray-500">Cargo</p><p class="text-sm font-medium text-gray-800">{{ $resultadoAnalisis->gemini_cargo ?? '—' }}</p></div>
+                    <div><p class="text-xs text-gray-500">Categoría</p><p class="text-sm"><span class="simo-badge {{ $resultadoAnalisis->gemini_categoria === 'PEP' ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-600' }}">{{ $resultadoAnalisis->gemini_categoria }}</span></p></div>
+                    <div><p class="text-xs text-gray-500">Confianza</p><p class="text-sm font-medium {{ $resultadoAnalisis->gemini_confianza >= 70 ? 'text-emerald-600' : 'text-amber-600' }}">{{ $resultadoAnalisis->gemini_confianza }}%</p></div>
+                </div>
+                <div><p class="text-xs text-gray-500 mb-1">Motivo</p><p class="text-sm text-gray-700 bg-gray-50 rounded-lg p-3">{{ $resultadoAnalisis->gemini_motivo }}</p></div>
+            </div>
+        </div>
+    </div>
+    @endif
 </div>

@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class PalabraClave extends Model
 {
     protected $table = 'palabras_clave';
+
     public $timestamps = false;
 
     protected $fillable = ['keyword', 'categoria', 'activo'];

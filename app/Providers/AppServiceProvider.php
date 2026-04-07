@@ -2,6 +2,10 @@
 
 namespace App\Providers;
 
+use App\Models\Cambio;
+use App\Models\ResultadoScraping;
+use App\Observers\CambioObserver;
+use App\Observers\ResultadoScrapingObserver;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -19,6 +23,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        ResultadoScraping::observe(ResultadoScrapingObserver::class);
+        Cambio::observe(CambioObserver::class);
     }
 }

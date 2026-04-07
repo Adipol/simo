@@ -34,16 +34,16 @@ class DatosInicialesSeeder extends Seeder
             DB::table('sitios_web')->updateOrInsert(
                 ['url' => $sitio['url']],
                 array_merge($sitio, [
-                    'activo'            => true,
-                    'selector_links'    => null,
-                    'selector_article'  => null,
-                    'fecha_creacion'    => now(),
-                    'fecha_modificacion'=> now(),
+                    'activo' => true,
+                    'selector_links' => null,
+                    'selector_article' => null,
+                    'fecha_creacion' => now(),
+                    'fecha_modificacion' => now(),
                 ])
             );
         }
 
-        $this->command->info('Sitios web insertados: ' . count($sitios));
+        $this->command->info('Sitios web insertados: '.count($sitios));
 
         // ── Palabras clave ────────────────────────────────────────
         $keywords = [
@@ -59,14 +59,14 @@ class DatosInicialesSeeder extends Seeder
             DB::table('palabras_clave')->updateOrInsert(
                 ['keyword' => $kw],
                 [
-                    'keyword'        => $kw,
-                    'categoria'      => 'PEP',
-                    'activo'         => true,
+                    'keyword' => $kw,
+                    'categoria' => 'PEP',
+                    'activo' => true,
                     'fecha_creacion' => now(),
                 ]
             );
         }
 
-        $this->command->info('Palabras clave insertadas: ' . count($keywords));
+        $this->command->info('Palabras clave insertadas: '.count($keywords));
     }
 }

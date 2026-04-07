@@ -4,9 +4,9 @@ namespace App\Livewire\Scraper;
 
 use App\Models\Pais;
 use App\Models\ResultadoScraping;
-use Livewire\Component;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
+use Livewire\Component;
 use Livewire\WithPagination;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -16,20 +16,59 @@ class Resultados extends Component
     use WithPagination;
 
     public string $busqueda = '';
+
     public string $filtroPais = '';
+
     public string $filtroCategoria = '';
+
     public string $filtroLeido = '';
+
     public string $filtroRelevante = '';
+
     public string $filtroDescartado = '0'; // Por defecto oculta descartados
+
+    public string $filtroGemini = '';
+
+    public ?int $verAnalisisId = null;
+
     public string $ordenar = 'fecha_encontrado';
+
     public string $direccion = 'desc';
 
-    public function updatingBusqueda(): void        { $this->resetPage(); }
-    public function updatingFiltroPais(): void       { $this->resetPage(); }
-    public function updatingFiltroCategoria(): void  { $this->resetPage(); }
-    public function updatingFiltroLeido(): void      { $this->resetPage(); }
-    public function updatingFiltroRelevante(): void  { $this->resetPage(); }
-    public function updatingFiltroDescartado(): void { $this->resetPage(); }
+    public function updatingBusqueda(): void
+    {
+        $this->resetPage();
+    }
+
+    public function updatingFiltroPais(): void
+    {
+        $this->resetPage();
+    }
+
+    public function updatingFiltroCategoria(): void
+    {
+        $this->resetPage();
+    }
+
+    public function updatingFiltroLeido(): void
+    {
+        $this->resetPage();
+    }
+
+    public function updatingFiltroRelevante(): void
+    {
+        $this->resetPage();
+    }
+
+    public function updatingFiltroDescartado(): void
+    {
+        $this->resetPage();
+    }
+
+    public function updatingFiltroGemini(): void
+    {
+        $this->resetPage();
+    }
 
     public function marcarLeido(int $id): void
     {
@@ -45,7 +84,7 @@ class Resultados extends Component
     {
         ResultadoScraping::where('id', $id)->update([
             'descartado' => true,
-            'leido'      => true, // marcar leido tambien
+            'leido' => true, // marcar leido tambien
         ]);
     }
 
@@ -56,13 +95,13 @@ class Resultados extends Component
 
     public function exportarCsv(): StreamedResponse
     {
-        $query    = $this->buildQuery();
-        $filename = 'resultados_' . now()->format('Ymd_His') . '.csv';
+        $query = $this->buildQuery();
+        $filename = 'resultados_'.now()->format('Ymd_His').'.csv';
 
         return response()->streamDownload(function () use ($query) {
             $handle = fopen('php://output', 'w');
-            fputs($handle, "\xEF\xBB\xBF"); // BOM UTF-8
-            fputcsv($handle, ['ID', 'Keyword', 'URL', 'Sitio', 'Pais', 'Categoria', 'Titulo', 'Contexto', 'Relevance', 'Fecha']);
+            fwrite($handle, "\xEF\xBB\xBF"); // BOM UTF-8
+            fputcsv($handle, ['ID', 'Keyword', 'URL', 'Sitio', 'Pais', 'Categoria', 'Titulo', 'Contexto', 'Relevance', 'Fecha', 'Gemini_Analizado', 'Gemini_PEP', 'Gemini_Categoria', 'Gemini_Nombre', 'Gemini_Cargo', 'Gemini_Confianza']);
 
             $query->chunk(500, function ($rows) use ($handle) {
                 foreach ($rows as $r) {
@@ -77,6 +116,12 @@ class Resultados extends Component
                         $r->contexto ?? '',
                         $r->relevance_score,
                         $r->fecha_encontrado->format('Y-m-d H:i:s'),
+                        $r->gemini_analyzed ? 'Si' : 'No',
+                        $r->gemini_is_pep ? 'Si' : 'No',
+                        $r->gemini_categoria ?? '',
+                        $r->gemini_nombre ?? '',
+                        $r->gemini_cargo ?? '',
+                        $r->gemini_confianza ?? '',
                     ]);
                 }
             });
@@ -90,18 +135,27 @@ class Resultados extends Component
         $q = ResultadoScraping::with('sitio')->orderBy($this->ordenar, $this->direccion);
 
         if ($this->busqueda) {
-            $b = '%' . $this->busqueda . '%';
-            $q->where(fn($s) => $s->where('keyword', 'like', $b)
+            $b = '%'.$this->busqueda.'%';
+            $q->where(fn ($s) => $s->where('keyword', 'like', $b)
                 ->orWhere('titulo', 'like', $b)
                 ->orWhere('url', 'like', $b)
                 ->orWhere('contexto', 'like', $b));
         }
-        if ($this->filtroPais)      $q->where('pais', $this->filtroPais);
-        if ($this->filtroCategoria) $q->where('categoria', $this->filtroCategoria);
-        if ($this->filtroLeido !== '') $q->where('leido', (bool)$this->filtroLeido);
+        if ($this->filtroPais) {
+            $q->where('pais', $this->filtroPais);
+        }
+        if ($this->filtroCategoria) {
+            $q->where('categoria', $this->filtroCategoria);
+        }
+        if ($this->filtroLeido !== '') {
+            $q->where('leido', (bool) $this->filtroLeido);
+        }
         if ($this->filtroRelevante !== '') {
-            if ($this->filtroRelevante === 'null') $q->whereNull('relevante');
-            else $q->where('relevante', (bool)$this->filtroRelevante);
+            if ($this->filtroRelevante === 'null') {
+                $q->whereNull('relevante');
+            } else {
+                $q->where('relevante', (bool) $this->filtroRelevante);
+            }
         }
 
         // Filtro descartados: '0' = solo activos, '1' = solo descartados, '' = todos
@@ -109,6 +163,17 @@ class Resultados extends Component
             $q->where('descartado', false);
         } elseif ($this->filtroDescartado === '1') {
             $q->where('descartado', true);
+        }
+
+        // Filtro Gemini
+        if ($this->filtroGemini === 'pending') {
+            $q->where('gemini_analyzed', false);
+        } elseif ($this->filtroGemini === 'pep') {
+            $q->where('gemini_analyzed', true)->where('gemini_is_pep', true)->where('gemini_categoria', 'PEP');
+        } elseif ($this->filtroGemini === 'opi') {
+            $q->where('gemini_analyzed', true)->where('gemini_is_pep', true)->where('gemini_categoria', 'OPI');
+        } elseif ($this->filtroGemini === 'not_pep') {
+            $q->where('gemini_analyzed', true)->where('gemini_is_pep', false);
         }
 
         return $q;
@@ -130,14 +195,25 @@ class Resultados extends Component
             ->pluck('categoria');
     }
 
+    #[Computed]
+    public function resultadoAnalisis(): ?ResultadoScraping
+    {
+        if (! $this->verAnalisisId) {
+            return null;
+        }
+
+        return ResultadoScraping::find($this->verAnalisisId);
+    }
+
     public function render()
     {
         $resultados = $this->buildQuery()->paginate(25);
 
         return view('livewire.scraper.resultados', [
             'resultados' => $resultados,
-            'paises'     => $this->paises,
+            'paises' => $this->paises,
             'categorias' => $this->categorias,
+            'resultadoAnalisis' => $this->resultadoAnalisis,
         ]);
     }
 }

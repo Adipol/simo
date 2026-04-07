@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class LogEjecucion extends Model
 {
     protected $table = 'log_ejecuciones';
+
     public $timestamps = false;
 
     protected $fillable = [
