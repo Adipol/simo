@@ -69,7 +69,7 @@ class GeminiService
 
         $text = $this->extractText($responseData);
 
-        $parsed = json_decode($text, true);
+        $parsed = json_decode($this->cleanMarkdownJson($text), true);
 
         if (json_last_error() !== JSON_ERROR_NONE) {
             Log::channel('gemini')->error('Gemini returned invalid JSON', [
@@ -131,5 +131,16 @@ class GeminiService
             $status >= 500 => new GeminiServerException("Gemini server error ({$status}): {$body}"),
             default => new GeminiException("Gemini API error ({$status}): {$body}"),
         };
+    }
+    /**
+     * Clean markdown code blocks from JSON response.
+     */
+    private function cleanMarkdownJson(string $text): string
+    {
+        // Remove ```json ... ``` or ``` ...``` wrappers
+        $text = preg_replace('/^```(?:json)?\s*\n?/i', '', $text);
+        $text = preg_replace('/\n?```\s*$/i', '', $text);
+        
+        return trim($text);
     }
 }
