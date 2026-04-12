@@ -59,7 +59,7 @@
             </a>
 
             {{-- ── GESTIÓN ── --}}
-            @canany(['gestionar sitios', 'gestionar keywords', 'gestionar fuentes'])
+            @canany(['gestionar sitios', 'gestionar keywords', 'gestionar fuentes', 'gestionar familias lemas', 'gestionar cargos pep', 'gestionar entidades publicas'])
             <div class="sidebar-section">Gestión</div>
 
             @can('gestionar sitios')
@@ -89,6 +89,36 @@
                     <path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
                 </svg>
                 Fuentes PEP
+            </a>
+            @endcan
+
+            @can('gestionar familias lemas')
+            <a href="{{ route('scraper.familias-lemas') }}"
+               class="sidebar-link {{ request()->routeIs('scraper.familias-lemas') ? 'sidebar-link-active' : '' }}">
+                <svg class="sidebar-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
+                </svg>
+                Familias de lemas
+            </a>
+            @endcan
+
+            @can('gestionar cargos pep')
+            <a href="{{ route('scraper.cargos-pep') }}"
+               class="sidebar-link {{ request()->routeIs('scraper.cargos-pep') ? 'sidebar-link-active' : '' }}">
+                <svg class="sidebar-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
+                </svg>
+                Cargos PEP
+            </a>
+            @endcan
+
+            @can('gestionar entidades publicas')
+            <a href="{{ route('scraper.entidades-publicas') }}"
+               class="sidebar-link {{ request()->routeIs('scraper.entidades-publicas') ? 'sidebar-link-active' : '' }}">
+                <svg class="sidebar-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>
+                </svg>
+                Entidades Públicas
             </a>
             @endcan
 
@@ -178,6 +208,8 @@
 </div>
 
 @livewireScripts
+
+@stack('scripts')
 
 {{-- ── TOAST NOTIFICATIONS ── --}}
 <div

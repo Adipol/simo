@@ -4,12 +4,16 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Gemini;
 
+use App\Enums\EntidadTipo;
 use App\Exceptions\Gemini\GeminiRateLimitException;
 use App\Exceptions\Gemini\GeminiServerException;
+use App\Models\CargoPep;
+use App\Models\EntidadPublica;
 use App\Models\ResultadoScraping;
 use App\Services\Gemini\GeminiFiltroService;
 use App\Services\Gemini\GeminiPromptBuilder;
 use App\Services\Gemini\GeminiService;
+use App\Services\Gemini\PepCatalogService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
@@ -55,6 +59,14 @@ class GeminiFiltroServiceTest extends TestCase
         );
     }
 
+    private function makeServiceWithCatalog(): GeminiFiltroService
+    {
+        return new GeminiFiltroService(
+            new GeminiService(apiKey: 'test-key-123'),
+            app(GeminiPromptBuilder::class),
+        );
+    }
+
     public function test_analizar_lote_updates_all_gemini_fields_on_happy_path(): void
     {
         config(['services.gemini.api_key' => 'test-key']);
@@ -70,6 +82,7 @@ class GeminiFiltroServiceTest extends TestCase
                     'nombre' => 'Juan Pérez',
                     'cargo' => 'Ministro de Economía',
                     'categoria' => 'PEP',
+                    'entidad_tipo' => 'publica',
                     'confianza' => 95,
                     'motivo' => 'Cargo ejecutivo de alto nivel',
                 ]))
@@ -78,6 +91,7 @@ class GeminiFiltroServiceTest extends TestCase
                     'nombre' => 'Rodrigo Vargas',
                     'cargo' => null,
                     'categoria' => 'OPI',
+                    'entidad_tipo' => 'desconocido',
                     'confianza' => 92,
                     'motivo' => 'Líder de organización criminal',
                 ]))
@@ -86,6 +100,7 @@ class GeminiFiltroServiceTest extends TestCase
                     'nombre' => null,
                     'cargo' => null,
                     'categoria' => null,
+                    'entidad_tipo' => null,
                     'confianza' => 10,
                     'motivo' => 'Texto deportivo sin relevancia',
                 ])),
@@ -100,6 +115,7 @@ class GeminiFiltroServiceTest extends TestCase
         $this->assertSame('Juan Pérez', $r1->gemini_nombre);
         $this->assertSame('Ministro de Economía', $r1->gemini_cargo);
         $this->assertSame('PEP', $r1->gemini_categoria);
+        $this->assertSame('publica', $r1->gemini_entidad_tipo);
         $this->assertSame(95, $r1->gemini_confianza);
 
         $r2->refresh();
@@ -108,6 +124,7 @@ class GeminiFiltroServiceTest extends TestCase
         $this->assertSame('Rodrigo Vargas', $r2->gemini_nombre);
         $this->assertNull($r2->gemini_cargo);
         $this->assertSame('OPI', $r2->gemini_categoria);
+        $this->assertSame('desconocido', $r2->gemini_entidad_tipo);
         $this->assertSame(92, $r2->gemini_confianza);
 
         $r3->refresh();
@@ -283,5 +300,86 @@ class GeminiFiltroServiceTest extends TestCase
         $this->assertTrue($r3->gemini_analyzed);
         $this->assertFalse($r3->gemini_is_pep);  // processed correctly
         $this->assertSame(5, $r3->gemini_confianza);
+    }
+
+    public function test_dynamic_prompt_is_used_when_catalog_has_positions_for_country(): void
+    {
+        config(['services.gemini.api_key' => 'test-key']);
+
+        // Flush static cache so PepCatalogService reads from DB fresh
+        PepCatalogService::flushCache();
+
+        // Seed minimal Bolivia dataset: 3 positions (1 cada tipo) + 1 entidad
+        CargoPep::create([
+            'pais_codigo' => 'BO',
+            'nombre' => 'Ministro Titular',
+            'categoria' => 'A',
+            'entidad_tipo' => EntidadTipo::Todas,
+            'activo' => true,
+        ]);
+
+        CargoPep::create([
+            'pais_codigo' => 'BO',
+            'nombre' => 'Director Ejecutivo Público',
+            'categoria' => 'A',
+            'entidad_tipo' => EntidadTipo::Publica,
+            'activo' => true,
+        ]);
+
+        CargoPep::create([
+            'pais_codigo' => 'BO',
+            'nombre' => 'Gerente General Mixto',
+            'categoria' => 'A',
+            'entidad_tipo' => EntidadTipo::Ambas,
+            'activo' => true,
+        ]);
+
+        EntidadPublica::create([
+            'pais_codigo' => 'BO',
+            'nombre' => 'Banco Estatal Test',
+            'sigla' => 'BET',
+            'activo' => true,
+        ]);
+
+        $record = $this->createRecord(['pais' => 'BO']);
+
+        $capturedPrompt = null;
+
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => function ($request) use (&$capturedPrompt) {
+                $body = $request->data();
+                $capturedPrompt = $body['contents'][0]['parts'][0]['text'] ?? null;
+
+                return Http::response(json_encode([
+                    'candidates' => [[
+                        'content' => [
+                            'parts' => [[
+                                'text' => json_encode([
+                                    'is_pep' => false,
+                                    'nombre' => null,
+                                    'cargo' => null,
+                                    'categoria' => null,
+                                    'entidad_tipo' => null,
+                                    'confianza' => 10,
+                                    'motivo' => 'Test',
+                                ]),
+                            ]],
+                        ],
+                    ]],
+                ]), 200);
+            },
+        ]);
+
+        $service = $this->makeServiceWithCatalog();
+        $service->analizarLote(collect([$record]));
+
+        $this->assertNotNull($capturedPrompt, 'The prompt should have been captured from the HTTP request');
+        $this->assertStringContainsString('SIEMPRE_PEP', $capturedPrompt);
+        $this->assertStringContainsString('PEP_EN_ENTIDAD_PUBLICA', $capturedPrompt);
+        $this->assertStringContainsString('PUEDE_SER_PEP', $capturedPrompt);
+        $this->assertStringContainsString('Ministro Titular', $capturedPrompt);
+        $this->assertStringContainsString('Director Ejecutivo Público', $capturedPrompt);
+        $this->assertStringContainsString('Gerente General Mixto', $capturedPrompt);
+        $this->assertStringContainsString('Banco Estatal Test', $capturedPrompt);
     }
 }

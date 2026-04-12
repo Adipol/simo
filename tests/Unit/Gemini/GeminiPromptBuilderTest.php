@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Gemini;
 
 use App\Services\Gemini\GeminiPromptBuilder;
+use App\Services\Gemini\PepCatalogService;
 use PHPUnit\Framework\TestCase;
 
 class GeminiPromptBuilderTest extends TestCase
@@ -67,6 +68,155 @@ class GeminiPromptBuilderTest extends TestCase
 
         $this->assertStringContainsString('JSON', $prompt);
         $this->assertMatchesRegularExpression('/\{.*"is_pep".*\}/s', $prompt);
+    }
+
+    // ============================================
+    // constructor injection tests (Task 6.1)
+    // ============================================
+
+    public function test_constructor_accepts_null_catalog_and_falls_back_to_generic(): void
+    {
+        $builder = new GeminiPromptBuilder(null);
+        $prompt = $builder->filtroPEP('Test text', 'Chile', 'PEP');
+
+        // Falls back to generic hardcoded definitions
+        $this->assertStringContainsString('ministros', $prompt);
+        $this->assertStringContainsString('is_pep', $prompt);
+    }
+
+    public function test_constructor_with_catalog_returning_positions_builds_dynamic_prompt(): void
+    {
+        $cargos = collect([
+            (object) ['nombre' => 'Diputado', 'entidad_tipo' => 'todas'],
+            (object) ['nombre' => 'Ministro', 'entidad_tipo' => 'publica'],
+            (object) ['nombre' => 'Gerente', 'entidad_tipo' => 'ambas'],
+        ]);
+        $entidades = collect([
+            (object) ['nombre' => 'YPFB'],
+        ]);
+
+        $catalog = $this->createMock(PepCatalogService::class);
+        $catalog->method('getCargos')->willReturn($cargos);
+        $catalog->method('getEntidades')->willReturn($entidades);
+
+        $builder = new GeminiPromptBuilder($catalog);
+        $prompt = $builder->filtroPEP('Test text', 'Bolivia', 'PEP');
+
+        $this->assertStringContainsString('SIEMPRE_PEP', $prompt);
+        $this->assertStringContainsString('PEP_EN_ENTIDAD_PUBLICA', $prompt);
+        $this->assertStringContainsString('PUEDE_SER_PEP', $prompt);
+    }
+
+    // ============================================
+    // 3-section dynamic prompt structure (Task 6.3)
+    // ============================================
+
+    public function test_dynamic_prompt_siempre_pep_contains_todas_positions(): void
+    {
+        $cargos = collect([
+            (object) ['nombre' => 'Diputado', 'entidad_tipo' => 'todas'],
+            (object) ['nombre' => 'Senador', 'entidad_tipo' => 'todas'],
+            (object) ['nombre' => 'Ministro', 'entidad_tipo' => 'publica'],
+        ]);
+        $entidades = collect([]);
+
+        $catalog = $this->createMock(PepCatalogService::class);
+        $catalog->method('getCargos')->willReturn($cargos);
+        $catalog->method('getEntidades')->willReturn($entidades);
+
+        $builder = new GeminiPromptBuilder($catalog);
+        $prompt = $builder->filtroPEP('Text', 'Bolivia', 'PEP');
+
+        $this->assertStringContainsString('Diputado', $prompt);
+        $this->assertStringContainsString('Senador', $prompt);
+    }
+
+    public function test_dynamic_prompt_pep_en_entidad_publica_contains_publica_positions(): void
+    {
+        $cargos = collect([
+            (object) ['nombre' => 'Ministro', 'entidad_tipo' => 'publica'],
+            (object) ['nombre' => 'Rector', 'entidad_tipo' => 'publica'],
+        ]);
+        $entidades = collect([]);
+
+        $catalog = $this->createMock(PepCatalogService::class);
+        $catalog->method('getCargos')->willReturn($cargos);
+        $catalog->method('getEntidades')->willReturn($entidades);
+
+        $builder = new GeminiPromptBuilder($catalog);
+        $prompt = $builder->filtroPEP('Text', 'Bolivia', 'PEP');
+
+        $this->assertStringContainsString('Ministro', $prompt);
+        $this->assertStringContainsString('Rector', $prompt);
+    }
+
+    public function test_dynamic_prompt_puede_ser_pep_contains_ambas_positions_and_entities(): void
+    {
+        $cargos = collect([
+            (object) ['nombre' => 'Gerente', 'entidad_tipo' => 'ambas'],
+            (object) ['nombre' => 'Director', 'entidad_tipo' => 'ambas'],
+        ]);
+        $entidades = collect([
+            (object) ['nombre' => 'YPFB'],
+            (object) ['nombre' => 'ENDE'],
+        ]);
+
+        $catalog = $this->createMock(PepCatalogService::class);
+        $catalog->method('getCargos')->willReturn($cargos);
+        $catalog->method('getEntidades')->willReturn($entidades);
+
+        $builder = new GeminiPromptBuilder($catalog);
+        $prompt = $builder->filtroPEP('Text', 'Bolivia', 'PEP');
+
+        $this->assertStringContainsString('Gerente', $prompt);
+        $this->assertStringContainsString('Director', $prompt);
+        $this->assertStringContainsString('YPFB', $prompt);
+        $this->assertStringContainsString('ENDE', $prompt);
+    }
+
+    // ============================================
+    // fallback behavior (Task 6.5)
+    // ============================================
+
+    public function test_catalog_with_empty_positions_falls_back_to_generic_prompt(): void
+    {
+        $catalog = $this->createMock(PepCatalogService::class);
+        $catalog->method('getCargos')->willReturn(collect([]));
+        $catalog->method('getEntidades')->willReturn(collect([]));
+
+        $builder = new GeminiPromptBuilder($catalog);
+        $prompt = $builder->filtroPEP('Text', 'Chile', 'PEP');
+
+        // Falls back to generic with hardcoded definitions
+        $this->assertStringContainsString('ministros', $prompt);
+        $this->assertStringNotContainsString('SIEMPRE_PEP', $prompt);
+    }
+
+    // ============================================
+    // entidad_tipo field in JSON spec (Task 6.4 / 6.6)
+    // ============================================
+
+    public function test_dynamic_prompt_json_spec_includes_entidad_tipo_field(): void
+    {
+        $cargos = collect([
+            (object) ['nombre' => 'Diputado', 'entidad_tipo' => 'todas'],
+        ]);
+
+        $catalog = $this->createMock(PepCatalogService::class);
+        $catalog->method('getCargos')->willReturn($cargos);
+        $catalog->method('getEntidades')->willReturn(collect([]));
+
+        $builder = new GeminiPromptBuilder($catalog);
+        $prompt = $builder->filtroPEP('Text', 'Bolivia', 'PEP');
+
+        $this->assertStringContainsString('entidad_tipo', $prompt);
+    }
+
+    public function test_generic_prompt_json_spec_includes_entidad_tipo_field(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test', 'Argentina', 'PEP');
+
+        $this->assertStringContainsString('entidad_tipo', $prompt);
     }
 
     // ============================================

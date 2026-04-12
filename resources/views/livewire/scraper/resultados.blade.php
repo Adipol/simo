@@ -109,6 +109,15 @@
                                         @else
                                             <span class="simo-badge bg-zinc-100 text-zinc-400" style="font-size:9px">No relevante</span>
                                         @endif
+                                        {{-- Feedback badge (visible to all) --}}
+                                        @php $fb = $r->feedback?->first(); @endphp
+                                        @if($fb)
+                                            @if($fb->tipo->value === 'correcto')
+                                                <span class="simo-badge bg-emerald-50 text-emerald-600 border-emerald-100" style="font-size:9px">✓ fb</span>
+                                            @else
+                                                <span class="simo-badge bg-amber-50 text-amber-600 border-amber-100" style="font-size:9px">✗ fb</span>
+                                            @endif
+                                        @endif
                                     </div>
                                     @if($r->titulo)
                                         <p class="text-xs text-gray-700 mt-0.5 leading-snug">{{ Str::limit($r->titulo, 90) }}</p>
@@ -174,6 +183,17 @@
                                             class="simo-btn-ghost text-indigo-500 hover:text-indigo-600">
                                             Ver análisis
                                         </button>
+                                        @can('dar feedback clasificaciones')
+                                        @php $fb = $r->feedback?->first(); @endphp
+                                        <button wire:click="guardarFeedbackCorrecto({{ $r->id }})"
+                                            class="simo-btn text-xs {{ $fb && $fb->tipo->value === 'correcto' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-50 text-gray-500 hover:bg-emerald-50 hover:text-emerald-600' }}">
+                                            ✓ Correcto
+                                        </button>
+                                        <button wire:click="abrirModalFeedbackIncorrecto({{ $r->id }})"
+                                            class="simo-btn text-xs {{ $fb && $fb->tipo->value === 'incorrecto' ? 'bg-amber-100 text-amber-700' : 'bg-gray-50 text-gray-500 hover:bg-amber-50 hover:text-amber-600' }}">
+                                            ✗ Incorrecto
+                                        </button>
+                                        @endcan
                                     @endif
                                 @endif
                             </div>
@@ -212,6 +232,66 @@
                 </div>
                 <div><p class="text-xs text-gray-500 mb-1">Motivo</p><p class="text-sm text-gray-700 bg-gray-50 rounded-lg p-3">{{ $resultadoAnalisis->gemini_motivo }}</p></div>
             </div>
+        </div>
+    </div>
+    @endif
+
+    {{-- Modal Feedback Incorrecto --}}
+    @if($feedbackModalId)
+    <div class="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+        wire:click.self="cerrarModalFeedback">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg">
+            <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                <h2 class="font-semibold text-gray-800">Corregir Clasificación</h2>
+                <button wire:click="cerrarModalFeedback"
+                    class="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 text-lg">&times;</button>
+            </div>
+            <form wire:submit="guardarFeedbackIncorrecto" class="px-6 py-5 space-y-4">
+                {{-- Categoria corregida (required) --}}
+                <div>
+                    <label class="simo-label">Categoría corregida *</label>
+                    <select wire:model="feedbackCategoriaCorregida" class="simo-select w-full">
+                        <option value="">Seleccionar...</option>
+                        @foreach(\App\Enums\CategoriaCorreccion::cases() as $cat)
+                            <option value="{{ $cat->value }}">{{ $cat->value }}</option>
+                        @endforeach
+                    </select>
+                    @error('feedbackCategoriaCorregida') <span class="text-xs text-red-500">{{ $message }}</span> @enderror
+                </div>
+
+                {{-- Motivo (required, min 10) --}}
+                <div>
+                    <label class="simo-label">Motivo de la corrección *</label>
+                    <textarea wire:model="feedbackMotivo" rows="3" class="simo-input w-full" placeholder="Explica por qué la clasificación es incorrecta (mín. 10 caracteres)"></textarea>
+                    @error('feedbackMotivo') <span class="text-xs text-red-500">{{ $message }}</span> @enderror
+                </div>
+
+                {{-- Optional fields --}}
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="simo-label">PEP / No PEP</label>
+                        <select wire:model="feedbackIsPepCorregido" class="simo-select w-full">
+                            <option value="">—</option>
+                            <option value="1">PEP</option>
+                            <option value="0">No PEP</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="simo-label">Nombre corregido</label>
+                        <input wire:model="feedbackNombreCorregido" type="text" class="simo-input w-full" />
+                    </div>
+                </div>
+
+                <div>
+                    <label class="simo-label">Cargo corregido</label>
+                    <input wire:model="feedbackCargoCorregido" type="text" class="simo-input w-full" />
+                </div>
+
+                <div class="flex justify-end gap-2 pt-2">
+                    <button type="button" wire:click="cerrarModalFeedback" class="simo-btn bg-gray-100 text-gray-600">Cancelar</button>
+                    <button type="submit" class="simo-btn bg-indigo-600 text-white hover:bg-indigo-700">Guardar</button>
+                </div>
+            </form>
         </div>
     </div>
     @endif

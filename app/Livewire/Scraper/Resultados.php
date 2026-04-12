@@ -1,9 +1,16 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Livewire\Scraper;
 
+use App\Enums\CategoriaCorreccion;
+use App\Enums\TipoFeedback;
+use App\Models\ClasificacionFeedback;
 use App\Models\Pais;
 use App\Models\ResultadoScraping;
+use App\Services\Normalization\NombreNormalizador;
+use Illuminate\Support\Facades\Auth;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
@@ -34,6 +41,22 @@ class Resultados extends Component
     public string $ordenar = 'fecha_encontrado';
 
     public string $direccion = 'desc';
+
+    // ─── Feedback props ────────────────────────────────────────────────────────
+
+    public ?int $feedbackModalId = null;
+
+    public ?string $feedbackCategoriaCorregida = null;
+
+    public ?string $feedbackNombreCorregido = null;
+
+    public ?string $feedbackCargoCorregido = null;
+
+    public ?bool $feedbackIsPepCorregido = null;
+
+    public string $feedbackMotivo = '';
+
+    // ─── Updating hooks ────────────────────────────────────────────────────────
 
     public function updatingBusqueda(): void
     {
@@ -69,6 +92,8 @@ class Resultados extends Component
     {
         $this->resetPage();
     }
+
+    // ─── Existing actions ─────────────────────────────────────────────────────
 
     public function marcarLeido(int $id): void
     {
@@ -130,9 +155,111 @@ class Resultados extends Component
         }, $filename, ['Content-Type' => 'text/csv; charset=UTF-8']);
     }
 
+    // ─── Feedback actions ─────────────────────────────────────────────────────
+
+    public function guardarFeedbackCorrecto(int $id): void
+    {
+        $this->authorize('dar feedback clasificaciones');
+
+        $resultado = ResultadoScraping::findOrFail($id);
+
+        ClasificacionFeedback::updateOrCreate(
+            ['resultado_scraping_id' => $id, 'usuario_id' => Auth::id()],
+            [
+                'tipo' => TipoFeedback::Correcto,
+                'clasificacion_snapshot' => $resultado->toGeminiSnapshot(),
+            ]
+        );
+
+        session()->flash('message', 'Feedback guardado correctamente.');
+    }
+
+    public function abrirModalFeedbackIncorrecto(int $id): void
+    {
+        $this->authorize('dar feedback clasificaciones');
+
+        $resultado = ResultadoScraping::withFeedbackFromUser(Auth::id())->findOrFail($id);
+        $this->feedbackModalId = $id;
+
+        // Pre-fill from existing feedback if any
+        $existing = $resultado->feedback->first();
+        if ($existing) {
+            $this->feedbackCategoriaCorregida = $existing->corregido_categoria?->value;
+            $this->feedbackNombreCorregido = $existing->corregido_nombre;
+            $this->feedbackCargoCorregido = $existing->corregido_cargo;
+            $this->feedbackIsPepCorregido = $existing->corregido_is_pep;
+            $this->feedbackMotivo = $existing->motivo ?? '';
+        } else {
+            $this->reset(['feedbackCategoriaCorregida', 'feedbackNombreCorregido', 'feedbackCargoCorregido', 'feedbackIsPepCorregido', 'feedbackMotivo']);
+        }
+    }
+
+    public function guardarFeedbackIncorrecto(): void
+    {
+        $this->authorize('dar feedback clasificaciones');
+
+        $this->validate($this->rulesFeedbackIncorrecto());
+
+        $resultado = ResultadoScraping::findOrFail($this->feedbackModalId);
+
+        $normalizador = app(NombreNormalizador::class);
+        $nombreNormalizado = $normalizador->normalizeNullable($this->feedbackNombreCorregido)?->normalized;
+
+        ClasificacionFeedback::updateOrCreate(
+            ['resultado_scraping_id' => $this->feedbackModalId, 'usuario_id' => Auth::id()],
+            [
+                'tipo' => TipoFeedback::Incorrecto,
+                'clasificacion_snapshot' => $resultado->toGeminiSnapshot(),
+                'corregido_is_pep' => $this->feedbackIsPepCorregido,
+                'corregido_categoria' => $this->feedbackCategoriaCorregida ? CategoriaCorreccion::from($this->feedbackCategoriaCorregida) : null,
+                'corregido_nombre' => $this->feedbackNombreCorregido,
+                'corregido_nombre_normalizado' => $nombreNormalizado,
+                'corregido_cargo' => $this->feedbackCargoCorregido,
+                'motivo' => $this->feedbackMotivo,
+            ]
+        );
+
+        $this->cerrarModalFeedback();
+        session()->flash('message', 'Feedback guardado correctamente.');
+    }
+
+    public function cerrarModalFeedback(): void
+    {
+        $this->feedbackModalId = null;
+        $this->reset([
+            'feedbackCategoriaCorregida',
+            'feedbackNombreCorregido',
+            'feedbackCargoCorregido',
+            'feedbackIsPepCorregido',
+            'feedbackMotivo',
+        ]);
+        $this->resetValidation();
+    }
+
+    // ─── Validation rules ─────────────────────────────────────────────────────
+
+    protected function rulesFeedbackIncorrecto(): array
+    {
+        return [
+            'feedbackCategoriaCorregida' => ['required', \Illuminate\Validation\Rule::enum(CategoriaCorreccion::class)],
+            'feedbackMotivo' => 'required|string|min:10|max:1000',
+            'feedbackNombreCorregido' => 'nullable|string|max:200',
+            'feedbackCargoCorregido' => 'nullable|string|max:200',
+            'feedbackIsPepCorregido' => 'nullable|boolean',
+        ];
+    }
+
+    // ─── Query builder ────────────────────────────────────────────────────────
+
     private function buildQuery()
     {
-        $q = ResultadoScraping::with('sitio')->orderBy($this->ordenar, $this->direccion);
+        $q = ResultadoScraping::with('sitio')
+            ->orderBy($this->ordenar, $this->direccion);
+
+        // Eager load feedback for current user (no N+1)
+        if (Auth::check()) {
+            $q->withFeedbackFromUser(Auth::id());
+        }
 
         if ($this->busqueda) {
             $b = '%'.$this->busqueda.'%';
@@ -178,6 +305,8 @@ class Resultados extends Component
 
         return $q;
     }
+
+    // ─── Computed ─────────────────────────────────────────────────────────────
 
     #[Computed]
     public function paises()

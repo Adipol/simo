@@ -1,11 +1,15 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Providers;
 
 use App\Models\Cambio;
 use App\Models\ResultadoScraping;
 use App\Observers\CambioObserver;
 use App\Observers\ResultadoScrapingObserver;
+use App\Services\Gemini\GeminiPromptBuilder;
+use App\Services\Gemini\PepCatalogService;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -15,7 +19,13 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        $this->app->singleton(PepCatalogService::class);
+
+        $this->app->singleton(GeminiPromptBuilder::class, function ($app) {
+            return new GeminiPromptBuilder(
+                catalog: $app->make(PepCatalogService::class),
+            );
+        });
     }
 
     /**

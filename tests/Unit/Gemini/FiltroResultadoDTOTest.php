@@ -116,4 +116,33 @@ class FiltroResultadoDTOTest extends TestCase
         $ref = new \ReflectionClass($dto);
         $this->assertTrue($ref->isReadOnly());
     }
+
+    // ─── entidadTipo field ───────────────────────────────────────────────────
+
+    public function test_from_array_parses_entidad_tipo_field(): void
+    {
+        $data = array_merge($this->validData(), ['entidad_tipo' => 'publica']);
+
+        $dto = FiltroResultadoDTO::fromArray($data);
+
+        $this->assertSame('publica', $dto->entidadTipo);
+    }
+
+    public function test_from_array_entidad_tipo_defaults_to_null_when_missing(): void
+    {
+        $data = $this->validData(); // no entidad_tipo key
+
+        $dto = FiltroResultadoDTO::fromArray($data);
+
+        $this->assertNull($dto->entidadTipo);
+    }
+
+    public function test_from_array_entidad_tipo_accepts_all_valid_values(): void
+    {
+        foreach (['publica', 'privada', 'desconocido'] as $value) {
+            $data = array_merge($this->validData(), ['entidad_tipo' => $value]);
+            $dto = FiltroResultadoDTO::fromArray($data);
+            $this->assertSame($value, $dto->entidadTipo);
+        }
+    }
 }

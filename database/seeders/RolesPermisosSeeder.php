@@ -19,6 +19,7 @@ class RolesPermisosSeeder extends Seeder
         $permisos = [
             // Dashboard
             'ver dashboard',
+            'ver dashboard estadisticas',
 
             // Scraper — lectura y acciones de usuario
             'ver resultados scraper',
@@ -29,6 +30,12 @@ class RolesPermisosSeeder extends Seeder
             // Scraper — gestion (CRUD sitios y keywords)
             'gestionar sitios',
             'gestionar keywords',
+            'gestionar familias lemas',
+            'gestionar cargos pep',
+            'gestionar entidades publicas',
+
+            // Scraper — feedback de clasificaciones Gemini
+            'dar feedback clasificaciones',
 
             // PEP Monitor — lectura y acciones
             'ver cambios pep',
@@ -59,12 +66,14 @@ class RolesPermisosSeeder extends Seeder
         $supervisor = Role::firstOrCreate(['name' => 'supervisor']);
         $supervisor->syncPermissions([
             'ver dashboard',
+            'ver dashboard estadisticas',
             'ver resultados scraper',
             'marcar leido',
             'marcar relevante',
             'exportar csv scraper',
             'gestionar sitios',
             'gestionar keywords',
+            'dar feedback clasificaciones',
             'ver cambios pep',
             'marcar revisado pep',
             'gestionar fuentes',

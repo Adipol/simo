@@ -1,0 +1,198 @@
+<div>
+    {{-- Header --}}
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h1 class="text-xl font-semibold text-gray-900">Cargos PEP</h1>
+            <p class="text-sm text-gray-400 mt-0.5">Cargos de Personas Expuestas Políticamente por país</p>
+        </div>
+        @can('gestionar cargos pep')
+        <button wire:click="abrirModal()" class="simo-btn-primary text-sm px-4 py-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+            </svg>
+            Nuevo cargo
+        </button>
+        @endcan
+    </div>
+
+    {{-- Filtros --}}
+    <div class="simo-card mb-4 flex gap-2 flex-wrap items-center">
+        <div class="flex-1 min-w-[200px]">
+            <input wire:model.live.debounce.400ms="busqueda" type="text"
+                placeholder="Buscar cargo..."
+                class="simo-input" />
+        </div>
+        <select wire:model.live="filtroPais" class="simo-select">
+            <option value="">Todos los países</option>
+            @foreach($this->paises as $pais)
+                <option value="{{ $pais->codigo }}">{{ $pais->nombre }}</option>
+            @endforeach
+        </select>
+        <select wire:model.live="filtroCategoria" class="simo-select">
+            <option value="">Todas las categorías</option>
+            @foreach($this->categorias as $cat)
+                <option value="{{ $cat }}">{{ $cat }}</option>
+            @endforeach
+        </select>
+        <select wire:model.live="filtroEntidadTipo" class="simo-select">
+            <option value="">Todos los tipos</option>
+            @foreach($this->entidadTipos as $tipo)
+                <option value="{{ $tipo->value }}">{{ ucfirst($tipo->value) }}</option>
+            @endforeach
+        </select>
+        <select wire:model.live="filtroActivo" class="simo-select">
+            <option value="">Todos</option>
+            <option value="1">Activos</option>
+            <option value="0">Inactivos</option>
+        </select>
+    </div>
+
+    {{-- Tabla --}}
+    <div class="simo-card p-0 overflow-hidden">
+        <table class="simo-table min-w-full">
+            <thead>
+                <tr>
+                    <th>Cargo</th>
+                    <th>País</th>
+                    <th>Categoría</th>
+                    <th>Tipo Entidad</th>
+                    <th>Estado</th>
+                    @can('gestionar cargos pep')
+                    <th>Acciones</th>
+                    @endcan
+                </tr>
+            </thead>
+            <tbody>
+                @forelse($cargos as $cargo)
+                    <tr>
+                        <td>
+                            <div class="font-medium text-gray-800">{{ $cargo->nombre }}</div>
+                        </td>
+                        <td class="text-sm text-gray-600">
+                            {{ $cargo->pais?->nombre ?? $cargo->pais_codigo }}
+                        </td>
+                        <td class="text-sm text-gray-600">
+                            {{ $cargo->categoria }}
+                        </td>
+                        <td>
+                            <span class="simo-badge
+                                @if($cargo->entidad_tipo->value === 'todas') bg-purple-50 text-purple-700
+                                @elseif($cargo->entidad_tipo->value === 'publica') bg-blue-50 text-blue-700
+                                @else bg-amber-50 text-amber-700 @endif
+                            ">
+                                {{ ucfirst($cargo->entidad_tipo->value) }}
+                            </span>
+                        </td>
+                        <td>
+                            <span class="simo-badge {{ $cargo->activo ? 'bg-green-50 text-green-700' : 'bg-zinc-100 text-zinc-500 border-zinc-200' }}">
+                                <span class="w-1.5 h-1.5 rounded-full {{ $cargo->activo ? 'bg-green-500' : 'bg-zinc-400' }}"></span>
+                                {{ $cargo->activo ? 'Activo' : 'Inactivo' }}
+                            </span>
+                        </td>
+                        @can('gestionar cargos pep')
+                        <td>
+                            <div class="flex items-center gap-1">
+                                <button wire:click="abrirModal({{ $cargo->id }})"
+                                        class="simo-btn-ghost text-xs">
+                                    Editar
+                                </button>
+                                <button wire:click="toggleActivo({{ $cargo->id }})"
+                                        class="simo-btn-ghost text-xs text-gray-400">
+                                    {{ $cargo->activo ? 'Desactivar' : 'Activar' }}
+                                </button>
+                                <button wire:click="eliminar({{ $cargo->id }})"
+                                        wire:confirm="¿Eliminar este cargo?"
+                                        class="simo-btn-ghost text-xs text-red-400">
+                                    Eliminar
+                                </button>
+                            </div>
+                        </td>
+                        @endcan
+                    </tr>
+                @empty
+                    <tr>
+                        <td colspan="6" class="py-12 text-center text-gray-400">
+                            <svg class="w-8 h-8 mx-auto mb-2 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                                    d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
+                            </svg>
+                            Sin cargos registrados.
+                        </td>
+                    </tr>
+                @endforelse
+            </tbody>
+        </table>
+        <div class="px-5 py-3 border-t border-gray-100">{{ $cargos->links() }}</div>
+    </div>
+
+    {{-- Modal --}}
+    @if($modalAbierto)
+    <div class="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+         wire:click.self="cerrarModal">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg">
+            {{-- Modal header --}}
+            <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                <h2 class="font-semibold text-gray-800">{{ $editandoId ? 'Editar cargo' : 'Nuevo cargo' }}</h2>
+                <button wire:click="cerrarModal"
+                    class="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition text-lg leading-none">
+                    &times;
+                </button>
+            </div>
+
+            {{-- Modal body --}}
+            <div class="px-6 py-5 space-y-4">
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 mb-1">Cargo *</label>
+                    <input wire:model="nombre" type="text" class="simo-input @error('nombre') border-red-400 @enderror" />
+                    @error('nombre') <p class="text-red-500 text-xs mt-1">{{ $message }}</p> @enderror
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 mb-1">País *</label>
+                    <select wire:model="paisCodigo" class="simo-select w-full @error('paisCodigo') border-red-400 @enderror">
+                        <option value="">— Seleccionar país —</option>
+                        @foreach($this->paises as $pais)
+                            <option value="{{ $pais->codigo }}">{{ $pais->nombre }}</option>
+                        @endforeach
+                    </select>
+                    @error('paisCodigo') <p class="text-red-500 text-xs mt-1">{{ $message }}</p> @enderror
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 mb-1">Categoría *</label>
+                    <input wire:model="categoria" type="text" class="simo-input @error('categoria') border-red-400 @enderror"
+                           placeholder="Ej: Ejecutivo, Legislativo, Judicial" />
+                    @error('categoria') <p class="text-red-500 text-xs mt-1">{{ $message }}</p> @enderror
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Tipo Entidad *</label>
+                        <select wire:model="entidadTipo" class="simo-select w-full @error('entidadTipo') border-red-400 @enderror">
+                            <option value="">— Seleccionar tipo —</option>
+                            @foreach($this->entidadTipos as $tipo)
+                                <option value="{{ $tipo->value }}">{{ ucfirst($tipo->value) }}</option>
+                            @endforeach
+                        </select>
+                        @error('entidadTipo') <p class="text-red-500 text-xs mt-1">{{ $message }}</p> @enderror
+                    </div>
+                    <div class="flex items-end pb-1">
+                        <label class="flex items-center gap-2 text-sm cursor-pointer">
+                            <input wire:model="activo" type="checkbox"
+                                class="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+                            <span class="text-gray-700">Activo</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            {{-- Modal footer --}}
+            <div class="flex justify-end gap-2 px-6 py-4 border-t border-gray-100 bg-gray-50/50 rounded-b-2xl">
+                <button wire:click="cerrarModal" class="simo-btn-ghost text-sm px-4 py-2 border border-gray-200">
+                    Cancelar
+                </button>
+                <button wire:click="guardar" class="simo-btn-primary text-sm px-4 py-2">
+                    Guardar
+                </button>
+            </div>
+        </div>
+    </div>
+    @endif
+</div>

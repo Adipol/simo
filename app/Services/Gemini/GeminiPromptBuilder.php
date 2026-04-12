@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace App\Services\Gemini;
 
+use App\Enums\EntidadTipo;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Log;
+
 class GeminiPromptBuilder
 {
     private const MAX_DIFF_CHARS = 12000;
@@ -12,10 +16,114 @@ class GeminiPromptBuilder
 
     private const MAX_DIFF_FOR_EXCERPT = 15000;
 
+    public function __construct(
+        private readonly ?PepCatalogService $catalog = null,
+    ) {}
+
     /**
      * Build a prompt for Gemini Flash to classify PEP/OPI.
      */
     public function filtroPEP(string $texto, string $pais, string $categoria): string
+    {
+        if ($this->catalog !== null) {
+            $cargos = $this->catalog->getCargos($pais);
+            $entidades = $this->catalog->getEntidades($pais);
+
+            if ($cargos->isNotEmpty()) {
+                return $this->buildDynamicPrompt($cargos, $entidades, $pais, $categoria, $texto);
+            }
+
+            $this->logNoPepPositions($pais);
+        }
+
+        return $this->buildGenericPrompt($pais, $categoria, $texto);
+    }
+
+    private function entidadTipoValue(EntidadTipo|string $tipo): string
+    {
+        return $tipo instanceof EntidadTipo ? $tipo->value : $tipo;
+    }
+
+    private function logNoPepPositions(string $pais): void
+    {
+        try {
+            Log::channel('gemini')->warning("No PEP positions for country: {$pais}");
+        } catch (\RuntimeException) {
+            // Facade not available in pure unit test context
+        }
+    }
+
+    private function buildDynamicPrompt(
+        Collection $cargos,
+        Collection $entidades,
+        string $pais,
+        string $categoria,
+        string $texto,
+    ): string {
+        $siemprePep = $cargos
+            ->filter(fn ($c) => $this->entidadTipoValue($c->entidad_tipo) === EntidadTipo::Todas->value)
+            ->map(fn ($c) => '- '.$c->nombre)
+            ->implode("\n");
+
+        $pepEnPublica = $cargos
+            ->filter(fn ($c) => $this->entidadTipoValue($c->entidad_tipo) === EntidadTipo::Publica->value)
+            ->map(fn ($c) => '- '.$c->nombre)
+            ->implode("\n");
+
+        $puedeSerPep = $cargos
+            ->filter(fn ($c) => $this->entidadTipoValue($c->entidad_tipo) === EntidadTipo::Ambas->value)
+            ->map(fn ($c) => '- '.$c->nombre)
+            ->implode("\n");
+
+        $entidadesStr = $entidades
+            ->map(fn ($e) => $e->nombre)
+            ->implode(', ');
+
+        $entidadesLine = $entidadesStr !== ''
+            ? "Entidades públicas conocidas de {$pais}: {$entidadesStr}"
+            : '';
+
+        return <<<PROMPT
+Sos un experto en análisis de riesgo financiero y compliance AML/CFT en {$pais}.
+Tu tarea: analizar el siguiente texto y determinar si menciona a una persona que sea PEP (Persona Políticamente Expuesta) u OPI (persona vinculada a crimen organizado o bajo investigación judicial).
+
+DEFINICIONES PEP para {$pais}:
+
+SIEMPRE_PEP (siempre son PEP independientemente de la entidad donde trabajen):
+{$siemprePep}
+
+PEP_EN_ENTIDAD_PUBLICA (son PEP solo si están en una entidad pública):
+{$pepEnPublica}
+
+PUEDE_SER_PEP (depende del contexto; considerar especialmente si están en estas entidades):
+{$puedeSerPep}
+{$entidadesLine}
+
+- OPI: líderes de organizaciones criminales, personas bajo investigación por lavado de activos o narcotráfico
+
+Devolvé ÚNICAMENTE el siguiente JSON, sin explicaciones adicionales:
+{"is_pep":boolean,"nombre":string|null,"cargo":string|null,"categoria":"PEP"|"OPI"|null,"entidad_tipo":"publica"|"privada"|"desconocido"|null,"confianza":0-100,"motivo":string}
+
+EJEMPLOS:
+
+[PEP+] "El ministro de Economía Juan Pérez firmó el decreto de aumento salarial"
+→ {"is_pep":true,"nombre":"Juan Pérez","cargo":"Ministro de Economía","categoria":"PEP","entidad_tipo":"publica","confianza":95,"motivo":"Cargo ejecutivo de alto nivel en cartera ministerial"}
+
+[OPI+] "El líder de la organización criminal Rodrigo Vargas fue capturado en Operativo Sur"
+→ {"is_pep":true,"nombre":"Rodrigo Vargas","cargo":null,"categoria":"OPI","entidad_tipo":"desconocido","confianza":92,"motivo":"Líder de organización criminal vinculado al narcotráfico"}
+
+[NEG] "El delantero Carlos Torres anotó el gol del campeonato en el estadio Luna"
+→ {"is_pep":false,"nombre":null,"cargo":null,"categoria":null,"entidad_tipo":null,"confianza":90,"motivo":"Texto deportivo sin mención de cargos públicos ni actividad criminal"}
+
+Categoría investigada: {$categoria}
+País: {$pais}
+
+TEXTO:
+{$texto}
+PROMPT;
+    }
+
+    private function buildGenericPrompt(string $pais, string $categoria, string $texto): string
     {
         return <<<PROMPT
 Sos un experto en análisis de riesgo financiero y compliance AML/CFT en {$pais}.
@@ -26,18 +134,18 @@ DEFINICIONES:
 - OPI: líderes de organizaciones criminales, personas bajo investigación por lavado de activos o narcotráfico
 
 Devolvé ÚNICAMENTE el siguiente JSON, sin explicaciones adicionales:
-{"is_pep":boolean,"nombre":string|null,"cargo":string|null,"categoria":"PEP"|"OPI"|null,"confianza":0-100,"motivo":string}
+{"is_pep":boolean,"nombre":string|null,"cargo":string|null,"categoria":"PEP"|"OPI"|null,"entidad_tipo":"publica"|"privada"|"desconocido"|null,"confianza":0-100,"motivo":string}
 
 EJEMPLOS:
 
 [PEP+] "El ministro de Economía Juan Pérez firmó el decreto de aumento salarial"
-→ {"is_pep":true,"nombre":"Juan Pérez","cargo":"Ministro de Economía","categoria":"PEP","confianza":95,"motivo":"Cargo ejecutivo de alto nivel en cartera ministerial"}
+→ {"is_pep":true,"nombre":"Juan Pérez","cargo":"Ministro de Economía","categoria":"PEP","entidad_tipo":"publica","confianza":95,"motivo":"Cargo ejecutivo de alto nivel en cartera ministerial"}
 
 [OPI+] "El líder de la organización criminal Rodrigo Vargas fue capturado en Operativo Sur"
-→ {"is_pep":true,"nombre":"Rodrigo Vargas","cargo":null,"categoria":"OPI","confianza":92,"motivo":"Líder de organización criminal vinculado al narcotráfico"}
+→ {"is_pep":true,"nombre":"Rodrigo Vargas","cargo":null,"categoria":"OPI","entidad_tipo":"desconocido","confianza":92,"motivo":"Líder de organización criminal vinculado al narcotráfico"}
 
 [NEG] "El delantero Carlos Torres anotó el gol del campeonato en el estadio Luna"
-→ {"is_pep":false,"nombre":null,"cargo":null,"categoria":null,"confianza":90,"motivo":"Texto deportivo sin mención de cargos públicos ni actividad criminal"}
+→ {"is_pep":false,"nombre":null,"cargo":null,"categoria":null,"entidad_tipo":null,"confianza":90,"motivo":"Texto deportivo sin mención de cargos públicos ni actividad criminal"}
 
 Categoría investigada: {$categoria}
 País: {$pais}

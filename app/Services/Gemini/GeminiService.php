@@ -132,6 +132,7 @@ class GeminiService
             default => new GeminiException("Gemini API error ({$status}): {$body}"),
         };
     }
+
     /**
      * Clean markdown code blocks from JSON response.
      */
@@ -140,7 +141,7 @@ class GeminiService
         // Remove ```json ... ``` or ``` ...``` wrappers
         $text = preg_replace('/^```(?:json)?\s*\n?/i', '', $text);
         $text = preg_replace('/\n?```\s*$/i', '', $text);
-        
+
         return trim($text);
     }
 }

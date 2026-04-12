@@ -13,6 +13,7 @@ final readonly class FiltroResultadoDTO
         public ?string $nombre,
         public ?string $cargo,
         public ?string $categoria,
+        public ?string $entidadTipo,
         public int $confianza,
         public string $motivo,
     ) {}
@@ -34,6 +35,7 @@ final readonly class FiltroResultadoDTO
             nombre: $data['nombre'] ?? null,
             cargo: $data['cargo'] ?? null,
             categoria: $data['categoria'] ?? null,
+            entidadTipo: $data['entidad_tipo'] ?? null,
             confianza: (int) $data['confianza'],
             motivo: (string) $data['motivo'],
         );

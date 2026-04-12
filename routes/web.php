@@ -5,6 +5,9 @@ use App\Livewire\Configuracion\Paises;
 use App\Livewire\Dashboard;
 use App\Livewire\Pep\Cambios;
 use App\Livewire\Pep\Fuentes;
+use App\Livewire\Scraper\CargosPep;
+use App\Livewire\Scraper\EntidadesPublicas;
+use App\Livewire\Scraper\FamiliasLemas;
 use App\Livewire\Scraper\Keywords;
 use App\Livewire\Scraper\Resultados;
 use App\Livewire\Scraper\Sitios;
@@ -33,6 +36,15 @@ Route::middleware(['auth', 'usuario.activo'])->group(function () {
     Route::get('/scraper/keywords', Keywords::class)
         ->middleware('permission:gestionar keywords')
         ->name('scraper.keywords');
+    Route::get('/scraper/familias-lemas', FamiliasLemas::class)
+        ->middleware('permission:gestionar familias lemas')
+        ->name('scraper.familias-lemas');
+    Route::get('/scraper/cargos-pep', CargosPep::class)
+        ->middleware('permission:gestionar cargos pep')
+        ->name('scraper.cargos-pep');
+    Route::get('/scraper/entidades-publicas', EntidadesPublicas::class)
+        ->middleware('permission:gestionar entidades publicas')
+        ->name('scraper.entidades-publicas');
 
     // PEP Monitor — lectura (todos los roles)
     Route::get('/pep/cambios', Cambios::class)->name('pep.cambios');

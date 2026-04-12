@@ -8,6 +8,8 @@ use App\Exceptions\Gemini\GeminiBadRequestException;
 use App\Exceptions\Gemini\GeminiInvalidResponseException;
 use App\Models\ResultadoScraping;
 use App\Services\Gemini\DTOs\FiltroResultadoDTO;
+use App\Services\Normalization\NombreNormalizador;
+use App\Services\Normalization\NombreNormalizadorInterface;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 
@@ -16,6 +18,7 @@ class GeminiFiltroService
     public function __construct(
         private GeminiService $gemini,
         private GeminiPromptBuilder $builder,
+        private NombreNormalizadorInterface $normalizador = new NombreNormalizador,
     ) {}
 
     public function analizarLote(Collection $records): void
@@ -46,12 +49,25 @@ class GeminiFiltroService
 
     private function persistirResultado(ResultadoScraping $record, FiltroResultadoDTO $dto): void
     {
+        $normalizado = null;
+        try {
+            $normalizacion = $this->normalizador->normalizeNullable($dto->nombre);
+            $normalizado = $normalizacion?->normalized;
+        } catch (\Throwable $e) {
+            Log::warning('Name normalization failed in GeminiFiltroService', [
+                'nombre' => $dto->nombre,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
         $record->update([
             'gemini_analyzed' => true,
             'gemini_is_pep' => $dto->isPep,
             'gemini_nombre' => $dto->nombre,
+            'gemini_nombre_normalizado' => $normalizado,
             'gemini_cargo' => $dto->cargo,
             'gemini_categoria' => $dto->categoria,
+            'gemini_entidad_tipo' => $dto->entidadTipo,
             'gemini_confianza' => $dto->confianza,
             'gemini_motivo' => $dto->motivo,
         ]);

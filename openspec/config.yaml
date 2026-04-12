@@ -1,0 +1,59 @@
+# SDD Configuration — SIMO Project
+# Generated: 2026-04-08
+# Mode: engram (single developer, fast iteration)
+
+schema: spec-driven
+
+context: |
+  Tech stack: Laravel 12, Livewire 4, PHP 8.2, PostgreSQL 17, Python 3.12
+  Architecture: Clean Architecture (Services, DTOs, Observers, Jobs)
+  Testing: PHPUnit 11.5 (Unit + Feature, in-memory SQLite)
+  Style: Laravel Pint (PSR-12)
+  AI: Gemini (Flash filtering, Pro analysis)
+  
+strict_tdd: true
+
+testing:
+  runner: php artisan test
+  framework: PHPUnit 11.5.3
+  coverage: false
+  
+  layers:
+    unit: true
+    feature: true
+    integration: true
+    e2e: false
+
+quality:
+  linter: ./vendor/bin/pint
+  formatter: ./vendor/bin/pint
+  type_checker: null
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Identify affected modules/packages
+    
+  specs:
+    - Use Given/When/Then format for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+    
+  design:
+    - Sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+    
+  tasks:
+    - Group by phase (infrastructure, implementation, testing)
+    - Use hierarchical numbering (1.1, 1.2)
+    - Small enough for one session
+    
+  apply:
+    - Follow existing code patterns
+    - Load relevant coding skills
+    
+  verify:
+    - Run tests if infrastructure exists
+    - Compare against every spec scenario
+    
+  archive:
+    - Warn before destructive deltas
