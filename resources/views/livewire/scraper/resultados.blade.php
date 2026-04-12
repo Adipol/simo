@@ -79,7 +79,7 @@
             </thead>
             <tbody class="divide-y divide-gray-50">
                 @forelse($resultados as $r)
-                    <tr class="{{ !$r->leido && !$r->descartado ? 'bg-indigo-50/30' : 'bg-white' }}">
+                    <tr wire:key="resultado-{{ $r->id }}" class="{{ !$r->leido && !$r->descartado ? 'bg-indigo-50/30' : 'bg-white' }}">
                         <td>
                             <div class="flex items-start gap-2">
                                 @if(!$r->leido && !$r->descartado)
