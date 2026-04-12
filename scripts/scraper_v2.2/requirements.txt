@@ -1,0 +1,27 @@
+# Web Scraper v2.2.0 - Dependencias
+# ==================================
+
+# Selenium para scraping (modo completo)
+selenium>=4.15.0
+
+# Gestión automática de ChromeDriver
+webdriver-manager>=4.0.0
+
+# MySQL connector
+mysql-connector-python>=8.2.0
+
+# PostgreSQL connector (para soporte dual MySQL/PostgreSQL)
+psycopg2-binary>=2.9.0
+
+# Variables de entorno
+python-dotenv>=1.0.0
+
+# MODO RÁPIDO: requests + BeautifulSoup
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+
+# NLP — lematización morfológica
+spacy>=3.7.0
+
+# Testing
+pytest>=7.4.0
