@@ -44,7 +44,7 @@
             </thead>
             <tbody>
                 @forelse($keywords as $k)
-                    <tr>
+                    <tr wire:key="keyword-{{ $k->id }}">
                         <td class="font-medium text-gray-800">{{ $k->keyword }}</td>
                         <td>
                             @if($k->categoria)
