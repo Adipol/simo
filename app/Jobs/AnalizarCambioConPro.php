@@ -52,8 +52,10 @@ class AnalizarCambioConPro implements ShouldQueue
 
     public function failed(\Throwable $e): void
     {
-        $count = Cambio::where('gemini_analyzed', false)
-            ->update(['gemini_analyzed' => true]);
+        $count = $this->pendingQuery()->limit(10)
+            ->pluck('id')
+            ->tap(fn ($ids) => Cambio::whereIn('id', $ids)->update(['gemini_analyzed' => true]))
+            ->count();
 
         Log::channel('gemini')->error('Job AnalizarCambioConPro failed', [
             'exception' => $e::class,

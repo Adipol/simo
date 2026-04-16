@@ -101,7 +101,7 @@ class RolesPermisosSeeder extends Seeder
             ['email' => 'admin@simo.local'],
             [
                 'name' => 'Administrador',
-                'password' => Hash::make('password'),
+                'password' => Hash::make(env('ADMIN_PASSWORD', 'changeme')),
                 'activo' => true,
             ]
         );
@@ -112,7 +112,7 @@ class RolesPermisosSeeder extends Seeder
             ['email' => 'siri@email.com'],
             [
                 'name' => 'Siri Admin',
-                'password' => Hash::make('siri0213'),
+                'password' => Hash::make(env('ADMIN_PASSWORD', 'changeme')),
                 'activo' => true,
             ]
         );

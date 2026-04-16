@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\MassPrunable;
@@ -80,7 +82,7 @@ class LogScript extends Model
                 'estado' => 'interrumpido',
                 'fin' => now(),
                 'mensaje_error' => 'Proceso interrumpido: no se registró fin dentro del timeout.',
-                'duracion_segundos' => DB::raw('TIMESTAMPDIFF(SECOND, inicio, NOW())'),
+                'duracion_segundos' => DB::raw('EXTRACT(EPOCH FROM (NOW() - inicio))::integer'),
             ]);
     }
 

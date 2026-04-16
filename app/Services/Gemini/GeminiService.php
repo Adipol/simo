@@ -15,13 +15,14 @@ use Illuminate\Support\Facades\Log;
 
 class GeminiService
 {
-    private string $baseUrl = 'https://generativelanguage.googleapis.com/v1beta/models/';
+    private string $baseUrl;
 
     public function __construct(
         private ?string $apiKey = null,
-        private int $timeout = 90,
+        private ?int $timeout = null,
     ) {
         $this->apiKey = $apiKey ?? config('services.gemini.api_key');
+        $this->baseUrl = config('services.gemini.base_url', 'https://generativelanguage.googleapis.com/v1beta/models/');
         $this->timeout = $timeout ?? (int) config('services.gemini.timeout', 90);
     }
 
@@ -47,7 +48,7 @@ class GeminiService
         $url = "{$this->baseUrl}{$model}:generateContent?key={$this->apiKey}";
 
         $response = Http::timeout($this->timeout)
-            ->withoutVerifying() // Disable SSL verification for local development
+            ->when(app()->environment('local'), fn ($http) => $http->withoutVerifying())
             ->post($url, $this->buildRequestBody($prompt));
 
         if ($response->failed()) {
