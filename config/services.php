@@ -43,6 +43,7 @@ return [
         'timeout' => (int) env('GEMINI_TIMEOUT', 90),
         'flash_delay' => (int) env('GEMINI_FLASH_DELAY', 4),
         'pro_delay' => (int) env('GEMINI_PRO_DELAY', 30),
+        'min_confianza_pep' => (int) env('GEMINI_MIN_CONFIANZA_PEP', 70),
     ],
 
 ];

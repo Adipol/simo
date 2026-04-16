@@ -220,6 +220,105 @@ class GeminiPromptBuilderTest extends TestCase
     }
 
     // ============================================
+    // Reglas de clasificación (mejorar-filtro-gemini)
+    // ============================================
+
+    public function test_prompt_contains_reglas_de_clasificacion_section(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test text', 'Bolivia', 'designacion');
+
+        $this->assertStringContainsString('REGLAS DE CLASIFICACIÓN', $prompt);
+        $this->assertStringContainsString('EXPLÍCITAMENTE', $prompt);
+        $this->assertStringContainsString('PRINCIPALMENTE', $prompt);
+        $this->assertStringContainsString('SUJETO ACTIVO', $prompt);
+    }
+
+    public function test_dynamic_prompt_contains_reglas_de_clasificacion_section(): void
+    {
+        $cargos = collect([
+            (object) ['nombre' => 'Diputado', 'entidad_tipo' => 'todas'],
+        ]);
+
+        $catalog = $this->createMock(PepCatalogService::class);
+        $catalog->method('getCargos')->willReturn($cargos);
+        $catalog->method('getEntidades')->willReturn(collect([]));
+
+        $builder = new GeminiPromptBuilder($catalog);
+        $prompt = $builder->filtroPEP('Test text', 'Bolivia', 'crimen');
+
+        $this->assertStringContainsString('REGLAS DE CLASIFICACIÓN', $prompt);
+    }
+
+    // ============================================
+    // Ejemplos negativos (mejorar-filtro-gemini)
+    // ============================================
+
+    public function test_prompt_contains_negative_examples_fiebre_amarilla(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test text', 'Bolivia', 'designacion');
+
+        $this->assertStringContainsString('fiebre amarilla', $prompt);
+    }
+
+    public function test_prompt_contains_negative_examples_protesta_social(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test text', 'Bolivia', 'crimen');
+
+        $this->assertStringContainsString('protesta', $prompt);
+    }
+
+    public function test_prompt_contains_negative_example_directora_hospital(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test text', 'Bolivia', 'designacion');
+
+        $this->assertStringContainsString('hospital', $prompt);
+    }
+
+    public function test_prompt_has_at_least_three_negative_examples(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test text', 'Bolivia', 'designacion');
+
+        // Count [NEG] markers — should be at least 4 (1 original + 3 new)
+        $this->assertGreaterThanOrEqual(4, substr_count($prompt, '[NEG]'));
+    }
+
+    // ============================================
+    // Contexto de categoría (mejorar-filtro-gemini)
+    // ============================================
+
+    public function test_prompt_includes_crimen_category_context(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test text', 'Bolivia', 'crimen');
+
+        $this->assertStringContainsString('CONTEXTO DE BÚSQUEDA', $prompt);
+        $this->assertStringContainsString('crimen', $prompt);
+        $this->assertStringContainsString('actor institucional', $prompt);
+    }
+
+    public function test_prompt_includes_designacion_category_context(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test text', 'Bolivia', 'designacion');
+
+        $this->assertStringContainsString('CONTEXTO DE BÚSQUEDA', $prompt);
+        $this->assertStringContainsString('designacion', $prompt);
+    }
+
+    public function test_prompt_includes_renuncia_category_context(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test text', 'Bolivia', 'renuncia');
+
+        $this->assertStringContainsString('CONTEXTO DE BÚSQUEDA', $prompt);
+        $this->assertStringContainsString('renuncia', $prompt);
+    }
+
+    public function test_prompt_has_no_category_context_for_unknown_category(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test text', 'Bolivia', 'otra_cosa');
+
+        $this->assertStringNotContainsString('CONTEXTO DE BÚSQUEDA', $prompt);
+    }
+
+    // ============================================
     // analisisCambio tests
     // ============================================
 

@@ -60,21 +60,36 @@ class GeminiFiltroService
             ]);
         }
 
+        $minConfianza = (int) config('services.gemini.min_confianza_pep', 70);
+        $isPep = $dto->isPep;
+        $motivo = $dto->motivo;
+
+        if ($dto->isPep && $dto->confianza < $minConfianza) {
+            $isPep = false;
+            $motivo = "[THRESHOLD] Confianza {$dto->confianza} < mínimo {$minConfianza}. Original: {$dto->motivo}";
+
+            Log::channel('gemini')->warning('PEP descartado por threshold', [
+                'record_id' => $record->id,
+                'confianza' => $dto->confianza,
+                'threshold' => $minConfianza,
+            ]);
+        }
+
         $record->update([
             'gemini_analyzed' => true,
-            'gemini_is_pep' => $dto->isPep,
+            'gemini_is_pep' => $isPep,
             'gemini_nombre' => $dto->nombre,
             'gemini_nombre_normalizado' => $normalizado,
             'gemini_cargo' => $dto->cargo,
             'gemini_categoria' => $dto->categoria,
             'gemini_entidad_tipo' => $dto->entidadTipo,
             'gemini_confianza' => $dto->confianza,
-            'gemini_motivo' => $dto->motivo,
+            'gemini_motivo' => $motivo,
         ]);
 
         Log::channel('gemini')->info('FiltroPEP completado', [
             'record_id' => $record->id,
-            'is_pep' => $dto->isPep,
+            'is_pep' => $isPep,
             'categoria' => $dto->categoria,
             'confianza' => $dto->confianza,
         ]);
