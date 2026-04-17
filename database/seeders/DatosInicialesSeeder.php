@@ -44,29 +44,5 @@ class DatosInicialesSeeder extends Seeder
         }
 
         $this->command->info('Sitios web insertados: '.count($sitios));
-
-        // ── Palabras clave ────────────────────────────────────────
-        $keywords = [
-            'Juramento', 'designado', 'nombramiento', 'posesionado', 'jura',
-            'electo', 'ratificado', 'ministro', 'viceministro', 'magistrado',
-            'gobernador', 'fiscal', 'rector', 'vicerrector', 'decanos',
-            'vicegobernador', 'asambleista', 'alcalde', 'subalcalde', 'comandante',
-            'subcomandante', 'procurador', 'subprocurador', 'contralor', 'subcontralor',
-            'embajador', 'cónsul', 'designase', 'posesionan', 'posesionarán',
-        ];
-
-        foreach ($keywords as $kw) {
-            DB::table('palabras_clave')->updateOrInsert(
-                ['keyword' => $kw],
-                [
-                    'keyword' => $kw,
-                    'categoria' => 'PEP',
-                    'activo' => true,
-                    'fecha_creacion' => now(),
-                ]
-            );
-        }
-
-        $this->command->info('Palabras clave insertadas: '.count($keywords));
     }
 }

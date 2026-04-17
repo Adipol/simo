@@ -17,17 +17,17 @@
 @layer components {
 
     /* ── Sidebar ── */
-    .sidebar-link {
+    .simo-sidebar-link {
         @apply flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all
                text-white/50 hover:text-white hover:bg-white/10;
     }
-    .sidebar-link-active {
+    .simo-simo-sidebar-link-active {
         @apply text-white bg-white/10 font-medium;
     }
-    .sidebar-icon {
+    .simo-sidebar-icon {
         @apply w-4 h-4 shrink-0;
     }
-    .sidebar-section {
+    .simo-sidebar-section {
         @apply pt-5 pb-1 px-3 text-[10px] font-semibold uppercase tracking-widest text-white/20;
     }
 

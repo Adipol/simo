@@ -27,9 +27,8 @@ class RolesPermisosSeeder extends Seeder
             'marcar relevante',
             'exportar csv scraper',
 
-            // Scraper — gestion (CRUD sitios y keywords)
+            // Scraper — gestion (CRUD sitios y lemas)
             'gestionar sitios',
-            'gestionar keywords',
             'gestionar familias lemas',
             'gestionar cargos pep',
             'gestionar entidades publicas',
@@ -72,7 +71,6 @@ class RolesPermisosSeeder extends Seeder
             'marcar relevante',
             'exportar csv scraper',
             'gestionar sitios',
-            'gestionar keywords',
             'dar feedback clasificaciones',
             'ver cambios pep',
             'marcar revisado pep',

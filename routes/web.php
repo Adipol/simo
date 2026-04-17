@@ -8,7 +8,6 @@ use App\Livewire\Pep\Fuentes;
 use App\Livewire\Scraper\CargosPep;
 use App\Livewire\Scraper\EntidadesPublicas;
 use App\Livewire\Scraper\FamiliasLemas;
-use App\Livewire\Scraper\Keywords;
 use App\Livewire\Scraper\Resultados;
 use App\Livewire\Scraper\Sitios;
 use App\Livewire\Scripts\Configuracion;
@@ -33,9 +32,6 @@ Route::middleware(['auth', 'usuario.activo'])->group(function () {
     Route::get('/scraper/sitios', Sitios::class)
         ->middleware('permission:gestionar sitios')
         ->name('scraper.sitios');
-    Route::get('/scraper/keywords', Keywords::class)
-        ->middleware('permission:gestionar keywords')
-        ->name('scraper.keywords');
     Route::get('/scraper/familias-lemas', FamiliasLemas::class)
         ->middleware('permission:gestionar familias lemas')
         ->name('scraper.familias-lemas');
