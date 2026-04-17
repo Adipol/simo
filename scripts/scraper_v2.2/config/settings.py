@@ -121,6 +121,11 @@ class FilterConfig:
         default_factory=lambda: int(os.getenv("MIN_RELEVANCE_SCORE", "30"))
     )
 
+    # Longitud máxima del contexto enviado a Gemini
+    max_context_length: int = field(
+        default_factory=lambda: int(os.getenv("MAX_CONTEXT_LENGTH", "2000"))
+    )
+
     # MODO RÁPIDO: Usar requests en lugar de Selenium (mucho más rápido)
     # Solo funciona bien si require_keyword_in_title=true
     use_fast_mode: bool = field(

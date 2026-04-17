@@ -76,8 +76,8 @@ class GeminiFiltroServiceTest extends TestCase
         config(['services.gemini.api_key' => 'test-key']);
 
         $r1 = $this->createRecord(['contexto' => 'Ministro Juan Pérez firmó decreto']);
-        $r2 = $this->createRecord(['contexto' => 'Líder del cartel fue capturado']);
-        $r3 = $this->createRecord(['contexto' => 'Resultado del partido de fútbol']);
+        $r2 = $this->createRecord(['contexto' => 'El fiscal general imputó al líder del cartel capturado']);
+        $r3 = $this->createRecord(['contexto' => 'El ministro de deportes asistió al partido de fútbol']);
 
         Http::fake([
             'generativelanguage.googleapis.com/*' => Http::sequence()
@@ -153,8 +153,8 @@ class GeminiFiltroServiceTest extends TestCase
     {
         config(['services.gemini.api_key' => 'test-key']);
 
-        $r1 = $this->createRecord(['contexto' => 'Record 1']);
-        $r2 = $this->createRecord(['contexto' => 'Record 2']);
+        $r1 = $this->createRecord(['contexto' => 'El presidente designó Record 1']);
+        $r2 = $this->createRecord(['contexto' => 'El fiscal general presentó Record 2']);
 
         $callCount = 0;
         Http::fake([
@@ -190,8 +190,8 @@ class GeminiFiltroServiceTest extends TestCase
     {
         config(['services.gemini.api_key' => 'test-key']);
 
-        $r1 = $this->createRecord(['contexto' => 'Record 1']);
-        $r2 = $this->createRecord(['contexto' => 'Record 2']);
+        $r1 = $this->createRecord(['contexto' => 'El presidente designó Record 1']);
+        $r2 = $this->createRecord(['contexto' => 'El fiscal general presentó Record 2']);
 
         $callCount = 0;
         Http::fake([
@@ -256,9 +256,9 @@ class GeminiFiltroServiceTest extends TestCase
     {
         config(['services.gemini.api_key' => 'test-key']);
 
-        $r1 = $this->createRecord(['contexto' => 'Record 1']);
-        $r2 = $this->createRecord(['contexto' => 'Record 2']);
-        $r3 = $this->createRecord(['contexto' => 'Record 3']);
+        $r1 = $this->createRecord(['contexto' => 'El presidente designó Record 1']);
+        $r2 = $this->createRecord(['contexto' => 'El fiscal general presentó Record 2']);
+        $r3 = $this->createRecord(['contexto' => 'El ministro anunció Record 3']);
 
         $callCount = 0;
         Http::fake([

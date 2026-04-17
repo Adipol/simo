@@ -395,8 +395,8 @@ class KeywordMatcher:
         if end < len(text):
             contexto = contexto + "..."
 
-        if len(contexto) > 400:
-            contexto = contexto[:400] + "..."
+        if len(contexto) > settings.filter.max_context_length:
+            contexto = contexto[:settings.filter.max_context_length] + "..."
 
         return contexto
 
@@ -744,10 +744,10 @@ class WebScraper:
                 if (link, keyword) in self.processed_pairs:
                     continue
 
-                # Construir contexto real: título + contenido (max 500 chars)
+                # Construir contexto real: título + contenido (max 2000 chars)
                 contexto_real = title
                 if article_content:
-                    contexto_real = f"{title}\n\n{article_content[:500]}"
+                    contexto_real = f"{title}\n\n{article_content[:settings.filter.max_context_length]}"
 
                 # En modo rápido, si está en título = relevancia alta
                 results.append(

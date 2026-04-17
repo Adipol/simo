@@ -195,7 +195,7 @@ class GeminiFiltroNormalizacionTest extends TestCase
     public function test_full_flow_analyze_persist_populates_normalized_column(): void
     {
         config(['services.gemini.api_key' => 'test-key']);
-        $record = $this->createRecord(['contexto' => 'Artículo sobre el Dr. Pedro López']);
+        $record = $this->createRecord(['contexto' => 'El ministro Dr. Pedro López firmó el acuerdo']);
 
         Http::fake([
             'generativelanguage.googleapis.com/*' => Http::response(

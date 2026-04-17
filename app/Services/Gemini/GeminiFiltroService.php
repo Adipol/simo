@@ -9,7 +9,6 @@ use App\Exceptions\Gemini\GeminiInvalidResponseException;
 use App\Models\ResultadoPersona;
 use App\Models\ResultadoScraping;
 use App\Services\Gemini\DTOs\FiltroResultadoDTO;
-use App\Services\Gemini\DTOs\PersonaDetectadaDTO;
 use App\Services\Normalization\NombreNormalizador;
 use App\Services\Normalization\NombreNormalizadorInterface;
 use Illuminate\Support\Collection;
@@ -20,6 +19,7 @@ class GeminiFiltroService
     public function __construct(
         private GeminiService $gemini,
         private GeminiPromptBuilder $builder,
+        private PreFiltroService $preFiltro = new PreFiltroService,
         private NombreNormalizadorInterface $normalizador = new NombreNormalizador,
     ) {}
 
@@ -32,6 +32,16 @@ class GeminiFiltroService
 
     private function procesarRegistro(ResultadoScraping $record): void
     {
+        if (! $this->preFiltro->shouldAnalyzeWithGemini($record)) {
+            $record->update([
+                'gemini_analyzed' => true,
+                'gemini_is_pep' => false,
+                'gemini_motivo' => '[PRE-FILTRO] Sin mención de cargo público en el texto.',
+            ]);
+
+            return;
+        }
+
         try {
             $prompt = $this->builder->filtroPEP(
                 $record->contexto ?? '',
