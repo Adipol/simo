@@ -83,7 +83,7 @@ class GeminiPromptBuilderTest extends TestCase
 
         // Falls back to generic hardcoded definitions
         $this->assertStringContainsString('ministros', $prompt);
-        $this->assertStringContainsString('is_pep', $prompt);
+        $this->assertStringContainsString('personas', $prompt);
     }
 
     public function test_constructor_with_catalog_returning_positions_builds_dynamic_prompt(): void
@@ -352,8 +352,7 @@ class GeminiPromptBuilderTest extends TestCase
     {
         $prompt = $this->builder->analisisCambio('diff', 'Fuente', 'Organismo');
 
-        $this->assertStringContainsString('ANTES:', $prompt);
-        $this->assertStringContainsString('DESPUÉS:', $prompt);
+        $this->assertStringContainsString('DIFF:', $prompt);
     }
 
     public function test_analisis_cambio_includes_source_and_organism(): void

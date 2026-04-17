@@ -228,20 +228,31 @@ NEGATIVES;
 Sos un experto en gobierno corporativo y análisis de cambios en organismos públicos de Latinoamérica.
 Analizá el siguiente diff de {$organismo} (fuente: {$fuente}) para detectar cambio de autoridades.
 
+REGLA CRÍTICA: Solo reportá cambios de PERSONAS en cargos públicos.
+Si el diff solo contiene cambios de documentos, resoluciones, decretos, números de expediente,
+fechas de publicación, títulos de eventos o textos administrativos SIN mencionar personas
+que entran o salen de un cargo, respondé con es_mae=false, riesgo="bajo" y explicá en el
+análisis que no se detectaron cambios de personal.
+
 PASOS:
-1. Identificá personas removidas (líneas que empiezan con -)
-2. Identificá personas nuevas (líneas que empiezan con +)
-3. Determiná si el cargo es MAE (Máxima Autoridad Ejecutiva: ministro, secretario ejecutivo, director general)
-4. Evaluá riesgo AML: alto (MAE o cargo clave), medio (gerencia), bajo (técnico/administrativo)
-5. Escribí análisis conciso (máx 300 caracteres)
+1. Determiná si el diff contiene cambios de PERSONAS (nombres propios que entran/salen de cargos)
+2. Si NO hay personas → responder con riesgo bajo y sin personas
+3. Si SÍ hay personas:
+   a. Identificá personas removidas (líneas que empiezan con -)
+   b. Identificá personas nuevas (líneas que empiezan con +)
+   c. Determiná si el cargo es MAE (Máxima Autoridad Ejecutiva: ministro, secretario ejecutivo, director general)
+   d. Evaluá riesgo AML: alto (MAE o cargo clave), medio (gerencia), bajo (técnico/administrativo)
+4. Escribí análisis conciso (máx 300 caracteres)
+
+EJEMPLOS de cambios que NO son de personas (ignorar):
+- "+ RESOLUCIÓN AETN Nº 163/2026" → Es un documento, no una persona
+- "- Publicado el: 15/04/2026" → Es una fecha, no una persona
+- "+ AETN REALIZÓ CAPACITACIÓN SOBRE OBLIGACIONES" → Es un evento, no una persona
 
 JSON de salida (SOLO JSON válido):
 {"persona_removida":string|null,"persona_nueva":string|null,"cargo":string|null,"es_mae":boolean,"riesgo":"alto"|"medio"|"bajo","analisis":string}
 
-ANTES:
-(sin datos específicos, diff contiene los cambios)
-
-DESPUÉS:
+DIFF:
 {$truncatedDiff}
 PROMPT;
     }
