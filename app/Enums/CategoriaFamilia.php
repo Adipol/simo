@@ -6,7 +6,7 @@ namespace App\Enums;
 
 enum CategoriaFamilia: string
 {
-    case Designacion = 'designacion';
-    case Renuncia = 'renuncia';
-    case Crimen = 'crimen';
+    case PepDesignacion = 'PEP-designacion';
+    case PepRenuncia = 'PEP-renuncia';
+    case OpiCrimen = 'OPI-crimen';
 }

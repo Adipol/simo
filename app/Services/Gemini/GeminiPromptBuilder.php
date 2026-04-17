@@ -200,9 +200,9 @@ NEGATIVES;
     private function buildContextoCategoria(string $categoria): string
     {
         return match ($categoria) {
-            'crimen' => "CONTEXTO DE BÚSQUEDA: Este artículo fue detectado por palabras clave de categoría 'crimen'. Verificá que la persona mencionada sea un actor institucional (funcionario, investigador, autoridad), NO una víctima, testigo o civil detenido.\n",
-            'designacion' => "CONTEXTO DE BÚSQUEDA: Este artículo fue detectado por palabras clave de categoría 'designacion'. Verificá que el artículo confirme efectivamente la designación a un cargo público específico.\n",
-            'renuncia' => "CONTEXTO DE BÚSQUEDA: Este artículo fue detectado por palabras clave de categoría 'renuncia'. Verificá que la persona mencionada efectivamente ocupaba un cargo público antes de la renuncia.\n",
+            'OPI-crimen' => "CONTEXTO DE BÚSQUEDA: Este artículo fue detectado por palabras clave de categoría 'crimen'. Verificá que la persona mencionada sea un actor institucional (funcionario, investigador, autoridad), NO una víctima, testigo o civil detenido.\n",
+            'PEP-designacion' => "CONTEXTO DE BÚSQUEDA: Este artículo fue detectado por palabras clave de categoría 'designacion'. Verificá que el artículo confirme efectivamente la designación a un cargo público específico.\n",
+            'PEP-renuncia' => "CONTEXTO DE BÚSQUEDA: Este artículo fue detectado por palabras clave de categoría 'renuncia'. Verificá que la persona mencionada efectivamente ocupaba un cargo público antes de la renuncia.\n",
             default => '',
         };
     }

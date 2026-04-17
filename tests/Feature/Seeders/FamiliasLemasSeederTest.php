@@ -32,20 +32,20 @@ class FamiliasLemasSeederTest extends TestCase
     {
         $this->seed(FamiliasLemasSeeder::class);
 
-        $this->assertSame(9, FamiliaLema::byCategoria('designacion')->count());
+        $this->assertSame(9, FamiliaLema::byCategoria('PEP-designacion')->count());
     }
 
     public function test_seeder_creates_8_renuncia_families(): void
     {
         $this->seed(FamiliasLemasSeeder::class);
 
-        $this->assertSame(8, FamiliaLema::byCategoria('renuncia')->count());
+        $this->assertSame(8, FamiliaLema::byCategoria('PEP-renuncia')->count());
     }
 
     public function test_seeder_creates_16_crimen_families(): void
     {
         $this->seed(FamiliasLemasSeeder::class);
 
-        $this->assertSame(16, FamiliaLema::byCategoria('crimen')->count());
+        $this->assertSame(16, FamiliaLema::byCategoria('OPI-crimen')->count());
     }
 }

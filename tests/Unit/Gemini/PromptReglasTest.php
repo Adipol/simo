@@ -18,7 +18,7 @@ class PromptReglasTest extends TestCase
 
     public function test_prompt_contiene_reglas_de_clasificacion(): void
     {
-        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'designacion');
+        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'PEP-designacion');
         $this->assertStringContainsString('REGLAS DE CLASIFICACIÓN', $prompt);
         $this->assertStringContainsString('EXPLÍCITAMENTE', $prompt);
         $this->assertStringContainsString('SUJETO ACTIVO', $prompt);
@@ -31,50 +31,50 @@ class PromptReglasTest extends TestCase
         $catalog->method('getCargos')->willReturn($cargos);
         $catalog->method('getEntidades')->willReturn(collect([]));
         $builder = new GeminiPromptBuilder($catalog);
-        $prompt = $builder->filtroPEP('Test', 'Bolivia', 'crimen');
+        $prompt = $builder->filtroPEP('Test', 'Bolivia', 'OPI-crimen');
         $this->assertStringContainsString('REGLAS DE CLASIFICACIÓN', $prompt);
     }
 
     public function test_prompt_ejemplo_negativo_fiebre_amarilla(): void
     {
-        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'designacion');
+        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'PEP-designacion');
         $this->assertStringContainsString('fiebre amarilla', $prompt);
     }
 
     public function test_prompt_ejemplo_negativo_protesta(): void
     {
-        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'crimen');
+        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'OPI-crimen');
         $this->assertStringContainsString('protesta', $prompt);
     }
 
     public function test_prompt_ejemplo_negativo_hospital(): void
     {
-        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'designacion');
+        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'PEP-designacion');
         $this->assertStringContainsString('hospital', $prompt);
     }
 
     public function test_prompt_tiene_minimo_cuatro_neg(): void
     {
-        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'designacion');
+        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'PEP-designacion');
         $this->assertGreaterThanOrEqual(4, substr_count($prompt, '[NEG]'));
     }
 
     public function test_contexto_categoria_crimen(): void
     {
-        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'crimen');
+        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'OPI-crimen');
         $this->assertStringContainsString('CONTEXTO DE BÚSQUEDA', $prompt);
         $this->assertStringContainsString('actor institucional', $prompt);
     }
 
     public function test_contexto_categoria_designacion(): void
     {
-        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'designacion');
+        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'PEP-designacion');
         $this->assertStringContainsString('CONTEXTO DE BÚSQUEDA', $prompt);
     }
 
     public function test_contexto_categoria_renuncia(): void
     {
-        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'renuncia');
+        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'PEP-renuncia');
         $this->assertStringContainsString('CONTEXTO DE BÚSQUEDA', $prompt);
     }
 

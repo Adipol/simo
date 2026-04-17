@@ -18,7 +18,7 @@ class FamiliaLemaTest extends TestCase
         return FamiliaLema::create(array_merge([
             'raiz' => 'designar',
             'variantes' => ['designar', 'designación', 'designado'],
-            'categoria' => 'designacion',
+            'categoria' => 'PEP-designacion',
             'activo' => true,
         ], $overrides));
     }
@@ -52,20 +52,20 @@ class FamiliaLemaTest extends TestCase
 
     public function test_categoria_cast_returns_enum(): void
     {
-        $familia = $this->createFamilia(['categoria' => 'designacion']);
+        $familia = $this->createFamilia(['categoria' => 'PEP-designacion']);
 
         $this->assertInstanceOf(CategoriaFamilia::class, $familia->categoria);
-        $this->assertSame(CategoriaFamilia::Designacion, $familia->categoria);
+        $this->assertSame(CategoriaFamilia::PepDesignacion, $familia->categoria);
     }
 
     public function test_categoria_crimen_cast_returns_enum(): void
     {
         $familia = $this->createFamilia([
             'raiz' => 'detener',
-            'categoria' => 'crimen',
+            'categoria' => 'OPI-crimen',
         ]);
 
-        $this->assertSame(CategoriaFamilia::Crimen, $familia->categoria);
+        $this->assertSame(CategoriaFamilia::OpiCrimen, $familia->categoria);
     }
 
     // ─── active() scope ───────────────────────────────────────────────────────
@@ -74,9 +74,9 @@ class FamiliaLemaTest extends TestCase
     {
         $this->createFamilia(['raiz' => 'designar', 'activo' => true]);
         $this->createFamilia(['raiz' => 'nombrar', 'activo' => true]);
-        $this->createFamilia(['raiz' => 'renunciar', 'categoria' => 'renuncia', 'activo' => true]);
-        $this->createFamilia(['raiz' => 'cesar', 'categoria' => 'renuncia', 'activo' => false]);
-        $this->createFamilia(['raiz' => 'detener', 'categoria' => 'crimen', 'activo' => false]);
+        $this->createFamilia(['raiz' => 'renunciar', 'categoria' => 'PEP-renuncia', 'activo' => true]);
+        $this->createFamilia(['raiz' => 'cesar', 'categoria' => 'PEP-renuncia', 'activo' => false]);
+        $this->createFamilia(['raiz' => 'detener', 'categoria' => 'OPI-crimen', 'activo' => false]);
 
         $actives = FamiliaLema::active()->get();
 
@@ -88,22 +88,22 @@ class FamiliaLemaTest extends TestCase
 
     public function test_by_categoria_scope_filters_by_string(): void
     {
-        $this->createFamilia(['raiz' => 'designar', 'categoria' => 'designacion']);
-        $this->createFamilia(['raiz' => 'nombrar', 'categoria' => 'designacion']);
-        $this->createFamilia(['raiz' => 'renunciar', 'categoria' => 'renuncia']);
+        $this->createFamilia(['raiz' => 'designar', 'categoria' => 'PEP-designacion']);
+        $this->createFamilia(['raiz' => 'nombrar', 'categoria' => 'PEP-designacion']);
+        $this->createFamilia(['raiz' => 'renunciar', 'categoria' => 'PEP-renuncia']);
 
-        $designaciones = FamiliaLema::byCategoria('designacion')->get();
+        $designaciones = FamiliaLema::byCategoria('PEP-designacion')->get();
 
         $this->assertCount(2, $designaciones);
     }
 
     public function test_by_categoria_scope_filters_by_enum(): void
     {
-        $this->createFamilia(['raiz' => 'designar', 'categoria' => 'designacion']);
-        $this->createFamilia(['raiz' => 'detener', 'categoria' => 'crimen']);
-        $this->createFamilia(['raiz' => 'imputar', 'categoria' => 'crimen']);
+        $this->createFamilia(['raiz' => 'designar', 'categoria' => 'PEP-designacion']);
+        $this->createFamilia(['raiz' => 'detener', 'categoria' => 'OPI-crimen']);
+        $this->createFamilia(['raiz' => 'imputar', 'categoria' => 'OPI-crimen']);
 
-        $crimenes = FamiliaLema::byCategoria(CategoriaFamilia::Crimen)->get();
+        $crimenes = FamiliaLema::byCategoria(CategoriaFamilia::OpiCrimen)->get();
 
         $this->assertCount(2, $crimenes);
     }

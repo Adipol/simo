@@ -43,7 +43,7 @@ class FamiliasLemasTest extends TestCase
         return FamiliaLema::create(array_merge([
             'raiz' => 'designar',
             'variantes' => ['designar', 'designación', 'designado'],
-            'categoria' => 'designacion',
+            'categoria' => 'PEP-designacion',
             'activo' => true,
         ], $overrides));
     }
@@ -86,12 +86,12 @@ class FamiliasLemasTest extends TestCase
             ->call('abrirModal')
             ->set('raiz', 'testar')
             ->set('variantesRaw', "testar\ntestando\ntestado")
-            ->set('categoria', 'crimen')
+            ->set('categoria', 'OPI-crimen')
             ->call('guardar');
 
         $this->assertDatabaseHas('familias_lemas', [
             'raiz' => 'testar',
-            'categoria' => 'crimen',
+            'categoria' => 'OPI-crimen',
         ]);
     }
 
@@ -105,7 +105,7 @@ class FamiliasLemasTest extends TestCase
             ->call('abrirModal')
             ->set('raiz', 'designar')
             ->set('variantesRaw', 'designar')
-            ->set('categoria', 'designacion')
+            ->set('categoria', 'PEP-designacion')
             ->call('guardar')
             ->assertHasErrors(['raiz']);
     }
@@ -119,7 +119,7 @@ class FamiliasLemasTest extends TestCase
             ->call('abrirModal')
             ->set('raiz', 'testar')
             ->set('variantesRaw', '')
-            ->set('categoria', 'crimen')
+            ->set('categoria', 'OPI-crimen')
             ->call('guardar')
             ->assertHasErrors(['variantesRaw']);
     }
@@ -136,7 +136,7 @@ class FamiliasLemasTest extends TestCase
             ->call('abrirModal', $familia->id)
             ->set('raiz', 'designar-modificado')
             ->set('variantesRaw', "designar-modificado\ndesignación")
-            ->set('categoria', 'designacion')
+            ->set('categoria', 'PEP-designacion')
             ->call('guardar');
 
         $this->assertDatabaseHas('familias_lemas', [
@@ -181,13 +181,13 @@ class FamiliasLemasTest extends TestCase
     public function test_filter_by_categoria_returns_correct_families(): void
     {
         $admin = $this->createAdmin();
-        $this->createFamilia(['raiz' => 'designar', 'categoria' => 'designacion']);
-        $this->createFamilia(['raiz' => 'renunciar', 'categoria' => 'renuncia']);
-        $this->createFamilia(['raiz' => 'detener', 'categoria' => 'crimen']);
+        $this->createFamilia(['raiz' => 'designar', 'categoria' => 'PEP-designacion']);
+        $this->createFamilia(['raiz' => 'renunciar', 'categoria' => 'PEP-renuncia']);
+        $this->createFamilia(['raiz' => 'detener', 'categoria' => 'OPI-crimen']);
 
         $component = Livewire::actingAs($admin)
             ->test(FamiliasLemas::class)
-            ->set('filtroCategoria', 'designacion');
+            ->set('filtroCategoria', 'PEP-designacion');
 
         $component->assertSee('designar');
         $component->assertDontSee('renunciar');

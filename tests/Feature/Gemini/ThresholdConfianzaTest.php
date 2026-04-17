@@ -21,7 +21,7 @@ class ThresholdConfianzaTest extends TestCase
             'url' => 'https://example.com/test',
             'keyword' => 'test',
             'pais' => 'BO',
-            'categoria' => 'designacion',
+            'categoria' => 'PEP-designacion',
             'titulo' => 'Test',
             'contexto' => 'El ministro Juan Perez firmo decreto.',
             'relevance_score' => 80,
