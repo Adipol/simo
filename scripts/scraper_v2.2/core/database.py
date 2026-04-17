@@ -107,14 +107,18 @@ class DatabaseManager:
         """
         tablas_requeridas = [
             "sitios_web",
-            "palabras_clave",
+            "familias_lemas",
             "resultados_scraping",
             "log_ejecuciones",
         ]
         try:
             with cls.get_cursor(dictionary=True) as cursor:
-                cursor.execute("SHOW TABLES")
-                tablas_existentes = {list(row.values())[0] for row in cursor.fetchall()}
+                if _DB_TYPE == "postgres":
+                    cursor.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
+                    tablas_existentes = {row["tablename"] for row in cursor.fetchall()}
+                else:
+                    cursor.execute("SHOW TABLES")
+                    tablas_existentes = {list(row.values())[0] for row in cursor.fetchall()}
                 faltantes = [t for t in tablas_requeridas if t not in tablas_existentes]
                 if faltantes:
                     raise RuntimeError(
@@ -203,49 +207,33 @@ class ScrapingRepository:
     """Repositorio para operaciones de scraping."""
 
     @staticmethod
-    def get_keywords(pais: str = None, categoria: str = None) -> List[str]:
+    def get_keywords(categoria: str = None) -> List[str]:
         """
-        Obtiene las palabras clave activas desde la base de datos.
+        Obtiene las raíces de lemas activos desde familias_lemas.
 
-        Lógica:
-        - Si keyword NO tiene registros en keyword_paises = GLOBAL (todos los países)
-        - Si keyword tiene registros en keyword_paises = solo esos países
+        Los lemas son universales para todos los países hispanohablantes.
         """
         with DatabaseManager.get_cursor(dictionary=True) as cursor:
-            conditions = ["pc.activo IS TRUE"]
+            conditions = ["fl.activo IS TRUE"]
             params = []
 
-            if pais:
-                conditions.append("""(
-                    NOT EXISTS (
-                        SELECT 1 FROM keyword_paises kp WHERE kp.keyword_id = pc.id
-                    )
-                    OR
-                    EXISTS (
-                        SELECT 1 FROM keyword_paises kp
-                        WHERE kp.keyword_id = pc.id AND kp.pais = %s
-                    )
-                )""")
-                params.append(pais)
-                logger.info(f"Filtrando keywords para país: {pais}")
-
             if categoria:
-                conditions.append("pc.categoria = %s")
+                conditions.append("fl.categoria = %s")
                 params.append(categoria)
-                logger.info(f"Filtrando keywords para categoría: {categoria}")
+                logger.info(f"Filtrando lemas para categoría: {categoria}")
 
             query = f"""
-                SELECT DISTINCT pc.keyword
-                FROM palabras_clave pc
+                SELECT DISTINCT fl.raiz
+                FROM familias_lemas fl
                 WHERE {" AND ".join(conditions)}
-                ORDER BY pc.keyword
+                ORDER BY fl.raiz
             """
 
             cursor.execute(query, params)
             rows = cursor.fetchall()
-            keywords = [row["keyword"] for row in rows]
+            keywords = [row["raiz"] for row in rows]
 
-            logger.info(f"Palabras clave cargadas: {len(keywords)}")
+            logger.info(f"Lemas activos cargados: {len(keywords)}")
             if keywords:
                 for i in range(0, len(keywords), 10):
                     grupo = keywords[i : i + 10]
@@ -257,13 +245,13 @@ class ScrapingRepository:
 
     @staticmethod
     def get_categorias_activas() -> List[str]:
-        """Obtiene las categorías que tienen keywords activas."""
+        """Obtiene las categorías que tienen lemas activos."""
         with DatabaseManager.get_cursor(dictionary=True) as cursor:
             cursor.execute("""
                 SELECT DISTINCT categoria
-                FROM palabras_clave
+                FROM familias_lemas
                 WHERE activo IS TRUE AND categoria IS NOT NULL
-                ORDER BY FIELD(categoria, 'PEP', 'OPI'), categoria
+                ORDER BY categoria
             """)
             return [row["categoria"] for row in cursor.fetchall()]
 
@@ -590,13 +578,19 @@ class ScrapingRepository:
         """Registra inicio del scraper en log_scripts. Devuelve el ID del registro."""
         try:
             with DatabaseManager.get_cursor() as cursor:
-                cursor.execute(
-                    """INSERT INTO log_scripts (script, estado, inicio)
-                       VALUES ('scraper', 'iniciado', NOW())"""
-                )
                 if _DB_TYPE == "postgres":
-                    return None
-                return cursor.lastrowid
+                    cursor.execute(
+                        """INSERT INTO log_scripts (script, estado, inicio)
+                           VALUES ('scraper', 'iniciado', NOW()) RETURNING id"""
+                    )
+                    row = cursor.fetchone()
+                    return row[0] if row else None
+                else:
+                    cursor.execute(
+                        """INSERT INTO log_scripts (script, estado, inicio)
+                           VALUES ('scraper', 'iniciado', NOW())"""
+                    )
+                    return cursor.lastrowid
         except Exception as e:
             logger.warning(f"No se pudo registrar inicio en log_scripts: {e}")
             return None
@@ -615,11 +609,16 @@ class ScrapingRepository:
             return
         try:
             with DatabaseManager.get_cursor() as cursor:
+                duracion_sql = (
+                    "EXTRACT(EPOCH FROM (NOW() - inicio))::integer"
+                    if _DB_TYPE == "postgres"
+                    else "TIMESTAMPDIFF(SECOND, inicio, NOW())"
+                )
                 cursor.execute(
-                    """UPDATE log_scripts
+                    f"""UPDATE log_scripts
                        SET estado = %s,
                            fin = NOW(),
-                           duracion_segundos = TIMESTAMPDIFF(SECOND, inicio, NOW()),
+                           duracion_segundos = {duracion_sql},
                            items_procesados = %s,
                            items_resultado = %s,
                            errores = %s,

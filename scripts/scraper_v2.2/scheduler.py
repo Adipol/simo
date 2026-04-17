@@ -203,7 +203,7 @@ class ScraperScheduler:
                 )
                 return False
 
-            keywords = ScrapingRepository.get_keywords(pais, categoria)
+            keywords = ScrapingRepository.get_keywords(categoria=categoria)
             websites = ScrapingRepository.get_websites(pais)
 
             if not keywords:
