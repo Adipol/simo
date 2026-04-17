@@ -48,6 +48,14 @@
       "sessions": 17,
       "memories": 22,
       "prompts": 1
+    },
+    {
+      "id": "669db224",
+      "created_by": "Jorge",
+      "created_at": "2026-04-17T20:54:32Z",
+      "sessions": 0,
+      "memories": 2,
+      "prompts": 0
     }
   ]
 }
