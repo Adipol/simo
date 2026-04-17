@@ -9,7 +9,11 @@ use App\Enums\TipoFeedback;
 use App\Models\ClasificacionFeedback;
 use App\Models\Pais;
 use App\Models\ResultadoScraping;
+use App\Services\Export\ResultadosCsvExporter;
 use App\Services\Normalization\NombreNormalizador;
+use App\Services\ResultadoScrapingQueryService;
+use Illuminate\Contracts\View\View;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
@@ -22,19 +26,26 @@ class Resultados extends Component
 {
     use WithPagination;
 
+    #[Url]
     public string $busqueda = '';
 
+    #[Url]
     public string $filtroPais = '';
 
+    #[Url]
     public string $filtroCategoria = '';
 
+    #[Url]
     public string $filtroLeido = '';
 
+    #[Url]
     public string $filtroRelevante = '';
 
+    #[Url]
     public string $filtroDescartado = '0'; // Por defecto oculta descartados
 
-    public string $filtroGemini = '';
+    #[Url]
+    public string $filtroGemini = 'pep';
 
     public ?int $verAnalisisId = null;
 
@@ -120,39 +131,12 @@ class Resultados extends Component
 
     public function exportarCsv(): StreamedResponse
     {
-        $query = $this->buildQuery();
-        $filename = 'resultados_'.now()->format('Ymd_His').'.csv';
+        $exporter = new ResultadosCsvExporter;
 
-        return response()->streamDownload(function () use ($query) {
-            $handle = fopen('php://output', 'w');
-            fwrite($handle, "\xEF\xBB\xBF"); // BOM UTF-8
-            fputcsv($handle, ['ID', 'Keyword', 'URL', 'Sitio', 'Pais', 'Categoria', 'Titulo', 'Contexto', 'Relevance', 'Fecha', 'Gemini_Analizado', 'Gemini_PEP', 'Gemini_Categoria', 'Gemini_Nombre', 'Gemini_Cargo', 'Gemini_Confianza']);
-
-            $query->chunk(500, function ($rows) use ($handle) {
-                foreach ($rows as $r) {
-                    fputcsv($handle, [
-                        $r->id,
-                        $r->keyword,
-                        $r->url,
-                        $r->sitio?->nombre ?? '',
-                        $r->pais,
-                        $r->categoria ?? '',
-                        $r->titulo ?? '',
-                        $r->contexto ?? '',
-                        $r->relevance_score,
-                        $r->fecha_encontrado->format('Y-m-d H:i:s'),
-                        $r->gemini_analyzed ? 'Si' : 'No',
-                        $r->gemini_is_pep ? 'Si' : 'No',
-                        $r->gemini_categoria ?? '',
-                        $r->gemini_nombre ?? '',
-                        $r->gemini_cargo ?? '',
-                        $r->gemini_confianza ?? '',
-                    ]);
-                }
-            });
-
-            fclose($handle);
-        }, $filename, ['Content-Type' => 'text/csv; charset=UTF-8']);
+        return $exporter->stream(
+            $this->getQuery(),
+            'resultados_'.now()->format('Ymd_His').'.csv',
+        );
     }
 
     // ─── Feedback actions ─────────────────────────────────────────────────────
@@ -251,71 +235,32 @@ class Resultados extends Component
 
     // ─── Query builder ────────────────────────────────────────────────────────
 
-    private function buildQuery()
+    private function getQuery(): \Illuminate\Database\Eloquent\Builder
     {
-        $q = ResultadoScraping::with('sitio')
-            ->orderBy($this->ordenar, $this->direccion);
-
-        // Eager load feedback for current user (no N+1)
-        if (Auth::check()) {
-            $q->withFeedbackFromUser(Auth::id());
-        }
-
-        if ($this->busqueda) {
-            $b = '%'.$this->busqueda.'%';
-            $q->where(fn ($s) => $s->where('keyword', 'like', $b)
-                ->orWhere('titulo', 'like', $b)
-                ->orWhere('url', 'like', $b)
-                ->orWhere('contexto', 'like', $b));
-        }
-        if ($this->filtroPais) {
-            $q->where('pais', $this->filtroPais);
-        }
-        if ($this->filtroCategoria) {
-            $q->where('categoria', $this->filtroCategoria);
-        }
-        if ($this->filtroLeido !== '') {
-            $q->where('leido', (bool) $this->filtroLeido);
-        }
-        if ($this->filtroRelevante !== '') {
-            if ($this->filtroRelevante === 'null') {
-                $q->whereNull('relevante');
-            } else {
-                $q->where('relevante', (bool) $this->filtroRelevante);
-            }
-        }
-
-        // Filtro descartados: '0' = solo activos, '1' = solo descartados, '' = todos
-        if ($this->filtroDescartado === '0') {
-            $q->where('descartado', false);
-        } elseif ($this->filtroDescartado === '1') {
-            $q->where('descartado', true);
-        }
-
-        // Filtro Gemini
-        if ($this->filtroGemini === 'pending') {
-            $q->where('gemini_analyzed', false);
-        } elseif ($this->filtroGemini === 'pep') {
-            $q->where('gemini_analyzed', true)->where('gemini_is_pep', true)->where('gemini_categoria', 'PEP');
-        } elseif ($this->filtroGemini === 'opi') {
-            $q->where('gemini_analyzed', true)->where('gemini_is_pep', true)->where('gemini_categoria', 'OPI');
-        } elseif ($this->filtroGemini === 'not_pep') {
-            $q->where('gemini_analyzed', true)->where('gemini_is_pep', false);
-        }
-
-        return $q;
+        return (new ResultadoScrapingQueryService)->buildQuery(
+            busqueda: $this->busqueda,
+            filtroPais: $this->filtroPais,
+            filtroCategoria: $this->filtroCategoria,
+            filtroLeido: $this->filtroLeido,
+            filtroRelevante: $this->filtroRelevante,
+            filtroDescartado: $this->filtroDescartado,
+            filtroGemini: $this->filtroGemini,
+            ordenar: $this->ordenar,
+            direccion: $this->direccion,
+            userId: Auth::id(),
+        );
     }
 
     // ─── Computed ─────────────────────────────────────────────────────────────
 
     #[Computed]
-    public function paises()
+    public function paises(): Collection
     {
         return Pais::orderBy('nombre')->get();
     }
 
     #[Computed]
-    public function categorias()
+    public function categorias(): Collection
     {
         return ResultadoScraping::select('categoria')
             ->distinct()
@@ -334,9 +279,9 @@ class Resultados extends Component
         return ResultadoScraping::find($this->verAnalisisId);
     }
 
-    public function render()
+    public function render(): View
     {
-        $resultados = $this->buildQuery()->paginate(25);
+        $resultados = $this->getQuery()->paginate(25);
 
         return view('livewire.scraper.resultados', [
             'resultados' => $resultados,
