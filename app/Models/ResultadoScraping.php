@@ -6,6 +6,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
@@ -48,6 +49,11 @@ class ResultadoScraping extends Model
         return $this->belongsTo(Pais::class, 'pais', 'codigo');
     }
 
+    public function personas(): HasMany
+    {
+        return $this->hasMany(ResultadoPersona::class, 'resultado_scraping_id');
+    }
+
     public function feedback(): HasMany
     {
         return $this->hasMany(ClasificacionFeedback::class, 'resultado_scraping_id');
@@ -64,7 +70,7 @@ class ResultadoScraping extends Model
         ];
     }
 
-    public function scopeWithFeedbackFromUser($query, int $userId): void
+    public function scopeWithFeedbackFromUser(Builder $query, int $userId): void
     {
         $query->with(['feedback' => fn ($q) => $q->where('usuario_id', $userId)]);
     }

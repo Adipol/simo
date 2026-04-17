@@ -8,36 +8,38 @@ use App\Exceptions\Gemini\GeminiInvalidResponseException;
 
 final readonly class FiltroResultadoDTO
 {
+    /**
+     * @param  array<PersonaDetectadaDTO>  $personas
+     */
     public function __construct(
-        public bool $isPep,
-        public ?string $nombre,
-        public ?string $cargo,
-        public ?string $categoria,
-        public ?string $entidadTipo,
-        public int $confianza,
-        public string $motivo,
+        public array $personas,
+        public string $motivoGeneral,
     ) {}
 
     public static function fromArray(array $data): self
     {
-        $required = ['is_pep', 'confianza', 'motivo'];
-
-        foreach ($required as $field) {
-            if (! array_key_exists($field, $data)) {
-                throw new GeminiInvalidResponseException(
-                    "Missing required field '{$field}' in Flash response."
-                );
-            }
+        if (! array_key_exists('personas', $data)) {
+            throw new GeminiInvalidResponseException(
+                "Missing required field 'personas' in Flash response."
+            );
         }
 
-        return new self(
-            isPep: (bool) $data['is_pep'],
-            nombre: $data['nombre'] ?? null,
-            cargo: $data['cargo'] ?? null,
-            categoria: $data['categoria'] ?? null,
-            entidadTipo: $data['entidad_tipo'] ?? null,
-            confianza: (int) $data['confianza'],
-            motivo: (string) $data['motivo'],
+        $personas = array_filter(
+            array_map(
+                fn (array $p) => PersonaDetectadaDTO::fromArray($p),
+                $data['personas'],
+            ),
+            fn (PersonaDetectadaDTO $p) => $p->nombre !== '',
         );
+
+        return new self(
+            personas: array_values($personas),
+            motivoGeneral: (string) ($data['motivo_general'] ?? ''),
+        );
+    }
+
+    public function hasPersonas(): bool
+    {
+        return count($this->personas) > 0;
     }
 }

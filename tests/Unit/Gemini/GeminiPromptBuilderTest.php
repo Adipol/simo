@@ -26,22 +26,24 @@ class GeminiPromptBuilderTest extends TestCase
     {
         $prompt = $this->builder->filtroPEP('El ministro Juan Pérez firmó el decreto', 'Argentina', 'PEP');
 
-        $this->assertStringContainsString('is_pep', $prompt);
+        $this->assertStringContainsString('personas', $prompt);
         $this->assertStringContainsString('nombre', $prompt);
         $this->assertStringContainsString('cargo', $prompt);
         $this->assertStringContainsString('categoria', $prompt);
         $this->assertStringContainsString('confianza', $prompt);
         $this->assertStringContainsString('motivo', $prompt);
+        $this->assertStringContainsString('motivo_general', $prompt);
     }
 
     public function test_filtro_pep_contains_three_few_shot_examples(): void
     {
         $prompt = $this->builder->filtroPEP('Test text', 'Bolivia', 'PEP');
 
-        // Count occurrences of example patterns
-        // Should have PEP+, OPI+, and NEG examples
-        $this->assertMatchesRegularExpression('/"is_pep":\s*true/', $prompt);
-        $this->assertMatchesRegularExpression('/"is_pep":\s*false/', $prompt);
+        // Should have PEP+, OPI+, NEG, and MULTI examples using personas array format
+        $this->assertStringContainsString('[PEP+]', $prompt);
+        $this->assertStringContainsString('[OPI+]', $prompt);
+        $this->assertStringContainsString('[NEG]', $prompt);
+        $this->assertStringContainsString('"personas"', $prompt);
         $this->assertStringContainsString('PEP', $prompt);
         $this->assertStringContainsString('OPI', $prompt);
     }
@@ -67,7 +69,7 @@ class GeminiPromptBuilderTest extends TestCase
         $prompt = $this->builder->filtroPEP('Test', 'Argentina', 'PEP');
 
         $this->assertStringContainsString('JSON', $prompt);
-        $this->assertMatchesRegularExpression('/\{.*"is_pep".*\}/s', $prompt);
+        $this->assertMatchesRegularExpression('/\{.*"personas".*\}/s', $prompt);
     }
 
     // ============================================

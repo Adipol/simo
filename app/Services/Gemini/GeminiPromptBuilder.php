@@ -107,19 +107,24 @@ PUEDE_SER_PEP (depende del contexto; considerar especialmente si están en estas
 
 {$reglasClasificacion}
 
+IMPORTANTE: Un artículo puede mencionar MÚLTIPLES personas. Devolvé TODAS las personas PEP/OPI encontradas en el array 'personas'. Si no hay ninguna, devolvé el array vacío.
+
 Devolvé ÚNICAMENTE el siguiente JSON, sin explicaciones adicionales:
-{"is_pep":boolean,"nombre":string|null,"cargo":string|null,"categoria":"PEP"|"OPI"|null,"entidad_tipo":"publica"|"privada"|"desconocido"|null,"confianza":0-100,"motivo":string}
+{"personas":[{"nombre":string,"cargo":string|null,"categoria":"PEP"|"OPI","entidad_tipo":"publica"|"privada"|"desconocido"|null,"confianza":0-100,"evento":"designacion"|"renuncia"|"crimen"|null,"motivo":string}],"motivo_general":string}
 
 EJEMPLOS:
 
 [PEP+] "El ministro de Economía Juan Pérez firmó el decreto de aumento salarial"
-→ {"is_pep":true,"nombre":"Juan Pérez","cargo":"Ministro de Economía","categoria":"PEP","entidad_tipo":"publica","confianza":95,"motivo":"Cargo ejecutivo de alto nivel en cartera ministerial"}
+→ {"personas":[{"nombre":"Juan Pérez","cargo":"Ministro de Economía","categoria":"PEP","entidad_tipo":"publica","confianza":95,"evento":"designacion","motivo":"Cargo ejecutivo de alto nivel"}],"motivo_general":"Artículo sobre acción ministerial"}
 
 [OPI+] "El líder de la organización criminal Rodrigo Vargas fue capturado en Operativo Sur"
-→ {"is_pep":true,"nombre":"Rodrigo Vargas","cargo":null,"categoria":"OPI","entidad_tipo":"desconocido","confianza":92,"motivo":"Líder de organización criminal vinculado al narcotráfico"}
+→ {"personas":[{"nombre":"Rodrigo Vargas","cargo":null,"categoria":"OPI","entidad_tipo":"desconocido","confianza":92,"evento":"crimen","motivo":"Líder de organización criminal"}],"motivo_general":"Captura de líder criminal"}
 
 [NEG] "El delantero Carlos Torres anotó el gol del campeonato en el estadio Luna"
-→ {"is_pep":false,"nombre":null,"cargo":null,"categoria":null,"entidad_tipo":null,"confianza":90,"motivo":"Texto deportivo sin mención de cargos públicos ni actividad criminal"}
+→ {"personas":[],"motivo_general":"Texto deportivo sin mención de cargos públicos ni actividad criminal"}
+
+[MULTI] "Se designa a Rubén Arce como Ministro de Economía, tras la renuncia de Carlos Álvarez"
+→ {"personas":[{"nombre":"Rubén Arce","cargo":"Ministro de Economía","categoria":"PEP","entidad_tipo":"publica","confianza":95,"evento":"designacion","motivo":"Designado como nuevo ministro"},{"nombre":"Carlos Álvarez","cargo":"Ministro de Economía","categoria":"PEP","entidad_tipo":"publica","confianza":90,"evento":"renuncia","motivo":"Renuncia al cargo de ministro"}],"motivo_general":"Cambio de autoridades en cartera ministerial"}
 
 {$ejemplosNegativos}
 {$contextoCategoria}
@@ -147,19 +152,24 @@ DEFINICIONES:
 
 {$reglasClasificacion}
 
+IMPORTANTE: Un artículo puede mencionar MÚLTIPLES personas. Devolvé TODAS las personas PEP/OPI encontradas en el array 'personas'. Si no hay ninguna, devolvé el array vacío.
+
 Devolvé ÚNICAMENTE el siguiente JSON, sin explicaciones adicionales:
-{"is_pep":boolean,"nombre":string|null,"cargo":string|null,"categoria":"PEP"|"OPI"|null,"entidad_tipo":"publica"|"privada"|"desconocido"|null,"confianza":0-100,"motivo":string}
+{"personas":[{"nombre":string,"cargo":string|null,"categoria":"PEP"|"OPI","entidad_tipo":"publica"|"privada"|"desconocido"|null,"confianza":0-100,"evento":"designacion"|"renuncia"|"crimen"|null,"motivo":string}],"motivo_general":string}
 
 EJEMPLOS:
 
 [PEP+] "El ministro de Economía Juan Pérez firmó el decreto de aumento salarial"
-→ {"is_pep":true,"nombre":"Juan Pérez","cargo":"Ministro de Economía","categoria":"PEP","entidad_tipo":"publica","confianza":95,"motivo":"Cargo ejecutivo de alto nivel en cartera ministerial"}
+→ {"personas":[{"nombre":"Juan Pérez","cargo":"Ministro de Economía","categoria":"PEP","entidad_tipo":"publica","confianza":95,"evento":"designacion","motivo":"Cargo ejecutivo de alto nivel"}],"motivo_general":"Artículo sobre acción ministerial"}
 
 [OPI+] "El líder de la organización criminal Rodrigo Vargas fue capturado en Operativo Sur"
-→ {"is_pep":true,"nombre":"Rodrigo Vargas","cargo":null,"categoria":"OPI","entidad_tipo":"desconocido","confianza":92,"motivo":"Líder de organización criminal vinculado al narcotráfico"}
+→ {"personas":[{"nombre":"Rodrigo Vargas","cargo":null,"categoria":"OPI","entidad_tipo":"desconocido","confianza":92,"evento":"crimen","motivo":"Líder de organización criminal"}],"motivo_general":"Captura de líder criminal"}
 
 [NEG] "El delantero Carlos Torres anotó el gol del campeonato en el estadio Luna"
-→ {"is_pep":false,"nombre":null,"cargo":null,"categoria":null,"entidad_tipo":null,"confianza":90,"motivo":"Texto deportivo sin mención de cargos públicos ni actividad criminal"}
+→ {"personas":[],"motivo_general":"Texto deportivo sin mención de cargos públicos ni actividad criminal"}
+
+[MULTI] "Se designa a Rubén Arce como Ministro de Economía, tras la renuncia de Carlos Álvarez"
+→ {"personas":[{"nombre":"Rubén Arce","cargo":"Ministro de Economía","categoria":"PEP","entidad_tipo":"publica","confianza":95,"evento":"designacion","motivo":"Designado como nuevo ministro"},{"nombre":"Carlos Álvarez","cargo":"Ministro de Economía","categoria":"PEP","entidad_tipo":"publica","confianza":90,"evento":"renuncia","motivo":"Renuncia al cargo de ministro"}],"motivo_general":"Cambio de autoridades en cartera ministerial"}
 
 {$ejemplosNegativos}
 {$contextoCategoria}
@@ -178,7 +188,7 @@ REGLAS DE CLASIFICACIÓN — solo clasificar como PEP si se cumplen TODAS:
 ✓ El texto menciona EXPLÍCITAMENTE un cargo o función pública (no inferir ni inventar cargos)
 ✓ El artículo trata PRINCIPALMENTE sobre esa persona en contexto político/institucional
 ✓ La persona es el SUJETO ACTIVO del rol público (no fuente, no mencionada de paso)
-Si alguna regla no se cumple → is_pep: false, confianza baja.
+Si alguna regla no se cumple → NO incluir esa persona en el array 'personas'.
 RULES;
     }
 
@@ -186,13 +196,13 @@ RULES;
     {
         return <<<'NEGATIVES'
 [NEG] "El caso confirmado de fiebre amarilla obligó a las autoridades sanitarias a activar protocolo. Carlos Hurtado, de 45 años, fue hospitalizado en el centro médico."
-→ {"is_pep":false,"nombre":null,"cargo":null,"categoria":null,"entidad_tipo":null,"confianza":95,"motivo":"Artículo de salud pública. Carlos Hurtado es paciente, no funcionario público."}
+→ {"personas":[],"motivo_general":"Artículo de salud pública. Carlos Hurtado es paciente, no funcionario público."}
 
 [NEG] "En la protesta de vecinos de Villa Adela, Marcos Quispe fue detenido por las fuerzas del orden tras los incidentes."
-→ {"is_pep":false,"nombre":null,"cargo":null,"categoria":null,"entidad_tipo":null,"confianza":92,"motivo":"Persona civil en contexto de protesta social. Sin cargo público mencionado."}
+→ {"personas":[],"motivo_general":"Persona civil en contexto de protesta social. Sin cargo público mencionado."}
 
 [NEG] "La directora del hospital municipal, Dra. Silvia Mamani, informó sobre los avances en el plan de vacunación regional."
-→ {"is_pep":false,"nombre":null,"cargo":null,"categoria":null,"entidad_tipo":null,"confianza":88,"motivo":"Directora de hospital municipal es cargo de salud, no cargo político PEP."}
+→ {"personas":[],"motivo_general":"Directora de hospital municipal es cargo de salud, no cargo político PEP."}
 
 NEGATIVES;
     }

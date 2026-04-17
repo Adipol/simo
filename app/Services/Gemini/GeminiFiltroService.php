@@ -6,8 +6,10 @@ namespace App\Services\Gemini;
 
 use App\Exceptions\Gemini\GeminiBadRequestException;
 use App\Exceptions\Gemini\GeminiInvalidResponseException;
+use App\Models\ResultadoPersona;
 use App\Models\ResultadoScraping;
 use App\Services\Gemini\DTOs\FiltroResultadoDTO;
+use App\Services\Gemini\DTOs\PersonaDetectadaDTO;
 use App\Services\Normalization\NombreNormalizador;
 use App\Services\Normalization\NombreNormalizadorInterface;
 use Illuminate\Support\Collection;
@@ -49,50 +51,72 @@ class GeminiFiltroService
 
     private function persistirResultado(ResultadoScraping $record, FiltroResultadoDTO $dto): void
     {
-        $normalizado = null;
-        try {
-            $normalizacion = $this->normalizador->normalizeNullable($dto->nombre);
-            $normalizado = $normalizacion?->normalized;
-        } catch (\Throwable $e) {
-            Log::warning('Name normalization failed in GeminiFiltroService', [
-                'nombre' => $dto->nombre,
-                'error' => $e->getMessage(),
-            ]);
-        }
-
         $minConfianza = (int) config('services.gemini.min_confianza_pep', 70);
-        $isPep = $dto->isPep;
-        $motivo = $dto->motivo;
+        $anyPepPassed = false;
 
-        if ($dto->isPep && $dto->confianza < $minConfianza) {
-            $isPep = false;
-            $motivo = "[THRESHOLD] Confianza {$dto->confianza} < mínimo {$minConfianza}. Original: {$dto->motivo}";
+        // Save each persona detected
+        foreach ($dto->personas as $persona) {
+            $thresholdPassed = $persona->confianza >= $minConfianza;
 
-            Log::channel('gemini')->warning('PEP descartado por threshold', [
-                'record_id' => $record->id,
-                'confianza' => $dto->confianza,
-                'threshold' => $minConfianza,
+            if ($thresholdPassed) {
+                $anyPepPassed = true;
+            } else {
+                Log::channel('gemini')->warning('Persona descartada por threshold', [
+                    'record_id' => $record->id,
+                    'nombre' => $persona->nombre,
+                    'confianza' => $persona->confianza,
+                    'threshold' => $minConfianza,
+                ]);
+            }
+
+            $normalizado = $this->normalizarNombre($persona->nombre);
+
+            ResultadoPersona::create([
+                'resultado_scraping_id' => $record->id,
+                'nombre' => $persona->nombre,
+                'nombre_normalizado' => $normalizado,
+                'cargo' => $persona->cargo,
+                'categoria' => $persona->categoria,
+                'entidad_tipo' => $persona->entidadTipo,
+                'confianza' => $persona->confianza,
+                'evento' => $persona->evento,
+                'motivo' => $persona->motivo,
+                'threshold_passed' => $thresholdPassed,
             ]);
         }
 
+        // Update the parent record
         $record->update([
             'gemini_analyzed' => true,
-            'gemini_is_pep' => $isPep,
-            'gemini_nombre' => $dto->nombre,
-            'gemini_nombre_normalizado' => $normalizado,
-            'gemini_cargo' => $dto->cargo,
-            'gemini_categoria' => $dto->categoria,
-            'gemini_entidad_tipo' => $dto->entidadTipo,
-            'gemini_confianza' => $dto->confianza,
-            'gemini_motivo' => $motivo,
+            'gemini_is_pep' => $anyPepPassed,
+            'gemini_motivo' => $dto->motivoGeneral,
         ]);
 
         Log::channel('gemini')->info('FiltroPEP completado', [
             'record_id' => $record->id,
-            'is_pep' => $isPep,
-            'categoria' => $dto->categoria,
-            'confianza' => $dto->confianza,
+            'personas_detectadas' => count($dto->personas),
+            'pep_passed' => $anyPepPassed,
         ]);
+    }
+
+    private function normalizarNombre(?string $nombre): ?string
+    {
+        if ($nombre === null || $nombre === '') {
+            return null;
+        }
+
+        try {
+            $normalizacion = $this->normalizador->normalizeNullable($nombre);
+
+            return $normalizacion?->normalized;
+        } catch (\Throwable $e) {
+            Log::warning('Name normalization failed', [
+                'nombre' => $nombre,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
     }
 
     private function marcarFallido(ResultadoScraping $record, \Throwable $e): void

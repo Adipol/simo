@@ -9,6 +9,7 @@ use App\Exceptions\Gemini\GeminiRateLimitException;
 use App\Exceptions\Gemini\GeminiServerException;
 use App\Models\CargoPep;
 use App\Models\EntidadPublica;
+use App\Models\ResultadoPersona;
 use App\Models\ResultadoScraping;
 use App\Services\Gemini\GeminiFiltroService;
 use App\Services\Gemini\GeminiPromptBuilder;
@@ -38,6 +39,9 @@ class GeminiFiltroServiceTest extends TestCase
         ], $overrides));
     }
 
+    /**
+     * Wraps inner data (already in new multi-persona format) inside the Gemini API envelope.
+     */
     private function fakeGeminiResponse(array $data): string
     {
         return json_encode([
@@ -78,31 +82,32 @@ class GeminiFiltroServiceTest extends TestCase
         Http::fake([
             'generativelanguage.googleapis.com/*' => Http::sequence()
                 ->push($this->fakeGeminiResponse([
-                    'is_pep' => true,
-                    'nombre' => 'Juan Pérez',
-                    'cargo' => 'Ministro de Economía',
-                    'categoria' => 'PEP',
-                    'entidad_tipo' => 'publica',
-                    'confianza' => 95,
-                    'motivo' => 'Cargo ejecutivo de alto nivel',
+                    'personas' => [[
+                        'nombre' => 'Juan Pérez',
+                        'cargo' => 'Ministro de Economía',
+                        'categoria' => 'PEP',
+                        'entidad_tipo' => 'publica',
+                        'confianza' => 95,
+                        'evento' => 'designacion',
+                        'motivo' => 'Cargo ejecutivo de alto nivel',
+                    ]],
+                    'motivo_general' => 'Artículo sobre acción ministerial',
                 ]))
                 ->push($this->fakeGeminiResponse([
-                    'is_pep' => true,
-                    'nombre' => 'Rodrigo Vargas',
-                    'cargo' => null,
-                    'categoria' => 'OPI',
-                    'entidad_tipo' => 'desconocido',
-                    'confianza' => 92,
-                    'motivo' => 'Líder de organización criminal',
+                    'personas' => [[
+                        'nombre' => 'Rodrigo Vargas',
+                        'cargo' => null,
+                        'categoria' => 'OPI',
+                        'entidad_tipo' => 'desconocido',
+                        'confianza' => 92,
+                        'evento' => 'crimen',
+                        'motivo' => 'Líder de organización criminal',
+                    ]],
+                    'motivo_general' => 'Captura de líder criminal',
                 ]))
                 ->push($this->fakeGeminiResponse([
-                    'is_pep' => false,
-                    'nombre' => null,
-                    'cargo' => null,
-                    'categoria' => null,
-                    'entidad_tipo' => null,
-                    'confianza' => 10,
-                    'motivo' => 'Texto deportivo sin relevancia',
+                    'personas' => [],
+                    'motivo_general' => 'Texto deportivo sin relevancia',
                 ])),
         ]);
 
@@ -112,28 +117,36 @@ class GeminiFiltroServiceTest extends TestCase
         $r1->refresh();
         $this->assertTrue($r1->gemini_analyzed);
         $this->assertTrue($r1->gemini_is_pep);
-        $this->assertSame('Juan Pérez', $r1->gemini_nombre);
-        $this->assertSame('Ministro de Economía', $r1->gemini_cargo);
-        $this->assertSame('PEP', $r1->gemini_categoria);
-        $this->assertSame('publica', $r1->gemini_entidad_tipo);
-        $this->assertSame(95, $r1->gemini_confianza);
+        $this->assertSame('Artículo sobre acción ministerial', $r1->gemini_motivo);
+
+        $p1 = ResultadoPersona::where('resultado_scraping_id', $r1->id)->first();
+        $this->assertNotNull($p1);
+        $this->assertSame('Juan Pérez', $p1->nombre);
+        $this->assertSame('Ministro de Economía', $p1->cargo);
+        $this->assertSame('PEP', $p1->categoria);
+        $this->assertSame('publica', $p1->entidad_tipo);
+        $this->assertSame(95, $p1->confianza);
+        $this->assertTrue($p1->threshold_passed);
 
         $r2->refresh();
         $this->assertTrue($r2->gemini_analyzed);
         $this->assertTrue($r2->gemini_is_pep);
-        $this->assertSame('Rodrigo Vargas', $r2->gemini_nombre);
-        $this->assertNull($r2->gemini_cargo);
-        $this->assertSame('OPI', $r2->gemini_categoria);
-        $this->assertSame('desconocido', $r2->gemini_entidad_tipo);
-        $this->assertSame(92, $r2->gemini_confianza);
+        $this->assertSame('Captura de líder criminal', $r2->gemini_motivo);
+
+        $p2 = ResultadoPersona::where('resultado_scraping_id', $r2->id)->first();
+        $this->assertNotNull($p2);
+        $this->assertSame('Rodrigo Vargas', $p2->nombre);
+        $this->assertNull($p2->cargo);
+        $this->assertSame('OPI', $p2->categoria);
+        $this->assertSame('desconocido', $p2->entidad_tipo);
+        $this->assertSame(92, $p2->confianza);
+        $this->assertTrue($p2->threshold_passed);
 
         $r3->refresh();
         $this->assertTrue($r3->gemini_analyzed);
         $this->assertFalse($r3->gemini_is_pep);
-        $this->assertNull($r3->gemini_nombre);
-        $this->assertNull($r3->gemini_cargo);
-        $this->assertNull($r3->gemini_categoria);
-        $this->assertSame(10, $r3->gemini_confianza);
+        $this->assertSame('Texto deportivo sin relevancia', $r3->gemini_motivo);
+        $this->assertSame(0, ResultadoPersona::where('resultado_scraping_id', $r3->id)->count());
     }
 
     public function test_invalid_json_response_marks_record_analyzed_and_continues(): void
@@ -149,12 +162,8 @@ class GeminiFiltroServiceTest extends TestCase
                 $callCount++;
                 if ($callCount === 1) {
                     return Http::response($this->fakeGeminiResponse([
-                        'is_pep' => false,
-                        'nombre' => null,
-                        'cargo' => null,
-                        'categoria' => null,
-                        'confianza' => 5,
-                        'motivo' => 'No relevante',
+                        'personas' => [],
+                        'motivo_general' => 'No relevante',
                     ]), 200);
                 }
 
@@ -171,12 +180,10 @@ class GeminiFiltroServiceTest extends TestCase
         $r1->refresh();
         $this->assertTrue($r1->gemini_analyzed);
         $this->assertFalse($r1->gemini_is_pep);
-        $this->assertSame(5, $r1->gemini_confianza);
 
         $r2->refresh();
         $this->assertTrue($r2->gemini_analyzed);
         $this->assertNull($r2->gemini_is_pep);
-        $this->assertNull($r2->gemini_confianza);
     }
 
     public function test_bad_request_exception_marks_record_analyzed_and_continues(): void
@@ -192,12 +199,8 @@ class GeminiFiltroServiceTest extends TestCase
                 $callCount++;
                 if ($callCount === 1) {
                     return Http::response($this->fakeGeminiResponse([
-                        'is_pep' => false,
-                        'nombre' => null,
-                        'cargo' => null,
-                        'categoria' => null,
-                        'confianza' => 10,
-                        'motivo' => 'Nada relevante',
+                        'personas' => [],
+                        'motivo_general' => 'Nada relevante',
                     ]), 200);
                 }
 
@@ -210,7 +213,7 @@ class GeminiFiltroServiceTest extends TestCase
 
         $r1->refresh();
         $this->assertTrue($r1->gemini_analyzed);
-        $this->assertSame(10, $r1->gemini_confianza);
+        $this->assertFalse($r1->gemini_is_pep);
 
         $r2->refresh();
         $this->assertTrue($r2->gemini_analyzed);
@@ -264,21 +267,21 @@ class GeminiFiltroServiceTest extends TestCase
 
                 return match ($callCount) {
                     1 => Http::response($this->fakeGeminiResponse([
-                        'is_pep' => true,
-                        'nombre' => 'Persona 1',
-                        'cargo' => 'Ministro',
-                        'categoria' => 'PEP',
-                        'confianza' => 90,
-                        'motivo' => 'Alto cargo',
+                        'personas' => [[
+                            'nombre' => 'Persona 1',
+                            'cargo' => 'Ministro',
+                            'categoria' => 'PEP',
+                            'entidad_tipo' => 'publica',
+                            'confianza' => 90,
+                            'evento' => 'designacion',
+                            'motivo' => 'Alto cargo',
+                        ]],
+                        'motivo_general' => 'Artículo sobre Persona 1',
                     ]), 200),
                     2 => Http::response('invalid response body', 200), // bad JSON
                     3 => Http::response($this->fakeGeminiResponse([
-                        'is_pep' => false,
-                        'nombre' => null,
-                        'cargo' => null,
-                        'categoria' => null,
-                        'confianza' => 5,
-                        'motivo' => 'No relevante',
+                        'personas' => [],
+                        'motivo_general' => 'No relevante',
                     ]), 200),
                     default => Http::response([], 500),
                 };
@@ -290,16 +293,20 @@ class GeminiFiltroServiceTest extends TestCase
 
         $r1->refresh();
         $this->assertTrue($r1->gemini_is_pep);
-        $this->assertSame(90, $r1->gemini_confianza);
+        $p1 = ResultadoPersona::where('resultado_scraping_id', $r1->id)->first();
+        $this->assertNotNull($p1);
+        $this->assertSame(90, $p1->confianza);
+        $this->assertTrue($p1->threshold_passed);
 
         $r2->refresh();
         $this->assertTrue($r2->gemini_analyzed);
         $this->assertNull($r2->gemini_is_pep);  // failed, no data
+        $this->assertSame(0, ResultadoPersona::where('resultado_scraping_id', $r2->id)->count());
 
         $r3->refresh();
         $this->assertTrue($r3->gemini_analyzed);
-        $this->assertFalse($r3->gemini_is_pep);  // processed correctly
-        $this->assertSame(5, $r3->gemini_confianza);
+        $this->assertFalse($r3->gemini_is_pep);  // processed correctly, no personas
+        $this->assertSame(0, ResultadoPersona::where('resultado_scraping_id', $r3->id)->count());
     }
 
     public function test_dynamic_prompt_is_used_when_catalog_has_positions_for_country(): void
@@ -355,13 +362,8 @@ class GeminiFiltroServiceTest extends TestCase
                         'content' => [
                             'parts' => [[
                                 'text' => json_encode([
-                                    'is_pep' => false,
-                                    'nombre' => null,
-                                    'cargo' => null,
-                                    'categoria' => null,
-                                    'entidad_tipo' => null,
-                                    'confianza' => 10,
-                                    'motivo' => 'Test',
+                                    'personas' => [],
+                                    'motivo_general' => 'Test',
                                 ]),
                             ]],
                         ],
@@ -374,12 +376,13 @@ class GeminiFiltroServiceTest extends TestCase
         $service->analizarLote(collect([$record]));
 
         $this->assertNotNull($capturedPrompt, 'The prompt should have been captured from the HTTP request');
-        $this->assertStringContainsString('SIEMPRE_PEP', $capturedPrompt);
-        $this->assertStringContainsString('PEP_EN_ENTIDAD_PUBLICA', $capturedPrompt);
-        $this->assertStringContainsString('PUEDE_SER_PEP', $capturedPrompt);
-        $this->assertStringContainsString('Ministro Titular', $capturedPrompt);
-        $this->assertStringContainsString('Director Ejecutivo Público', $capturedPrompt);
-        $this->assertStringContainsString('Gerente General Mixto', $capturedPrompt);
-        $this->assertStringContainsString('Banco Estatal Test', $capturedPrompt);
+        $this->assertIsString($capturedPrompt);
+        $this->assertStringContainsString('SIEMPRE_PEP', (string) $capturedPrompt);
+        $this->assertStringContainsString('PEP_EN_ENTIDAD_PUBLICA', (string) $capturedPrompt);
+        $this->assertStringContainsString('PUEDE_SER_PEP', (string) $capturedPrompt);
+        $this->assertStringContainsString('Ministro Titular', (string) $capturedPrompt);
+        $this->assertStringContainsString('Director Ejecutivo Público', (string) $capturedPrompt);
+        $this->assertStringContainsString('Gerente General Mixto', (string) $capturedPrompt);
+        $this->assertStringContainsString('Banco Estatal Test', (string) $capturedPrompt);
     }
 }
