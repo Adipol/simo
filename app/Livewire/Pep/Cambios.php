@@ -1,10 +1,15 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Livewire\Pep;
 
 use App\Models\Cambio;
 use App\Models\Fuente;
+use Illuminate\View\View;
+use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\Url;
 use Livewire\Component;
 use Livewire\WithPagination;
 
@@ -13,8 +18,10 @@ class Cambios extends Component
 {
     use WithPagination;
 
+    #[Url]
     public string $filtroFuente = '';
 
+    #[Url]
     public string $filtroRevisado = '';
 
     public ?int $verDiffId = null;
@@ -31,9 +38,8 @@ class Cambios extends Component
 
     public function marcarRevisado(int $id): void
     {
-        Cambio::where('id', $id)->update(['revisado' => true]);
+        Cambio::marcarComoRevisado($id);
 
-        // Si estabamos viendo el diff de este cambio, cerrarlo
         if ($this->verDiffId === $id) {
             $this->verDiffId = null;
         }
@@ -42,9 +48,27 @@ class Cambios extends Component
     public function toggleDiff(int $id): void
     {
         $this->verDiffId = ($this->verDiffId === $id) ? null : $id;
+        unset($this->cambioDetalle);
     }
 
-    public function render()
+    public function riesgoColor(string $riesgo): string
+    {
+        return match ($riesgo) {
+            'alto' => 'bg-red-50 text-red-600',
+            'medio' => 'bg-amber-50 text-amber-600',
+            default => 'bg-emerald-50 text-emerald-600',
+        };
+    }
+
+    #[Computed]
+    public function cambioDetalle(): ?Cambio
+    {
+        return $this->verDiffId
+            ? Cambio::with('fuente')->find($this->verDiffId)
+            : null;
+    }
+
+    public function render(): View
     {
         $q = Cambio::with('fuente')->orderBy('fecha', 'desc');
 
@@ -55,13 +79,9 @@ class Cambios extends Component
             $q->where('revisado', (bool) $this->filtroRevisado);
         }
 
-        $cambios = $q->paginate(20);
-        $fuentes = Fuente::orderBy('nombre')->get(['id', 'nombre', 'organismo']);
-
-        $cambioDetalle = $this->verDiffId
-            ? Cambio::with('fuente')->find($this->verDiffId)
-            : null;
-
-        return view('livewire.pep.cambios', compact('cambios', 'fuentes', 'cambioDetalle'));
+        return view('livewire.pep.cambios', [
+            'cambios' => $q->paginate(20),
+            'fuentes' => Fuente::orderBy('nombre')->get(['id', 'nombre', 'organismo']),
+        ]);
     }
 }

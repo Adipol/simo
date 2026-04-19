@@ -32,6 +32,11 @@ class Cambio extends Model
         return $this->belongsTo(Fuente::class, 'fuente_id');
     }
 
+    public static function marcarComoRevisado(int $id): void
+    {
+        static::where('id', $id)->update(['revisado' => true]);
+    }
+
     /**
      * Devuelve el diff como array de lineas con tipo (added/removed/context).
      */
