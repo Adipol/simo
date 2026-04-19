@@ -230,7 +230,8 @@ class GeminiPromptBuilderTest extends TestCase
         $prompt = $this->builder->filtroPEP('Test text', 'Bolivia', 'PEP-designacion');
 
         $this->assertStringContainsString('REGLAS DE CLASIFICACIÓN', $prompt);
-        $this->assertStringContainsString('EXPLÍCITAMENTE', $prompt);
+        $this->assertStringContainsString('título formal', $prompt);
+        $this->assertStringContainsString('descripción funcional', $prompt);
         $this->assertStringContainsString('PRINCIPALMENTE', $prompt);
         $this->assertStringContainsString('SUJETO ACTIVO', $prompt);
     }

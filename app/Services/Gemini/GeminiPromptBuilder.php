@@ -16,6 +16,10 @@ class GeminiPromptBuilder
 
     private const MAX_DIFF_FOR_EXCERPT = 15000;
 
+    private const MAX_EXCERPT_HALF = 4000;
+
+    private const CONTEXT_LINES = 2;
+
     public function __construct(
         private readonly ?PepCatalogService $catalog = null,
     ) {}
@@ -185,10 +189,11 @@ PROMPT;
     {
         return <<<'RULES'
 REGLAS DE CLASIFICACIÓN — solo clasificar como PEP si se cumplen TODAS:
-✓ El texto menciona EXPLÍCITAMENTE un cargo o función pública (no inferir ni inventar cargos)
+✓ El texto menciona un cargo o función pública, ya sea por título formal (ej: "Director", "Ministro") o por descripción funcional (ej: "asume la dirección de", "fue designado al frente de", "nuevo titular de")
 ✓ El artículo trata PRINCIPALMENTE sobre esa persona en contexto político/institucional
 ✓ La persona es el SUJETO ACTIVO del rol público (no fuente, no mencionada de paso)
 Si alguna regla no se cumple → NO incluir esa persona en el array 'personas'.
+NO inventar cargos que el texto no menciona, pero SÍ interpretar descripciones funcionales como cargos (ej: "asume la dirección de ABEN" = Director de ABEN).
 RULES;
     }
 
@@ -202,7 +207,10 @@ RULES;
 → {"personas":[],"motivo_general":"Persona civil en contexto de protesta social. Sin cargo público mencionado."}
 
 [NEG] "La directora del hospital municipal, Dra. Silvia Mamani, informó sobre los avances en el plan de vacunación regional."
-→ {"personas":[],"motivo_general":"Directora de hospital municipal es cargo de salud, no cargo político PEP."}
+→ {"personas":[],"motivo_general":"Directora de hospital municipal es cargo de salud en entidad local, no cargo político PEP."}
+
+[PEP+] "René Soria asume la dirección de ABEN en reemplazo de Hortensia Jiménez"
+→ {"personas":[{"nombre":"René Soria","cargo":"Director de ABEN","categoria":"PEP","entidad_tipo":"publica","confianza":90,"evento":"designacion","motivo":"Asume la dirección de agencia estatal"},{"nombre":"Hortensia Jiménez","cargo":"Director de ABEN","categoria":"PEP","entidad_tipo":"publica","confianza":85,"evento":"renuncia","motivo":"Reemplazada en la dirección de agencia estatal"}],"motivo_general":"Cambio de autoridades en agencia estatal ABEN"}
 
 NEGATIVES;
     }
@@ -271,8 +279,8 @@ PROMPT;
 
         // Case 2: Medium size - send first and last 4000 chars
         if ($len <= self::MAX_DIFF_FOR_EXCERPT) {
-            $first = substr($diff, 0, 4000);
-            $last = substr($diff, -4000);
+            $first = substr($diff, 0, self::MAX_EXCERPT_HALF);
+            $last = substr($diff, -self::MAX_EXCERPT_HALF);
 
             return $first."\n\n[... contenido truncado ...]\n\n".$last;
         }
@@ -285,8 +293,8 @@ PROMPT;
             $trimmed = trim($line);
             if (str_starts_with($trimmed, '+') || str_starts_with($trimmed, '-')) {
                 // Get the change line plus some context before and after
-                $start = max(0, $i - 2);
-                $end = min(count($lines) - 1, $i + 2);
+                $start = max(0, $i - self::CONTEXT_LINES);
+                $end = min(count($lines) - 1, $i + self::CONTEXT_LINES);
                 for ($j = $start; $j <= $end; $j++) {
                     $changeLines[] = $lines[$j];
                 }
