@@ -39,6 +39,12 @@
                 <option value="">Todos</option>
             </select>
 
+            <select wire:model.live="filtroArchivado" class="simo-select">
+                <option value="0">No archivados</option>
+                <option value="1">Archivados</option>
+                <option value="">Todos</option>
+            </select>
+
             <select wire:model.live="filtroGemini" class="simo-select">
                 <option value="">Gemini: Todos</option>
                 <option value="pending">Sin analizar</option>
@@ -65,6 +71,14 @@
         </div>
     @endif
 
+    {{-- Banner archivados --}}
+    @if($filtroArchivado === '1')
+        <div class="flex items-center justify-between px-4 py-2.5 bg-sky-50 border border-sky-100 rounded-xl text-xs text-sky-700">
+            <span>Mostrando articulos archivados. Usa "Desarchivar" para devolverlos a la vista principal.</span>
+            <button wire:click="$set('filtroArchivado', '0')" class="font-medium underline hover:no-underline">Volver a activos</button>
+        </div>
+    @endif
+
     {{-- Tabla --}}
     <div class="simo-card p-0 overflow-hidden">
         <table class="simo-table min-w-full">
@@ -79,6 +93,7 @@
             </thead>
             <tbody class="divide-y divide-gray-50">
                 @forelse($resultados as $r)
+                    @php $fb = $r->feedback?->first(); @endphp
                     <tr wire:key="resultado-{{ $r->id }}" class="{{ !$r->leido && !$r->descartado ? 'bg-indigo-50/30' : 'bg-white' }}">
                         <td>
                             <div class="flex items-start gap-2">
@@ -96,6 +111,9 @@
                                         @if($r->descartado)
                                             <span class="simo-badge bg-zinc-100 text-zinc-500 border-zinc-200" style="font-size:9px">descartado</span>
                                         @endif
+                                        @if($r->archivado_at)
+                                            <span class="simo-badge bg-sky-50 text-sky-600 border-sky-100" style="font-size:9px">archivado</span>
+                                        @endif
                                         {{-- Gemini analysis badge --}}
                                         @if(!$r->gemini_analyzed)
                                             <span class="simo-badge bg-zinc-100 text-zinc-500 border-zinc-200" style="font-size:9px">Pendiente</span>
@@ -110,7 +128,6 @@
                                             <span class="simo-badge bg-zinc-100 text-zinc-400" style="font-size:9px">No relevante</span>
                                         @endif
                                         {{-- Feedback badge (visible to all) --}}
-                                        @php $fb = $r->feedback?->first(); @endphp
                                         @if($fb)
                                             @if($fb->tipo->value === 'correcto')
                                                 <span class="simo-badge bg-emerald-50 text-emerald-600 border-emerald-100" style="font-size:9px">✓ fb</span>
@@ -154,7 +171,7 @@
                             {{ $r->fecha_encontrado->format('d/m/y H:i') }}
                         </td>
                         <td>
-                            <div class="flex items-center gap-1">
+                            <div class="flex items-center gap-1 flex-wrap">
                                 @if($r->descartado)
                                     <button wire:click="restaurar({{ $r->id }})"
                                         class="simo-btn bg-indigo-50 text-indigo-600 hover:bg-indigo-100">
@@ -178,13 +195,26 @@
                                             <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
                                         </svg>
                                     </button>
+                                    {{-- Archivar / Desarchivar --}}
+                                    @can('gestionar resultados')
+                                        @if($r->archivado_at)
+                                            <button wire:click="desarchivar({{ $r->id }})"
+                                                class="simo-btn bg-sky-50 text-sky-600 hover:bg-sky-100">
+                                                Desarchivar
+                                            </button>
+                                        @else
+                                            <button wire:click="archivar({{ $r->id }})"
+                                                class="simo-btn bg-gray-50 text-gray-500 hover:bg-sky-50 hover:text-sky-600">
+                                                Archivar
+                                            </button>
+                                        @endif
+                                    @endcan
                                     @if($r->gemini_analyzed)
                                         <button wire:click="$set('verAnalisisId', {{ $r->id }})"
                                             class="simo-btn-ghost text-indigo-500 hover:text-indigo-600">
                                             Ver análisis
                                         </button>
                                         @can('dar feedback clasificaciones')
-                                        @php $fb = $r->feedback?->first(); @endphp
                                         <button wire:click="guardarFeedbackCorrecto({{ $r->id }})"
                                             class="simo-btn text-xs {{ $fb && $fb->tipo->value === 'correcto' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-50 text-gray-500 hover:bg-emerald-50 hover:text-emerald-600' }}">
                                             ✓ Correcto
@@ -193,6 +223,15 @@
                                             class="simo-btn text-xs {{ $fb && $fb->tipo->value === 'incorrecto' ? 'bg-amber-100 text-amber-700' : 'bg-gray-50 text-gray-500 hover:bg-amber-50 hover:text-amber-600' }}">
                                             ✗ Incorrecto
                                         </button>
+                                        @endcan
+                                    @endif
+                                    {{-- Confirmar PEP --}}
+                                    @if(!$r->gemini_is_pep)
+                                        @can('dar feedback clasificaciones')
+                                            <button wire:click="abrirConfirmarPepModal({{ $r->id }})"
+                                                class="simo-btn text-xs bg-indigo-50 text-indigo-600 hover:bg-indigo-100">
+                                                Confirmar PEP
+                                            </button>
                                         @endcan
                                     @endif
                                 @endif
@@ -252,7 +291,7 @@
                     <label class="simo-label">Categoría corregida *</label>
                     <select wire:model="feedbackCategoriaCorregida" class="simo-select w-full">
                         <option value="">Seleccionar...</option>
-                        @foreach(\App\Enums\CategoriaCorreccion::cases() as $cat)
+                        @foreach($categoriasCorreccion as $cat)
                             <option value="{{ $cat->value }}">{{ $cat->value }}</option>
                         @endforeach
                     </select>
@@ -290,6 +329,56 @@
                 <div class="flex justify-end gap-2 pt-2">
                     <button type="button" wire:click="cerrarModalFeedback" class="simo-btn bg-gray-100 text-gray-600">Cancelar</button>
                     <button type="submit" class="simo-btn bg-indigo-600 text-white hover:bg-indigo-700">Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    @endif
+
+    {{-- Modal Confirmar PEP --}}
+    @if($confirmarPepModalId)
+    <div class="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+        wire:click.self="cerrarConfirmarPepModal">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg">
+            <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                <h2 class="font-semibold text-gray-800">Confirmar PEP</h2>
+                <button wire:click="cerrarConfirmarPepModal"
+                    class="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 text-lg">&times;</button>
+            </div>
+            <form wire:submit="confirmarPep" class="px-6 py-5 space-y-4">
+                {{-- Nombre (required) --}}
+                <div>
+                    <label class="simo-label">Nombre *</label>
+                    <input wire:model="pepNombre" type="text" class="simo-input w-full"
+                        placeholder="Nombre completo del PEP" />
+                    @error('pepNombre') <span class="text-xs text-red-500">{{ $message }}</span> @enderror
+                </div>
+
+                {{-- Cargo (optional) --}}
+                <div>
+                    <label class="simo-label">Cargo</label>
+                    <input wire:model="pepCargo" type="text" class="simo-input w-full"
+                        placeholder="Cargo o función pública (opcional)" />
+                    @error('pepCargo') <span class="text-xs text-red-500">{{ $message }}</span> @enderror
+                </div>
+
+                {{-- Evento (optional) --}}
+                <div>
+                    <label class="simo-label">Evento</label>
+                    <select wire:model="pepEvento" class="simo-select w-full">
+                        <option value="">— Sin especificar —</option>
+                        <option value="designacion">Designación</option>
+                        <option value="renuncia">Renuncia</option>
+                        <option value="crimen">Crimen</option>
+                    </select>
+                    @error('pepEvento') <span class="text-xs text-red-500">{{ $message }}</span> @enderror
+                </div>
+
+                <div class="flex justify-end gap-2 pt-2">
+                    <button type="button" wire:click="cerrarConfirmarPepModal"
+                        class="simo-btn bg-gray-100 text-gray-600">Cancelar</button>
+                    <button type="submit"
+                        class="simo-btn bg-indigo-600 text-white hover:bg-indigo-700">Confirmar PEP</button>
                 </div>
             </form>
         </div>

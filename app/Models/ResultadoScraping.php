@@ -22,7 +22,7 @@ class ResultadoScraping extends Model
     protected $fillable = [
         'url', 'keyword', 'sitio_id', 'pais', 'categoria', 'titulo', 'contexto',
         'fecha_encontrado', 'relevance_score', 'found_in_title',
-        'leido', 'relevante', 'descartado', 'notas',
+        'leido', 'relevante', 'descartado', 'archivado_at', 'notas',
         'gemini_analyzed', 'gemini_is_pep', 'gemini_nombre', 'gemini_nombre_normalizado', 'gemini_cargo',
         'gemini_categoria', 'gemini_entidad_tipo', 'gemini_confianza', 'gemini_motivo',
     ];
@@ -32,6 +32,7 @@ class ResultadoScraping extends Model
         'leido' => 'boolean',
         'relevante' => 'boolean',
         'descartado' => 'boolean',
+        'archivado_at' => 'datetime',
         'fecha_encontrado' => 'datetime',
         'relevance_score' => 'integer',
         'gemini_analyzed' => 'boolean',
@@ -73,5 +74,15 @@ class ResultadoScraping extends Model
     public function scopeWithFeedbackFromUser(Builder $query, int $userId): void
     {
         $query->with(['feedback' => fn ($q) => $q->where('usuario_id', $userId)]);
+    }
+
+    public function scopeArchivado(Builder $query): void
+    {
+        $query->whereNotNull('archivado_at');
+    }
+
+    public function scopeNoArchivado(Builder $query): void
+    {
+        $query->whereNull('archivado_at');
     }
 }

@@ -32,6 +32,7 @@ class RolesPermisosSeeder extends Seeder
             'gestionar familias lemas',
             'gestionar cargos pep',
             'gestionar entidades publicas',
+            'gestionar resultados',
 
             // Scraper — feedback de clasificaciones Gemini
             'dar feedback clasificaciones',
@@ -71,6 +72,7 @@ class RolesPermisosSeeder extends Seeder
             'marcar relevante',
             'exportar csv scraper',
             'gestionar sitios',
+            'gestionar resultados',
             'dar feedback clasificaciones',
             'ver cambios pep',
             'marcar revisado pep',

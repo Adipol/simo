@@ -10,13 +10,16 @@ use App\Models\ClasificacionFeedback;
 use App\Models\Pais;
 use App\Models\ResultadoScraping;
 use App\Services\Export\ResultadosCsvExporter;
-use App\Services\Normalization\NombreNormalizador;
+use App\Services\FeedbackIncorrectoService;
+use App\Services\PepConfirmacionService;
 use App\Services\ResultadoScrapingQueryService;
 use Illuminate\Contracts\View\View;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\Url;
 use Livewire\Component;
 use Livewire\WithPagination;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -45,13 +48,26 @@ class Resultados extends Component
     public string $filtroDescartado = '0'; // Por defecto oculta descartados
 
     #[Url]
-    public string $filtroGemini = 'pep';
+    public string $filtroArchivado = '0'; // Por defecto oculta archivados
+
+    #[Url]
+    public string $filtroGemini = '';
 
     public ?int $verAnalisisId = null;
 
     public string $ordenar = 'fecha_encontrado';
 
     public string $direccion = 'desc';
+
+    // ─── Confirmar PEP props ───────────────────────────────────────────────────
+
+    public ?int $confirmarPepModalId = null;
+
+    public string $pepNombre = '';
+
+    public string $pepCargo = '';
+
+    public string $pepEvento = '';
 
     // ─── Feedback props ────────────────────────────────────────────────────────
 
@@ -99,6 +115,11 @@ class Resultados extends Component
         $this->resetPage();
     }
 
+    public function updatingFiltroArchivado(): void
+    {
+        $this->resetPage();
+    }
+
     public function updatingFiltroGemini(): void
     {
         $this->resetPage();
@@ -127,6 +148,23 @@ class Resultados extends Component
     public function restaurar(int $id): void
     {
         ResultadoScraping::where('id', $id)->update(['descartado' => false]);
+    }
+
+    public function archivar(int $id): void
+    {
+        $this->authorize('gestionar resultados');
+
+        ResultadoScraping::where('id', $id)->update([
+            'archivado_at' => now(),
+            'leido' => true,
+        ]);
+    }
+
+    public function desarchivar(int $id): void
+    {
+        $this->authorize('gestionar resultados');
+
+        ResultadoScraping::where('id', $id)->update(['archivado_at' => null]);
     }
 
     public function exportarCsv(): StreamedResponse
@@ -186,21 +224,14 @@ class Resultados extends Component
 
         $resultado = ResultadoScraping::findOrFail($this->feedbackModalId);
 
-        $normalizador = app(NombreNormalizador::class);
-        $nombreNormalizado = $normalizador->normalizeNullable($this->feedbackNombreCorregido)?->normalized;
-
-        ClasificacionFeedback::updateOrCreate(
-            ['resultado_scraping_id' => $this->feedbackModalId, 'usuario_id' => Auth::id()],
-            [
-                'tipo' => TipoFeedback::Incorrecto,
-                'clasificacion_snapshot' => $resultado->toGeminiSnapshot(),
-                'corregido_is_pep' => $this->feedbackIsPepCorregido,
-                'corregido_categoria' => $this->feedbackCategoriaCorregida ? CategoriaCorreccion::from($this->feedbackCategoriaCorregida) : null,
-                'corregido_nombre' => $this->feedbackNombreCorregido,
-                'corregido_nombre_normalizado' => $nombreNormalizado,
-                'corregido_cargo' => $this->feedbackCargoCorregido,
-                'motivo' => $this->feedbackMotivo,
-            ]
+        app(FeedbackIncorrectoService::class)->guardar(
+            resultado: $resultado,
+            usuarioId: (int) Auth::id(),
+            categoriaCorregida: (string) $this->feedbackCategoriaCorregida,
+            motivo: $this->feedbackMotivo,
+            isPepCorregido: $this->feedbackIsPepCorregido,
+            nombreCorregido: $this->feedbackNombreCorregido,
+            cargoCorregido: $this->feedbackCargoCorregido,
         );
 
         $this->cerrarModalFeedback();
@@ -220,12 +251,63 @@ class Resultados extends Component
         $this->resetValidation();
     }
 
+    // ─── Confirmar PEP actions ────────────────────────────────────────────────
+
+    public function abrirConfirmarPepModal(int $id): void
+    {
+        $this->authorize('dar feedback clasificaciones');
+
+        $this->confirmarPepModalId = $id;
+        $this->pepNombre = '';
+        $this->pepCargo = '';
+        $this->pepEvento = '';
+        $this->resetValidation();
+    }
+
+    public function cerrarConfirmarPepModal(): void
+    {
+        $this->confirmarPepModalId = null;
+        $this->pepNombre = '';
+        $this->pepCargo = '';
+        $this->pepEvento = '';
+        $this->resetValidation();
+    }
+
+    public function confirmarPep(): void
+    {
+        $this->authorize('dar feedback clasificaciones');
+
+        $this->validate($this->rulesConfirmarPep());
+
+        $resultado = ResultadoScraping::findOrFail($this->confirmarPepModalId);
+
+        app(PepConfirmacionService::class)->confirmar(
+            resultado: $resultado,
+            usuarioId: (int) Auth::id(),
+            nombre: $this->pepNombre,
+            cargo: $this->pepCargo !== '' ? $this->pepCargo : null,
+            evento: $this->pepEvento !== '' ? $this->pepEvento : null,
+        );
+
+        $this->cerrarConfirmarPepModal();
+        session()->flash('message', 'PEP confirmado correctamente.');
+    }
+
     // ─── Validation rules ─────────────────────────────────────────────────────
+
+    protected function rulesConfirmarPep(): array
+    {
+        return [
+            'pepNombre' => 'required|string|max:200',
+            'pepCargo' => 'nullable|string|max:300',
+            'pepEvento' => ['nullable', Rule::in(['designacion', 'renuncia', 'crimen'])],
+        ];
+    }
 
     protected function rulesFeedbackIncorrecto(): array
     {
         return [
-            'feedbackCategoriaCorregida' => ['required', \Illuminate\Validation\Rule::enum(CategoriaCorreccion::class)],
+            'feedbackCategoriaCorregida' => ['required', Rule::enum(CategoriaCorreccion::class)],
             'feedbackMotivo' => 'required|string|min:10|max:1000',
             'feedbackNombreCorregido' => 'nullable|string|max:200',
             'feedbackCargoCorregido' => 'nullable|string|max:200',
@@ -244,6 +326,7 @@ class Resultados extends Component
             filtroLeido: $this->filtroLeido,
             filtroRelevante: $this->filtroRelevante,
             filtroDescartado: $this->filtroDescartado,
+            filtroArchivado: $this->filtroArchivado,
             filtroGemini: $this->filtroGemini,
             ordenar: $this->ordenar,
             direccion: $this->direccion,
@@ -288,6 +371,7 @@ class Resultados extends Component
             'paises' => $this->paises,
             'categorias' => $this->categorias,
             'resultadoAnalisis' => $this->resultadoAnalisis,
+            'categoriasCorreccion' => CategoriaCorreccion::cases(),
         ]);
     }
 }

@@ -16,6 +16,7 @@ class ResultadoScrapingQueryService
         string $filtroLeido = '',
         string $filtroRelevante = '',
         string $filtroDescartado = '0',
+        string $filtroArchivado = '0',
         string $filtroGemini = '',
         string $ordenar = 'fecha_encontrado',
         string $direccion = 'desc',
@@ -60,6 +61,12 @@ class ResultadoScrapingQueryService
             $q->where('descartado', false);
         } elseif ($filtroDescartado === '1') {
             $q->where('descartado', true);
+        }
+
+        if ($filtroArchivado === '0') {
+            $q->noArchivado();
+        } elseif ($filtroArchivado === '1') {
+            $q->archivado();
         }
 
         if ($filtroGemini === 'pending') {
