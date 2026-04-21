@@ -51,11 +51,12 @@
             </thead>
             <tbody>
                 @forelse($sitios as $s)
-                    <tr>
+                    <tr wire:key="{{ $s->id }}">
                         <td>
                             <div class="font-medium text-gray-800">{{ $s->nombre }}</div>
                             <a href="{{ $s->url }}" target="_blank"
-                               class="text-xs text-indigo-500 hover:underline block max-w-sm truncate">
+                               class="text-xs text-indigo-500 hover:underline block max-w-sm truncate"
+                               rel="noopener noreferrer">
                                 {{ Str::limit($s->url, 60) }}
                             </a>
                         </td>
@@ -100,7 +101,7 @@
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="5" class="py-12 text-center text-gray-400">
+                        <td colspan="{{ auth()->user()?->can('gestionar sitios') ? 5 : 4 }}" class="py-12 text-center text-gray-400">
                             <svg class="w-8 h-8 mx-auto mb-2 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
                                     d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3"/>
@@ -143,11 +144,13 @@
                 <div class="grid grid-cols-2 gap-4">
                     <div>
                         <label class="block text-xs font-medium text-gray-600 mb-1">Pais *</label>
-                        <select wire:model="pais" class="simo-select w-full">
+                        <select wire:model="pais" class="simo-select w-full @error('pais') border-red-400 @enderror">
+                            <option value="">Seleccione un país</option>
                             @foreach($paises as $p)
                                 <option value="{{ $p->codigo }}">{{ $p->nombre }}</option>
                             @endforeach
                         </select>
+                        @error('pais') <p class="text-red-500 text-xs mt-1">{{ $message }}</p> @enderror
                     </div>
                     <div class="flex items-end pb-1">
                         <label class="flex items-center gap-2 text-sm cursor-pointer">
