@@ -62,33 +62,54 @@ class Cambio extends Model
 
     /**
      * Indica si el cambio debería mostrarse con estilo atenuado (sin persona detectada).
+     *
+     * Solo atenúa cuando Gemini analizó con éxito, confirmó riesgo bajo, sin personas,
+     * y el scraper tampoco detectó posibles PEPs.
      */
     public function esMuted(): bool
     {
         return $this->gemini_analyzed
+            && $this->gemini_analisis_json !== null
+            && ($this->gemini_analisis_json['riesgo'] ?? null) === 'bajo'
             && ($this->gemini_analisis_json['persona_nueva'] ?? null) === null
-            && ($this->gemini_analisis_json['persona_removida'] ?? null) === null;
+            && ($this->gemini_analisis_json['persona_removida'] ?? null) === null
+            && empty($this->posibles_peps);
     }
 
     /**
-     * Scope: solo cambios con persona detectada por Gemini.
+     * Scope: cambios con persona detectada (por Gemini o por el scraper).
+     *
+     * Incluye registros donde:
+     * - Gemini detectó persona_nueva o persona_removida, O
+     * - El scraper detectó posibles_peps (fallback si Gemini falló)
      */
     public function scopeConPersona(\Illuminate\Database\Eloquent\Builder $query): \Illuminate\Database\Eloquent\Builder
     {
-        return $query->where('gemini_analyzed', true)
-            ->where(function (\Illuminate\Database\Eloquent\Builder $sub): void {
-                $sub->whereRaw("gemini_analisis_json->>'persona_nueva' IS NOT NULL")
-                    ->orWhereRaw("gemini_analisis_json->>'persona_removida' IS NOT NULL");
+        return $query->where(function (\Illuminate\Database\Eloquent\Builder $sub): void {
+            $sub->where(function (\Illuminate\Database\Eloquent\Builder $gemini): void {
+                $gemini->where('gemini_analyzed', true)
+                    ->where(function (\Illuminate\Database\Eloquent\Builder $personas): void {
+                        $personas->whereRaw("gemini_analisis_json->>'persona_nueva' IS NOT NULL")
+                            ->orWhereRaw("gemini_analisis_json->>'persona_removida' IS NOT NULL");
+                    });
+            })->orWhere(function (\Illuminate\Database\Eloquent\Builder $scraper): void {
+                $scraper->whereNotNull('posibles_peps')
+                    ->where('posibles_peps', '!=', '');
             });
+        });
     }
 
     /**
-     * Scope: solo cambios sin persona detectada por Gemini.
+     * Scope: cambios sin persona detectada (ni por Gemini ni por scraper).
      */
     public function scopeSinPersona(\Illuminate\Database\Eloquent\Builder $query): \Illuminate\Database\Eloquent\Builder
     {
         return $query->where('gemini_analyzed', true)
-            ->whereRaw("(gemini_analisis_json->>'persona_nueva' IS NULL AND gemini_analisis_json->>'persona_removida' IS NULL)");
+            ->whereRaw("(gemini_analisis_json->>'persona_nueva' IS NULL AND gemini_analisis_json->>'persona_removida' IS NULL)")
+            ->where(function (\Illuminate\Database\Eloquent\Builder $sub): void {
+                $sub->whereNull('posibles_peps')
+                    ->orWhere('posibles_peps', '');
+            });
     }
 
     /**
