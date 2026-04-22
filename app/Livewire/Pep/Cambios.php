@@ -24,6 +24,12 @@ class Cambios extends Component
     #[Url]
     public string $filtroRevisado = '';
 
+    #[Url]
+    public string $filtroConPersona = 'si';
+
+    #[Url]
+    public string $filtroRiesgo = '';
+
     public ?int $verDiffId = null;
 
     public function updatingFiltroFuente(): void
@@ -32,6 +38,16 @@ class Cambios extends Component
     }
 
     public function updatingFiltroRevisado(): void
+    {
+        $this->resetPage();
+    }
+
+    public function updatingFiltroConPersona(): void
+    {
+        $this->resetPage();
+    }
+
+    public function updatingFiltroRiesgo(): void
     {
         $this->resetPage();
     }
@@ -77,6 +93,14 @@ class Cambios extends Component
         }
         if ($this->filtroRevisado !== '') {
             $q->where('revisado', (bool) $this->filtroRevisado);
+        }
+        if ($this->filtroConPersona === 'si') {
+            $q->conPersona();
+        } elseif ($this->filtroConPersona === 'no') {
+            $q->sinPersona();
+        }
+        if ($this->filtroRiesgo !== '') {
+            $q->conRiesgo($this->filtroRiesgo);
         }
 
         return view('livewire.pep.cambios', [

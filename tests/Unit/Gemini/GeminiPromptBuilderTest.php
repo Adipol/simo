@@ -365,6 +365,54 @@ class GeminiPromptBuilderTest extends TestCase
     }
 
     // ============================================
+    // analisisCambio — false positive prevention (filtro-cambios-pep)
+    // ============================================
+
+    public function test_analisis_cambio_contains_paso_0_gate(): void
+    {
+        $prompt = $this->builder->analisisCambio(
+            '- _Transparencia\n+ Transparencia',
+            'Ministerio de Transparencia',
+            'Ministerio'
+        );
+
+        $this->assertStringContainsString('PASO 0', $prompt);
+    }
+
+    public function test_analisis_cambio_contains_null_persona_rule(): void
+    {
+        $prompt = $this->builder->analisisCambio(
+            '- _Transparencia\n+ Transparencia',
+            'Ministerio',
+            'Organismo'
+        );
+
+        $this->assertStringContainsString('DEBEN ser null', $prompt);
+    }
+
+    public function test_analisis_cambio_contains_neg_example_formatting_only(): void
+    {
+        $prompt = $this->builder->analisisCambio(
+            '+ MINISTERIO DE SALUD Y DEPORTES',
+            'Fuente',
+            'Organismo'
+        );
+
+        $this->assertStringContainsString('_Transparencia', $prompt);
+    }
+
+    public function test_analisis_cambio_contains_neg_example_institutional_headline(): void
+    {
+        $prompt = $this->builder->analisisCambio(
+            '+ MINISTERIO DE SALUD',
+            'Fuente',
+            'Organismo'
+        );
+
+        $this->assertStringContainsString('COORDINAN ACCIONES', $prompt);
+    }
+
+    // ============================================
     // truncarDiff tests
     // ============================================
 

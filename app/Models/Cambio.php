@@ -61,6 +61,46 @@ class Cambio extends Model
     }
 
     /**
+     * Indica si el cambio debería mostrarse con estilo atenuado (sin persona detectada).
+     */
+    public function esMuted(): bool
+    {
+        return $this->gemini_analyzed
+            && ($this->gemini_analisis_json['persona_nueva'] ?? null) === null
+            && ($this->gemini_analisis_json['persona_removida'] ?? null) === null;
+    }
+
+    /**
+     * Scope: solo cambios con persona detectada por Gemini.
+     */
+    public function scopeConPersona(\Illuminate\Database\Eloquent\Builder $query): \Illuminate\Database\Eloquent\Builder
+    {
+        return $query->where('gemini_analyzed', true)
+            ->where(function (\Illuminate\Database\Eloquent\Builder $sub): void {
+                $sub->whereRaw("gemini_analisis_json->>'persona_nueva' IS NOT NULL")
+                    ->orWhereRaw("gemini_analisis_json->>'persona_removida' IS NOT NULL");
+            });
+    }
+
+    /**
+     * Scope: solo cambios sin persona detectada por Gemini.
+     */
+    public function scopeSinPersona(\Illuminate\Database\Eloquent\Builder $query): \Illuminate\Database\Eloquent\Builder
+    {
+        return $query->where('gemini_analyzed', true)
+            ->whereRaw("(gemini_analisis_json->>'persona_nueva' IS NULL AND gemini_analisis_json->>'persona_removida' IS NULL)");
+    }
+
+    /**
+     * Scope: filtrar por nivel de riesgo en el análisis Gemini.
+     */
+    public function scopeConRiesgo(\Illuminate\Database\Eloquent\Builder $query, string $riesgo): \Illuminate\Database\Eloquent\Builder
+    {
+        return $query->where('gemini_analyzed', true)
+            ->whereRaw("gemini_analisis_json->>'riesgo' = ?", [$riesgo]);
+    }
+
+    /**
      * Devuelve posibles PEPs como array.
      */
     public function posiblesPepsArray(): array

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Tests\Feature\Livewire\Pep;
 
 use App\Models\Cambio;
@@ -7,6 +9,7 @@ use App\Models\Fuente;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Livewire\Livewire;
+use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
 class CambiosGeminiTest extends TestCase
@@ -36,7 +39,7 @@ class CambiosGeminiTest extends TestCase
         ]);
     }
 
-    /** @test */
+    #[Test]
     public function mae_badge_shown_when_gemini_detects_mae(): void
     {
         $user = $this->createUser();
@@ -52,8 +55,11 @@ class CambiosGeminiTest extends TestCase
             'gemini_analyzed' => true,
             'gemini_analisis_json' => [
                 'es_mae' => true,
+                'persona_nueva' => 'Juan Pérez',
+                'persona_removida' => null,
                 'riesgo' => 'alto',
                 'cargo' => 'Ministro de Economía',
+                'analisis' => 'Cambio de ministro detectado.',
             ],
         ]);
 
@@ -63,7 +69,7 @@ class CambiosGeminiTest extends TestCase
             ->assertSeeText($cambio->id);
     }
 
-    /** @test */
+    #[Test]
     public function mae_badge_not_shown_when_not_mae(): void
     {
         $user = $this->createUser();
@@ -88,7 +94,7 @@ class CambiosGeminiTest extends TestCase
             ->assertDontSee('MAE');
     }
 
-    /** @test */
+    #[Test]
     public function gemini_analysis_section_shows_in_diff_panel(): void
     {
         $user = $this->createUser();
@@ -127,7 +133,7 @@ class CambiosGeminiTest extends TestCase
             ->assertSee('Riesgo: Alto');
     }
 
-    /** @test */
+    #[Test]
     public function risk_level_colors_applied_correctly(): void
     {
         $user = $this->createUser();
@@ -143,8 +149,11 @@ class CambiosGeminiTest extends TestCase
             'gemini_analyzed' => true,
             'gemini_analisis_json' => [
                 'es_mae' => false,
+                'persona_nueva' => 'Ana García',
+                'persona_removida' => null,
                 'riesgo' => 'medio',
                 'cargo' => 'Subdirector',
+                'analisis' => 'Cambio de subdirector.',
             ],
         ]);
 
@@ -156,7 +165,7 @@ class CambiosGeminiTest extends TestCase
         $component->assertSee('Riesgo: Medio');
     }
 
-    /** @test */
+    #[Test]
     public function gemini_section_hidden_when_not_analyzed(): void
     {
         $user = $this->createUser();
@@ -180,7 +189,7 @@ class CambiosGeminiTest extends TestCase
         $component->assertDontSee('Análisis Gemini');
     }
 
-    /** @test */
+    #[Test]
     public function optional_fields_hidden_when_missing(): void
     {
         $user = $this->createUser();
@@ -196,8 +205,10 @@ class CambiosGeminiTest extends TestCase
             'gemini_analyzed' => true,
             'gemini_analisis_json' => [
                 'es_mae' => false,
+                'persona_nueva' => 'Carlos Ruiz',
+                'persona_removida' => null,
                 'riesgo' => 'bajo',
-                // No persona_removida, persona_nueva, or analisis
+                // No analisis
             ],
         ]);
 
@@ -205,9 +216,9 @@ class CambiosGeminiTest extends TestCase
             ->test('pep.cambios')
             ->call('toggleDiff', $cambio->id);
 
-        // Should see section but not optional fields
+        // Should see section but not optional analisis field; persona_removida is null so "Removido:" hidden
         $component->assertSee('Análisis Gemini')
             ->assertDontSee('Removido:')
-            ->assertDontSee('Nuevo:');
+            ->assertSee('Nuevo:');
     }
 }

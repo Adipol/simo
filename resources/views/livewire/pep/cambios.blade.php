@@ -13,12 +13,36 @@
             <option value="0">Sin revisar</option>
             <option value="1">Revisados</option>
         </select>
+        <select wire:model.live="filtroConPersona" class="simo-select">
+            <option value="si">Con persona detectada</option>
+            <option value="no">Sin persona detectada</option>
+            <option value="">Todos los registros</option>
+        </select>
+        <select wire:model.live="filtroRiesgo" class="simo-select">
+            <option value="">Todos los riesgos</option>
+            <option value="alto">Riesgo alto</option>
+            <option value="medio">Riesgo medio</option>
+            <option value="bajo">Riesgo bajo</option>
+        </select>
     </div>
+
+    {{-- Banner contextual --}}
+    @if($filtroConPersona === 'si')
+        <div class="flex items-center gap-3 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm text-indigo-700">
+            <svg class="h-4 w-4 shrink-0 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            <span>Mostrando solo cambios con personas detectadas por Gemini.</span>
+            <button wire:click="$set('filtroConPersona', '')" class="ml-auto text-xs font-medium text-indigo-600 hover:text-indigo-800 hover:underline">
+                Ver todos
+            </button>
+        </div>
+    @endif
 
     {{-- Lista de cambios --}}
     <div class="space-y-3">
         @forelse($cambios as $c)
-            <div wire:key="cambio-{{ $c->id }}" class="simo-card p-0 overflow-hidden {{ !$c->revisado ? 'border-l-4 border-amber-400' : '' }}">
+            <div wire:key="cambio-{{ $c->id }}" class="simo-card p-0 overflow-hidden {{ !$c->revisado ? 'border-l-4 border-amber-400' : '' }} {{ $c->esMuted() ? 'opacity-60 border-l-gray-300' : '' }}">
                 <div class="px-5 py-4 flex items-center justify-between gap-4">
                     <div class="min-w-0">
                         <p class="text-sm font-semibold text-gray-800">

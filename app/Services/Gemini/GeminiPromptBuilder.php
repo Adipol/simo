@@ -236,6 +236,16 @@ NEGATIVES;
 Sos un experto en gobierno corporativo y análisis de cambios en organismos públicos de Latinoamérica.
 Analizá el siguiente diff de {$organismo} (fuente: {$fuente}) para detectar cambio de autoridades.
 
+PASO 0 — FILTRO DE NOMBRES:
+Antes de cualquier análisis, revisá las líneas que empiezan con + o -.
+¿Aparece algún NOMBRE PROPIO DE PERSONA HUMANA (nombre y apellido, o título + apellido)?
+- Si NO aparece ningún nombre de persona → respondé inmediatamente:
+  {"persona_removida":null,"persona_nueva":null,"cargo":null,"es_mae":false,"riesgo":"bajo","analisis":"No se detectaron nombres de personas en el diff."}
+- Si SÍ aparece al menos un nombre → continuá con los pasos siguientes.
+
+REGLA DE NULIDAD: persona_removida y persona_nueva DEBEN ser null salvo que identifiques
+un nombre propio de persona humana (no institución, no sigla, no documento, no cargo genérico).
+
 REGLA CRÍTICA: Solo reportá cambios de PERSONAS en cargos públicos.
 Si el diff solo contiene cambios de documentos, resoluciones, decretos, números de expediente,
 fechas de publicación, títulos de eventos o textos administrativos SIN mencionar personas
@@ -256,6 +266,8 @@ EJEMPLOS de cambios que NO son de personas (ignorar):
 - "+ RESOLUCIÓN AETN Nº 163/2026" → Es un documento, no una persona
 - "- Publicado el: 15/04/2026" → Es una fecha, no una persona
 - "+ AETN REALIZÓ CAPACITACIÓN SOBRE OBLIGACIONES" → Es un evento, no una persona
+- "- _Transparencia\n+ Transparencia" → Cambio de formato (guion bajo), no hay persona → {"persona_removida":null,"persona_nueva":null,"cargo":null,"es_mae":false,"riesgo":"bajo","analisis":"Cambio de formato sin persona detectada."}
+- "+ RESOLUCIÓN AETN Nº 180/2026\n+ AETN Y MINISTERIO DE SALUD COORDINAN ACCIONES CONTRA EL DENGUE" → Titular institucional sin nombre de persona → {"persona_removida":null,"persona_nueva":null,"cargo":null,"es_mae":false,"riesgo":"bajo","analisis":"Titular institucional, no se detectó persona humana."}
 
 JSON de salida (SOLO JSON válido):
 {"persona_removida":string|null,"persona_nueva":string|null,"cargo":string|null,"es_mae":boolean,"riesgo":"alto"|"medio"|"bajo","analisis":string}
