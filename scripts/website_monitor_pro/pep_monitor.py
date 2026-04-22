@@ -797,6 +797,9 @@ def create_http_session() -> requests.Session:
             "Chrome/120.0.0.0 Safari/537.36"
         }
     )
+    # Varios sitios gubernamentales .gob.bo tienen certificados SSL
+    # invalidos o autofirmados — desactivar verificacion globalmente
+    session.verify = False
     return session
 
 
