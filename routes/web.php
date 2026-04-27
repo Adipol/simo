@@ -1,10 +1,13 @@
 <?php
 
+declare(strict_types=1);
+
 use App\Http\Controllers\ProfileController;
 use App\Livewire\Configuracion\Paises;
 use App\Livewire\Dashboard;
 use App\Livewire\Pep\Cambios;
 use App\Livewire\Pep\Fuentes;
+use App\Livewire\Pep\PanelPeps;
 use App\Livewire\Scraper\CargosPep;
 use App\Livewire\Scraper\EntidadesPublicas;
 use App\Livewire\Scraper\FamiliasLemas;
@@ -44,6 +47,9 @@ Route::middleware(['auth', 'usuario.activo'])->group(function () {
 
     // PEP Monitor — lectura (todos los roles)
     Route::get('/pep/cambios', Cambios::class)->name('pep.cambios');
+
+    // Panel PEPs deduplicados — lectura (todos los roles)
+    Route::get('/scraper/panel-peps', PanelPeps::class)->name('scraper.panel-peps');
 
     // PEP Monitor — gestion (admin y supervisor)
     Route::get('/pep/fuentes', Fuentes::class)

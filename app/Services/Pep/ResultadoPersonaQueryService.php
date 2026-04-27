@@ -82,7 +82,8 @@ final class ResultadoPersonaQueryService
         $query = DB::table('resultado_personas as rp')
             ->join('resultados_scraping as rs', 'rs.id', '=', 'rp.resultado_scraping_id')
             ->whereRaw('rp.threshold_passed = ?', [true])
-            ->whereNotNull('rp.nombre_normalizado');
+            ->whereNotNull('rp.nombre_normalizado')
+            ->whereNull('rs.archivado_at'); // ocultar grupos totalmente archivados
 
         // Exclude NULL evento unless toggle is on
         if (! $mostrarSinClasificar) {
@@ -205,7 +206,7 @@ final class ResultadoPersonaQueryService
      * PostgreSQL ARRAY_AGG returns a string like "{1,2,3}" (after PDO cast).
      * SQLite GROUP_CONCAT returns "1,2,3".
      */
-    private function parseIntArray(mixed $value, string $driver): array
+    private function parseIntArray(string|null $value, string $driver): array
     {
         if ($value === null || $value === '') {
             return [];
