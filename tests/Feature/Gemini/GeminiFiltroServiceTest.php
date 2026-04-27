@@ -183,7 +183,7 @@ class GeminiFiltroServiceTest extends TestCase
 
         $r2->refresh();
         $this->assertTrue($r2->gemini_analyzed);
-        $this->assertNull($r2->gemini_is_pep);
+        $this->assertFalse($r2->gemini_is_pep, 'gemini_is_pep must be false (not null) after failure');
     }
 
     public function test_bad_request_exception_marks_record_analyzed_and_continues(): void
@@ -217,7 +217,7 @@ class GeminiFiltroServiceTest extends TestCase
 
         $r2->refresh();
         $this->assertTrue($r2->gemini_analyzed);
-        $this->assertNull($r2->gemini_is_pep);
+        $this->assertFalse($r2->gemini_is_pep, 'gemini_is_pep must be false (not null) after failure');
     }
 
     public function test_rate_limit_exception_bubbles_up(): void
@@ -300,7 +300,7 @@ class GeminiFiltroServiceTest extends TestCase
 
         $r2->refresh();
         $this->assertTrue($r2->gemini_analyzed);
-        $this->assertNull($r2->gemini_is_pep);  // failed, no data
+        $this->assertFalse($r2->gemini_is_pep, 'gemini_is_pep must be false (not null) after failure');  // failed, no data
         $this->assertSame(0, ResultadoPersona::where('resultado_scraping_id', $r2->id)->count());
 
         $r3->refresh();
@@ -384,5 +384,113 @@ class GeminiFiltroServiceTest extends TestCase
         $this->assertStringContainsString('Director Ejecutivo Público', (string) $capturedPrompt);
         $this->assertStringContainsString('Gerente General Mixto', (string) $capturedPrompt);
         $this->assertStringContainsString('Banco Estatal Test', (string) $capturedPrompt);
+    }
+
+    public function test_marcarFallido_persists_error_motivo(): void
+    {
+        config(['services.gemini.api_key' => 'test-key']);
+
+        $record = $this->createRecord([
+            'gemini_analyzed' => false,
+            'gemini_is_pep' => null,
+        ]);
+
+        // Simulate a bad request (400) which triggers GeminiBadRequestException → marcarFallido
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response(['error' => 'Invalid prompt'], 400),
+        ]);
+
+        $geminiWarningCalled = false;
+        $capturedContext = [];
+
+        \Illuminate\Support\Facades\Log::shouldReceive('channel')
+            ->with('gemini')
+            ->andReturnSelf();
+
+        \Illuminate\Support\Facades\Log::shouldReceive('warning')
+            ->once()
+            ->withArgs(function (string $message, array $context) use (&$geminiWarningCalled, &$capturedContext) {
+                if (array_key_exists('motivo', $context)) {
+                    $geminiWarningCalled = true;
+                    $capturedContext = $context;
+                }
+
+                return true;
+            });
+
+        \Illuminate\Support\Facades\Log::shouldReceive('info')->andReturnNull();
+
+        $service = $this->makeService();
+        $service->analizarLote(collect([$record]));
+
+        $this->assertTrue($geminiWarningCalled, 'Log::warning must be called with a motivo key in context');
+        $this->assertArrayHasKey('resultado_id', $capturedContext);
+        $this->assertSame($record->id, $capturedContext['resultado_id']);
+    }
+
+    public function test_marcarFallido_persists_motivo_to_db(): void
+    {
+        config(['services.gemini.api_key' => 'test-key']);
+
+        $record = $this->createRecord([
+            'gemini_analyzed' => false,
+            'gemini_is_pep' => null,
+        ]);
+
+        // Simulate a bad request (400) — triggers GeminiBadRequestException → marcarFallido
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response(['error' => 'Invalid prompt'], 400),
+        ]);
+
+        $service = $this->makeService();
+        $service->analizarLote(collect([$record]));
+
+        $record->refresh();
+        $this->assertStringStartsWith('Gemini bad request (400):', (string) $record->gemini_error_motivo);
+    }
+
+    public function test_marcarFallido_persists_null_motivo_when_no_message(): void
+    {
+        config(['services.gemini.api_key' => 'test-key']);
+
+        $record = $this->createRecord([
+            'gemini_analyzed' => false,
+            'gemini_is_pep' => null,
+        ]);
+
+        // Invalid JSON → GeminiInvalidResponseException with a non-null message
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response('esto no es json valido', 200),
+        ]);
+
+        $service = $this->makeService();
+        $service->analizarLote(collect([$record]));
+
+        $record->refresh();
+        // gemini_error_motivo should be set (not null) — the exception message is the motivo
+        $this->assertNotNull($record->gemini_error_motivo);
+        $this->assertIsString($record->gemini_error_motivo);
+    }
+
+    public function test_marcarFallido_sets_gemini_is_pep_false(): void
+    {
+        config(['services.gemini.api_key' => 'test-key']);
+
+        $record = $this->createRecord([
+            'gemini_analyzed' => false,
+            'gemini_is_pep' => null,
+        ]);
+
+        // Simulate invalid JSON response that triggers marcarFallido
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response('esto no es json valido', 200),
+        ]);
+
+        $service = $this->makeService();
+        $service->analizarLote(collect([$record]));
+
+        $record->refresh();
+        $this->assertTrue($record->gemini_analyzed, 'gemini_analyzed must be true after failure');
+        $this->assertFalse($record->gemini_is_pep, 'gemini_is_pep must be false (not null) after failure');
     }
 }

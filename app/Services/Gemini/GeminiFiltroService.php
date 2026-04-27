@@ -13,6 +13,7 @@ use App\Services\Normalization\NombreNormalizador;
 use App\Services\Normalization\NombreNormalizadorInterface;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class GeminiFiltroService
 {
@@ -55,7 +56,7 @@ class GeminiFiltroService
 
             $this->persistirResultado($record, $dto);
         } catch (GeminiInvalidResponseException|GeminiBadRequestException $e) {
-            $this->marcarFallido($record, $e);
+            $this->marcarFallido($record, $e, $e->getMessage());
         }
     }
 
@@ -129,16 +130,19 @@ class GeminiFiltroService
         }
     }
 
-    private function marcarFallido(ResultadoScraping $record, \Throwable $e): void
+    private function marcarFallido(ResultadoScraping $record, \Throwable $e, ?string $motivo = null): void
     {
         $record->update([
             'gemini_analyzed' => true,
+            'gemini_is_pep' => false,
+            'gemini_error_motivo' => $motivo !== null ? Str::limit($motivo, 500, '') : null,
         ]);
 
         Log::channel('gemini')->warning('FiltroPEP fallido, registro marcado', [
-            'record_id' => $record->id,
+            'resultado_id' => $record->id,
             'exception' => $e::class,
             'message' => $e->getMessage(),
+            'motivo' => $motivo,
         ]);
     }
 }

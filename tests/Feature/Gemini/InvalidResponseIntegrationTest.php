@@ -34,7 +34,7 @@ class InvalidResponseIntegrationTest extends TestCase
         config(['services.gemini.enabled' => true]);
         config(['services.gemini.api_key' => 'test-key-123']);
 
-        $record = $this->createRecord();
+        $record = $this->createRecord(['contexto' => 'El ministro de economía firmó el decreto']);
 
         // Fake plain text response (simulates Gemini returning non-JSON)
         $plainText = file_get_contents(base_path('tests/Fixtures/Gemini/invalid_text_response.txt'));
@@ -50,8 +50,8 @@ class InvalidResponseIntegrationTest extends TestCase
         $record->refresh();
         $this->assertTrue($record->gemini_analyzed);
 
-        // gemini fields are null (no data extracted)
-        $this->assertNull($record->gemini_is_pep);
+        // gemini_is_pep must be false (deterministic — never left as null after failure)
+        $this->assertFalse($record->gemini_is_pep);
         $this->assertNull($record->gemini_nombre);
         $this->assertNull($record->gemini_cargo);
         $this->assertNull($record->gemini_categoria);
@@ -89,20 +89,36 @@ class InvalidResponseIntegrationTest extends TestCase
         config(['services.gemini.enabled' => true]);
         config(['services.gemini.api_key' => 'test-key-123']);
 
-        $r1 = $this->createRecord(['contexto' => 'Record 1']);
+        $r1 = $this->createRecord(['contexto' => 'El presidente designó Record 1']);
         $r2 = $this->createRecord(['contexto' => 'Record 2']);
 
-        // First call returns valid, second returns invalid
+        // First call returns valid new-format response, second returns invalid
         $callCount = 0;
         Http::fake([
             'generativelanguage.googleapis.com/*' => function () use (&$callCount) {
                 $callCount++;
 
                 if ($callCount === 1) {
-                    return Http::response(json_decode(
-                        file_get_contents(base_path('tests/Fixtures/Gemini/flash_success.json')),
-                        true,
-                    ), 200);
+                    return Http::response(json_encode([
+                        'candidates' => [[
+                            'content' => [
+                                'parts' => [[
+                                    'text' => json_encode([
+                                        'personas' => [[
+                                            'nombre' => 'Juan Pérez',
+                                            'cargo' => 'Ministro de Economía',
+                                            'categoria' => 'PEP',
+                                            'entidad_tipo' => 'publica',
+                                            'confianza' => 95,
+                                            'evento' => 'designacion',
+                                            'motivo' => 'Cargo ejecutivo',
+                                        ]],
+                                        'motivo_general' => 'Artículo ministerial',
+                                    ]),
+                                ]],
+                            ],
+                        ]],
+                    ]), 200);
                 }
 
                 return Http::response('Lo siento, no puedo ayudar con esa solicitud.', 200);
@@ -112,14 +128,14 @@ class InvalidResponseIntegrationTest extends TestCase
         $job = new \App\Jobs\AnalizarScrapingConFlash;
         $job->handle();
 
-        // r1 processed successfully
+        // r1 processed successfully — valid response with PEP persona at threshold
         $r1->refresh();
         $this->assertTrue($r1->gemini_analyzed);
         $this->assertTrue($r1->gemini_is_pep);
 
-        // r2 marked as analyzed but no data
+        // r2 marked as analyzed with gemini_is_pep=false (deterministic failure)
         $r2->refresh();
         $this->assertTrue($r2->gemini_analyzed);
-        $this->assertNull($r2->gemini_is_pep);
+        $this->assertFalse($r2->gemini_is_pep, 'gemini_is_pep must be false (not null) after invalid response failure');
     }
 }

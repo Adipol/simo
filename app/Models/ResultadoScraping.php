@@ -23,7 +23,8 @@ class ResultadoScraping extends Model
         'url', 'keyword', 'sitio_id', 'pais', 'categoria', 'titulo', 'contexto',
         'fecha_encontrado', 'relevance_score', 'found_in_title',
         'leido', 'relevante', 'descartado', 'archivado_at', 'notas',
-        'gemini_analyzed', 'gemini_is_pep', 'gemini_nombre', 'gemini_nombre_normalizado', 'gemini_cargo',
+        'gemini_analyzed', 'gemini_is_pep', 'gemini_error_motivo',
+        'gemini_nombre', 'gemini_nombre_normalizado', 'gemini_cargo',
         'gemini_categoria', 'gemini_entidad_tipo', 'gemini_confianza', 'gemini_motivo',
     ];
 

@@ -6,6 +6,7 @@ namespace Tests\Feature\Gemini;
 
 use App\Exceptions\Gemini\GeminiRateLimitException;
 use App\Jobs\AnalizarScrapingConFlash;
+use App\Models\ResultadoPersona;
 use App\Models\ResultadoScraping;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
@@ -54,34 +55,38 @@ class AnalizarScrapingConFlashTest extends TestCase
         ]);
 
         $r1 = $this->createRecord(['contexto' => 'Ministro Juan Pérez firmó decreto']);
-        $r2 = $this->createRecord(['contexto' => 'Líder del cartel fue capturado']);
+        $r2 = $this->createRecord(['contexto' => 'El fiscal general presentó cargos contra el senador']);
         $r3 = $this->createRecord(['contexto' => 'Resultado del partido de fútbol']);
 
         Http::fake([
             'generativelanguage.googleapis.com/*' => Http::sequence()
                 ->push($this->fakeGeminiResponse([
-                    'is_pep' => true,
-                    'nombre' => 'Juan Pérez',
-                    'cargo' => 'Ministro de Economía',
-                    'categoria' => 'PEP',
-                    'confianza' => 95,
-                    'motivo' => 'Cargo ejecutivo de alto nivel',
+                    'personas' => [[
+                        'nombre' => 'Juan Pérez',
+                        'cargo' => 'Ministro de Economía',
+                        'categoria' => 'PEP',
+                        'entidad_tipo' => 'publica',
+                        'confianza' => 95,
+                        'evento' => 'designacion',
+                        'motivo' => 'Cargo ejecutivo de alto nivel',
+                    ]],
+                    'motivo_general' => 'Artículo sobre acción ministerial',
                 ]))
                 ->push($this->fakeGeminiResponse([
-                    'is_pep' => true,
-                    'nombre' => 'Rodrigo Vargas',
-                    'cargo' => null,
-                    'categoria' => 'OPI',
-                    'confianza' => 92,
-                    'motivo' => 'Líder de organización criminal',
+                    'personas' => [[
+                        'nombre' => 'Rodrigo Vargas',
+                        'cargo' => null,
+                        'categoria' => 'OPI',
+                        'entidad_tipo' => 'desconocido',
+                        'confianza' => 92,
+                        'evento' => 'crimen',
+                        'motivo' => 'Líder de organización criminal',
+                    ]],
+                    'motivo_general' => 'Captura de líder criminal',
                 ]))
                 ->push($this->fakeGeminiResponse([
-                    'is_pep' => false,
-                    'nombre' => null,
-                    'cargo' => null,
-                    'categoria' => null,
-                    'confianza' => 10,
-                    'motivo' => 'Texto deportivo sin relevancia',
+                    'personas' => [],
+                    'motivo_general' => 'Texto deportivo sin relevancia',
                 ])),
         ]);
 
@@ -91,15 +96,21 @@ class AnalizarScrapingConFlashTest extends TestCase
         $r1->refresh();
         $this->assertTrue($r1->gemini_analyzed);
         $this->assertTrue($r1->gemini_is_pep);
-        $this->assertSame('Juan Pérez', $r1->gemini_nombre);
-        $this->assertSame('Ministro de Economía', $r1->gemini_cargo);
-        $this->assertSame('PEP', $r1->gemini_categoria);
-        $this->assertSame(95, $r1->gemini_confianza);
+
+        $p1 = ResultadoPersona::where('resultado_scraping_id', $r1->id)->first();
+        $this->assertNotNull($p1);
+        $this->assertSame('Juan Pérez', $p1->nombre);
+        $this->assertSame('Ministro de Economía', $p1->cargo);
+        $this->assertSame('PEP', $p1->categoria);
+        $this->assertSame(95, $p1->confianza);
 
         $r2->refresh();
         $this->assertTrue($r2->gemini_analyzed);
         $this->assertTrue($r2->gemini_is_pep);
-        $this->assertSame('OPI', $r2->gemini_categoria);
+
+        $p2 = ResultadoPersona::where('resultado_scraping_id', $r2->id)->first();
+        $this->assertNotNull($p2);
+        $this->assertSame('OPI', $p2->categoria);
 
         $r3->refresh();
         $this->assertTrue($r3->gemini_analyzed);

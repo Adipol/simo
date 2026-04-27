@@ -50,4 +50,18 @@ class ResultadoScrapingFactory extends Factory
             'gemini_motivo' => null,
         ]);
     }
+
+    public function withGeminiFailure(?string $motivo = null): static
+    {
+        return $this->state([
+            'gemini_analyzed' => true,
+            'gemini_is_pep' => false,
+            'gemini_error_motivo' => $motivo,
+            'gemini_categoria' => null,
+            'gemini_nombre' => null,
+            'gemini_cargo' => null,
+            'gemini_confianza' => null,
+            'gemini_motivo' => null,
+        ]);
+    }
 }

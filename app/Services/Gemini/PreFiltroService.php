@@ -6,12 +6,16 @@ namespace App\Services\Gemini;
 
 use App\Models\CargoPep;
 use App\Models\ResultadoScraping;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 class PreFiltroService
 {
-    /** @var array<string>|null */
-    private static ?array $termsCache = null;
+    /** Cache key used to store pre-filtro terms. */
+    private const CACHE_KEY = 'pre-filtro-terms';
+
+    /** TTL in seconds (5 minutes). Safety net for seeder runs that bypass Eloquent events. */
+    private const CACHE_TTL = 300;
 
     /**
      * Additional common PEP terms not in cargos_pep table.
@@ -50,10 +54,17 @@ class PreFiltroService
      */
     private function getSearchTerms(): array
     {
-        if (self::$termsCache !== null) {
-            return self::$termsCache;
-        }
+        /** @var array<string> */
+        return Cache::remember(self::CACHE_KEY, self::CACHE_TTL, fn (): array => $this->loadTerms());
+    }
 
+    /**
+     * Load and merge PEP terms from DB + EXTRA_TERMS constant.
+     *
+     * @return array<string>
+     */
+    private function loadTerms(): array
+    {
         $dbTerms = CargoPep::active()
             ->pluck('nombre')
             ->flatMap(function (string $nombre): array {
@@ -65,15 +76,20 @@ class PreFiltroService
             ->values()
             ->toArray();
 
-        self::$termsCache = array_unique(
+        return array_values(array_unique(
             array_merge($dbTerms, self::EXTRA_TERMS)
-        );
-
-        return self::$termsCache;
+        ));
     }
 
-    public static function flushCache(): void
+    /**
+     * Flush the pre-filtro terms from the cache.
+     *
+     * Called by CargoPepObserver when CargoPep rows are created, updated,
+     * or deleted via Eloquent. The 5-min TTL is the safety net for direct
+     * DB operations (e.g., seeder) that bypass Eloquent events.
+     */
+    public function flushCache(): void
     {
-        self::$termsCache = null;
+        Cache::forget(self::CACHE_KEY);
     }
 }

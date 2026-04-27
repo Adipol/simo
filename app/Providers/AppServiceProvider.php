@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace App\Providers;
 
+use App\Models\CargoPep;
 use App\Models\Cambio;
 use App\Models\ResultadoScraping;
+use App\Observers\CargoPepObserver;
 use App\Observers\CambioObserver;
 use App\Observers\ResultadoScrapingObserver;
 use App\Services\Gemini\GeminiPromptBuilder;
@@ -35,5 +37,6 @@ class AppServiceProvider extends ServiceProvider
     {
         ResultadoScraping::observe(ResultadoScrapingObserver::class);
         Cambio::observe(CambioObserver::class);
+        CargoPep::observe(CargoPepObserver::class);
     }
 }
