@@ -118,7 +118,14 @@ final class ResultadoPersonaQueryService
      * Apply PostgreSQL-specific SELECT and GROUP BY.
      *
      * Uses ARRAY_AGG, bool_and, and FILTER (all Postgres-only).
-     * cargo uses a correlated subquery to get the most recent non-null cargo.
+     *
+     * cargo: most-recent non-null cargo via ARRAY_AGG ordered by fecha_encontrado DESC,
+     * filtered to non-null, then [1] to get the first element. Returns NULL if all cargos
+     * in the group are null.
+     *
+     * NOTA: el subquery correlado anterior fallaba con "subquery uses ungrouped column"
+     * porque referenciaba rs.fecha_encontrado raw (no la expresion agrupada DATE(...)).
+     * Esta variante usa solo agregados, evitando el problema.
      */
     private function applyPostgresSelect(\Illuminate\Database\Query\Builder $query): void
     {
@@ -130,17 +137,7 @@ final class ResultadoPersonaQueryService
             COUNT(*) AS num_fuentes,
             ARRAY_AGG(rs.id ORDER BY rs.fecha_encontrado DESC) AS resultado_ids,
             ARRAY_AGG(DISTINCT rs.sitio_id) AS sitio_ids,
-            (
-                SELECT rp2.cargo
-                FROM resultado_personas rp2
-                JOIN resultados_scraping rs2 ON rs2.id = rp2.resultado_scraping_id
-                WHERE rp2.nombre_normalizado = rp.nombre_normalizado
-                  AND (rp2.evento IS NOT DISTINCT FROM rp.evento)
-                  AND DATE(rs2.fecha_encontrado) = DATE(rs.fecha_encontrado)
-                  AND rp2.cargo IS NOT NULL
-                ORDER BY rs2.fecha_encontrado DESC
-                LIMIT 1
-            ) AS cargo,
+            (ARRAY_AGG(rp.cargo ORDER BY rs.fecha_encontrado DESC) FILTER (WHERE rp.cargo IS NOT NULL))[1] AS cargo,
             MAX(rs.fecha_encontrado) AS ultima_fecha_encontrado,
             bool_and(rs.archivado_at IS NOT NULL) AS todos_archivados
         ")->groupByRaw('rp.nombre_normalizado, rp.evento, rp.categoria, DATE(rs.fecha_encontrado)');
