@@ -151,7 +151,7 @@
                 {{-- Acciones --}}
                 <div class="flex items-center gap-2 px-4 py-2 border-t border-gray-50">
                     <button
-                        wire:click="verArticulos({{ json_encode($evento->nombreNormalizado) }})"
+                        wire:click="verArticulos('{{ implode(',', $evento->resultadoIds) }}')"
                         class="simo-btn bg-indigo-50 text-indigo-600 hover:bg-indigo-100 text-xs">
                         Ver artículos →
                     </button>

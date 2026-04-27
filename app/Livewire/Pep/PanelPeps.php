@@ -93,15 +93,17 @@ final class PanelPeps extends Component
     }
 
     /**
-     * Redirect to the Resultados panel filtered by nombre.
-     * D7: MVP link — matches on busqueda substring (imperfect but useful).
+     * Redirect to the Resultados panel filtered by the exact resultado IDs of this group.
      *
-     * Uses $this->redirectRoute() — the Livewire-aware redirect helper
-     * that sets the redirect in component state (void, not a real HTTP response).
+     * Accepts the IDs as a CSV string (e.g. "34,36,37") so Livewire can pass it
+     * from the view via wire:click without array serialization issues.
+     * Resultados receives it via #[Url(as: 'ids')] → filtroIds → whereIn('id', ...).
+     *
+     * Uses $this->redirectRoute() — the Livewire-aware redirect helper (void).
      */
-    public function verArticulos(string $nombre): void
+    public function verArticulos(string $idsCsv): void
     {
-        $this->redirectRoute('scraper.resultados', ['busqueda' => $nombre]);
+        $this->redirectRoute('scraper.resultados', ['ids' => $idsCsv]);
     }
 
     // ─── Render ───────────────────────────────────────────────────────────────

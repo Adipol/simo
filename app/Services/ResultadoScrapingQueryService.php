@@ -18,6 +18,7 @@ class ResultadoScrapingQueryService
         string $filtroDescartado = '0',
         string $filtroArchivado = '0',
         string $filtroGemini = '',
+        string $filtroIds = '',
         string $ordenar = 'fecha_encontrado',
         string $direccion = 'desc',
         ?int $userId = null,
@@ -27,6 +28,20 @@ class ResultadoScrapingQueryService
 
         if ($userId !== null) {
             $q->withFeedbackFromUser($userId);
+        }
+
+        // ── ID whitelist filter — takes priority, skips unrelated busqueda ────
+        if ($filtroIds !== '') {
+            $ids = array_values(
+                array_filter(
+                    array_map('intval', explode(',', $filtroIds)),
+                    static fn (int $id): bool => $id > 0,
+                )
+            );
+
+            if ($ids !== []) {
+                $q->whereIn('id', $ids);
+            }
         }
 
         if ($busqueda !== '') {

@@ -14,6 +14,7 @@ use App\Services\FeedbackIncorrectoService;
 use App\Services\PepConfirmacionService;
 use App\Services\ResultadoScrapingQueryService;
 use Illuminate\Contracts\View\View;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
@@ -53,7 +54,16 @@ class Resultados extends Component
     #[Url]
     public string $filtroGemini = '';
 
+    #[Url(as: 'ids', except: '')]
+    public string $filtroIds = '';
+
     public ?int $verAnalisisId = null;
+
+    /** @var string[] */
+    private const SORT_COLUMNS = ['fecha_encontrado', 'titulo', 'keyword', 'pais', 'categoria', 'relevance_score'];
+
+    /** @var string[] */
+    private const SORT_DIRECTIONS = ['asc', 'desc'];
 
     public string $ordenar = 'fecha_encontrado';
 
@@ -121,6 +131,11 @@ class Resultados extends Component
     }
 
     public function updatingFiltroGemini(): void
+    {
+        $this->resetPage();
+    }
+
+    public function updatingFiltroIds(): void
     {
         $this->resetPage();
     }
@@ -319,6 +334,10 @@ class Resultados extends Component
 
     private function getQuery(): \Illuminate\Database\Eloquent\Builder
     {
+        // Whitelist sort column and direction to prevent arbitrary column exposure
+        $ordenar   = in_array($this->ordenar, self::SORT_COLUMNS, true) ? $this->ordenar : 'fecha_encontrado';
+        $direccion = in_array($this->direccion, self::SORT_DIRECTIONS, true) ? $this->direccion : 'desc';
+
         return (new ResultadoScrapingQueryService)->buildQuery(
             busqueda: $this->busqueda,
             filtroPais: $this->filtroPais,
@@ -328,8 +347,9 @@ class Resultados extends Component
             filtroDescartado: $this->filtroDescartado,
             filtroArchivado: $this->filtroArchivado,
             filtroGemini: $this->filtroGemini,
-            ordenar: $this->ordenar,
-            direccion: $this->direccion,
+            filtroIds: $this->filtroIds,
+            ordenar: $ordenar,
+            direccion: $direccion,
             userId: Auth::id(),
         );
     }
@@ -362,15 +382,22 @@ class Resultados extends Component
         return ResultadoScraping::find($this->verAnalisisId);
     }
 
+    /**
+     * @return LengthAwarePaginator<ResultadoScraping>
+     */
+    #[Computed]
+    public function resultados(): LengthAwarePaginator
+    {
+        return $this->getQuery()->paginate(25);
+    }
+
     public function render(): View
     {
-        $resultados = $this->getQuery()->paginate(25);
-
         return view('livewire.scraper.resultados', [
-            'resultados' => $resultados,
-            'paises' => $this->paises,
-            'categorias' => $this->categorias,
-            'resultadoAnalisis' => $this->resultadoAnalisis,
+            'resultados'         => $this->resultados,
+            'paises'             => $this->paises,
+            'categorias'         => $this->categorias,
+            'resultadoAnalisis'  => $this->resultadoAnalisis,
             'categoriasCorreccion' => CategoriaCorreccion::cases(),
         ]);
     }

@@ -250,26 +250,28 @@ class PanelPepsTest extends TestCase
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 3.B.11-12 — verArticulos() redirects to Resultados with nombre URL-encoded
+    // Fix — verArticulos() redirects to Resultados with specific resultado IDs
     // ─────────────────────────────────────────────────────────────────────────
 
-    public function test_ver_articulos_redirects_to_resultados_with_nombre_url_encoded(): void
+    public function test_ver_articulos_redirects_with_specific_resultado_ids(): void
     {
         $user = $this->crearUser();
 
+        // Simulate a group with resultadoIds = [34, 36, 37]
         Livewire::actingAs($user)
             ->test(PanelPeps::class)
-            ->call('verArticulos', 'Juan Pérez')
-            ->assertRedirect(route('scraper.resultados', ['busqueda' => 'Juan Pérez']));
+            ->call('verArticulos', '34,36,37')
+            ->assertRedirect(route('scraper.resultados', ['ids' => '34,36,37']));
     }
 
-    public function test_ver_articulos_redirects_with_plain_nombre(): void
+    public function test_ver_articulos_redirects_with_ids_csv_string(): void
     {
         $user = $this->crearUser();
 
+        // Different IDs set to triangulate against hardcoded return
         Livewire::actingAs($user)
             ->test(PanelPeps::class)
-            ->call('verArticulos', 'Maria Garcia')
-            ->assertRedirect(route('scraper.resultados', ['busqueda' => 'Maria Garcia']));
+            ->call('verArticulos', '1,2,3')
+            ->assertRedirect(route('scraper.resultados', ['ids' => '1,2,3']));
     }
 }
