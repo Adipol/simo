@@ -28,12 +28,30 @@ else:
     from mysql.connector import Error as _DbError
     from mysql.connector.pooling import MySQLConnectionPool
 
+# ── Constantes ───────────────────────────────────────────────────────────────
+
+# Tamaño maximo del mensaje de error en la columna mensaje_error de log_scripts.
+# Debe coincidir con el tamano definido en la migracion del schema.
+_MAX_ERROR_MSG_LEN: int = 500
+
 # ── Helpers de dialecto SQL ───────────────────────────────────────────────────
 
 
 def _sql_insert_or_ignore(table: str, columns: str, values_placeholder: str) -> str:
-    """Devuelve INSERT que ignora duplicados según el motor."""
+    """
+    Devuelve INSERT que ignora duplicados según el motor.
+
+    Para resultados_scraping en PostgreSQL, usamos ON CONFLICT (url, categoria)
+    DO NOTHING — explicito desde migracion 000004 que define el UNIQUE constraint
+    (url, categoria). La forma explicita es mas robusta que ON CONFLICT DO NOTHING
+    generico y documenta la intencion de dedup.
+    """
     if _DB_TYPE == "postgres":
+        if table == "resultados_scraping":
+            return (
+                f"INSERT INTO {table} ({columns}) VALUES ({values_placeholder}) "
+                "ON CONFLICT (url, categoria) DO NOTHING"
+            )
         return (
             f"INSERT INTO {table} ({columns}) VALUES ({values_placeholder}) "
             "ON CONFLICT DO NOTHING"
@@ -480,19 +498,29 @@ class ScrapingRepository:
             return urls
 
     @staticmethod
-    def get_processed_url_keyword_pairs(days: int = 30) -> Set[tuple]:
+    def get_processed_url_categoria_pairs(days: int = 30) -> Set[tuple]:
         """
-        Obtiene pares (url, keyword) procesados en los ultimos N dias.
-        Limitar a 30 dias evita cargar toda la tabla en memoria.
+        Obtiene pares (url, categoria) procesados en los ultimos N dias.
+
+        Reemplaza get_processed_url_keyword_pairs() — la clave de dedup
+        ahora es (url, categoria), alineada con el UNIQUE constraint de la
+        migracion 000004 (add_unique_url_categoria_to_resultados_scraping).
+
+        SELECT DISTINCT url, categoria colapsa multiples keywords del mismo
+        (url, categoria) en una sola entrada, evitando intentos redundantes
+        de insercion en el mismo ciclo de scraping.
+
+        Filas legacy con categoria IS NULL aparecen como (url, None) — se
+        incluyen para no reintentar scraping de esas URLs.
         """
         date_filter = _sql_date_filter("fecha_encontrado")
         with DatabaseManager.get_cursor() as cursor:
             cursor.execute(
-                f"SELECT url, keyword FROM resultados_scraping WHERE {date_filter}",
+                f"SELECT DISTINCT url, categoria FROM resultados_scraping WHERE {date_filter}",
                 (days,),
             )
             pairs = {(row[0], row[1]) for row in cursor.fetchall()}
-            logger.debug(f"Pares URL-keyword (ultimos {days} dias): {len(pairs)}")
+            logger.debug(f"Pares URL-categoria (ultimos {days} dias): {len(pairs)}")
             return pairs
 
     @staticmethod
@@ -629,7 +657,7 @@ class ScrapingRepository:
                         items_procesados,
                         items_resultado,
                         errores,
-                        mensaje_error[:500] if mensaje_error else None,
+                        mensaje_error[:_MAX_ERROR_MSG_LEN] if mensaje_error else None,
                         log_id,
                     ),
                 )

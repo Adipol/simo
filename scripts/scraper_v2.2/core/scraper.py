@@ -49,6 +49,15 @@ REQUEST_HEADERS = {
     "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
 }
 
+# Delays de navegacion (en segundos) — valores operacionales para sitios con carga dinamica.
+# Separados de settings.scraper para no confundirlos con delays configurables por el usuario.
+_REFRESH_PRE_DELAY_SECS: float = 2.0   # Pausa antes de refrescar la pagina
+_REFRESH_POST_DELAY_SECS: float = 3.0  # Pausa tras el refresh para que cargue el contenido
+_SCROLL_RETURN_DELAY_SECS: float = 1.0  # Pausa al volver al inicio de la pagina
+
+# Umbral minimo de contenido para considerar que el article selector encontro algo util.
+_MIN_ARTICLE_CONTENT_LEN: int = 100
+
 
 class RelevanceLevel(IntEnum):
     """Niveles de relevancia para resultados."""
@@ -198,7 +207,7 @@ class ContentExtractor:
                     # Tomar el elemento con más texto
                     best_element = max(elements, key=lambda e: len(e.text))
                     content = best_element.text.strip()
-                    if len(content) > 100:  # Contenido mínimo significativo
+                    if len(content) > _MIN_ARTICLE_CONTENT_LEN:
                         logger.debug(f"Contenido extraído con selector: {selector}")
                         return content, True
             except (WebDriverException, StaleElementReferenceException):
@@ -440,7 +449,11 @@ class WebScraper:
     def initialize(self) -> None:
         """Carga URLs ya procesadas desde la base de datos."""
         self.processed_urls = ScrapingRepository.get_processed_urls()
-        self.processed_pairs = ScrapingRepository.get_processed_url_keyword_pairs()
+        # processed_pairs indexa por (url, categoria) — alineado con UNIQUE constraint
+        # de la migracion 000004. Antes indexaba por (url, keyword); el cambio evita
+        # intentos de insercion redundantes cuando multiples keywords de la misma
+        # categoria coinciden en el mismo articulo.
+        self.processed_pairs = ScrapingRepository.get_processed_url_categoria_pairs()
         logger.info(f"Cargadas {len(self.processed_urls)} URLs ya procesadas")
 
     def _is_valid_url(self, url: str, base_domain: str) -> bool:
@@ -525,7 +538,7 @@ class WebScraper:
 
             # Volver arriba
             driver.execute_script("window.scrollTo(0, 0);")
-            time.sleep(1)
+            time.sleep(_SCROLL_RETURN_DELAY_SECS)
 
             if selector:
                 elements = driver.find_elements(By.CSS_SELECTOR, selector)
@@ -689,7 +702,7 @@ class WebScraper:
                 for h1 in h1_elements:
                     h1_text = h1.get_text(strip=True)
                     # Evitar títulos muy cortos (probablemente categorías)
-                    if len(h1_text) >= 25:  # Un título real tiene más de 25 caracteres
+                    if len(h1_text) >= settings.filter.min_title_length:
                         title = h1_text
                         method_used = "h1 largo"
                         break
@@ -741,7 +754,10 @@ class WebScraper:
                 article_content = re.sub(r"\s+", " ", article_content).strip()
 
             for keyword in title_keywords:
-                if (link, keyword) in self.processed_pairs:
+                # Dedup por (url, categoria) — alineado con UNIQUE constraint DB.
+                # Si ya procesamos esta URL para esta categoria en este ciclo,
+                # saltamos las keywords restantes de la misma categoria.
+                if (link, self.categoria_actual) in self.processed_pairs:
                     continue
 
                 # Construir contexto real: título + contenido (max 2000 chars)
@@ -763,7 +779,9 @@ class WebScraper:
                     )
                 )
 
-                self.processed_pairs.add((link, keyword))
+                # Marcar (url, categoria) como procesado para este ciclo.
+                # El keyword sigue almacenandose en el resultado (visibilidad).
+                self.processed_pairs.add((link, self.categoria_actual))
                 self.stats.high_relevance += 1
 
                 logger.info(f"    [OK] '{keyword}' en TITULO")
@@ -819,7 +837,10 @@ class WebScraper:
                     found_keywords = list(set(found_keywords + title_keywords))
 
                 for keyword in found_keywords:
-                    if (link, keyword) in self.processed_pairs:
+                    # Dedup por (url, categoria) — alineado con UNIQUE constraint DB.
+                    # Si ya tenemos un resultado para esta URL en esta categoria,
+                    # no intentar insertar otro (el ON CONFLICT tambien lo bloquearia).
+                    if (link, self.categoria_actual) in self.processed_pairs:
                         continue
 
                     # Calcular relevancia
@@ -859,7 +880,9 @@ class WebScraper:
                         )
                     )
 
-                    self.processed_pairs.add((link, keyword))
+                    # Marcar (url, categoria) como procesado para este ciclo.
+                    # El keyword sigue almacenandose en el resultado (visibilidad).
+                    self.processed_pairs.add((link, self.categoria_actual))
 
                     if in_title:
                         self.stats.high_relevance += 1
@@ -936,9 +959,9 @@ class WebScraper:
 
             # REFRESH para sitios con carga dinámica (como eju.tv)
             logger.info("Refrescando página para cargar contenido completo...")
-            time.sleep(2)  # Esperar un poco antes del refresh
+            time.sleep(_REFRESH_PRE_DELAY_SECS)
             driver.refresh()
-            time.sleep(3)  # Esperar a que cargue después del refresh
+            time.sleep(_REFRESH_POST_DELAY_SECS)
 
             WebDriverWait(driver, settings.scraper.element_wait_timeout).until(
                 EC.presence_of_element_located((By.TAG_NAME, "a"))
@@ -1111,6 +1134,11 @@ class ParallelWebScraper(WebScraper):
 
         logger.info(f"Iniciando scraping paralelo ({self.max_workers} workers)")
 
+        # Mapa sitio_id → website para recuperar pais de cada resultado.
+        # Necesario porque all_results mezcla resultados de todos los workers
+        # y ScrapingResult no lleva el pais — solo el sitio_id.
+        sitio_id_to_website: Dict[int, dict] = {w["id"]: w for w in websites}
+
         all_results = []
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -1128,7 +1156,9 @@ class ParallelWebScraper(WebScraper):
                     logger.error(f"Error en {website.get('nombre')}: {e}")
                     self.stats.errors += 1
 
-        # Guardar resultados
+        # Guardar resultados — espejamos el patron del modo secuencial (lineas 1059-1072):
+        # pais viene del website dict de cada resultado; categoria de self.categoria_actual.
+        # Bug 1.3 fix: antes faltaban pais y categoria → filas guardadas con BO/None.
         successful_results = [
             {
                 "url": r.url,
@@ -1138,6 +1168,12 @@ class ParallelWebScraper(WebScraper):
                 "contexto": r.contexto,
                 "relevance_score": r.relevance_score,
                 "found_in_title": r.found_in_title,
+                "pais": (
+                    sitio_id_to_website.get(r.sitio_id, {}).get("pais")
+                    or self.pais_actual
+                    or "BO"
+                ),
+                "categoria": self.categoria_actual,
             }
             for r in all_results
             if r.success and r.keyword
