@@ -18,7 +18,7 @@ class InvalidResponseIntegrationTest extends TestCase
         ResultadoScraping::flushEventListeners();
 
         return ResultadoScraping::create(array_merge([
-            'url' => 'https://example.com/article',
+            'url' => 'https://example.com/article-' . uniqid(),
             'keyword' => 'corrupcion',
             'pais' => 'BO',
             'categoria' => 'politica',
