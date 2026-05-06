@@ -21,6 +21,7 @@ import argparse
 import re
 import socket
 import difflib
+import unicodedata
 from typing import Optional
 from datetime import datetime
 from dataclasses import dataclass, field
@@ -637,6 +638,45 @@ _PALABRAS_CARGO = {
 }
 
 
+# Etiquetas comunes de UI / navegacion que NUNCA forman parte de un nombre.
+# Si alguna palabra de la linea aparece aca, se descarta como posible nombre.
+# Sin acentos: la comparacion se hace tras normalizar con _normalizar_palabra.
+_PALABRAS_UI_NO_PEP = {
+    # Verbos de UI
+    "ver", "volver", "cerrar", "abrir", "descargar", "imprimir",
+    "buscar", "compartir", "enviar", "guardar", "editar",
+    "eliminar", "cancelar", "aceptar", "confirmar", "leer",
+    "ingresar", "salir", "click", "clic", "pulsar",
+    # Sustantivos / secciones de UI
+    "comunicado", "comunicados", "memoria", "memorias",
+    "transmision", "transmisiones", "documento", "documentos",
+    "archivo", "archivos", "informacion", "detalle", "detalles",
+    "resumen", "categoria", "categorias", "seccion", "secciones",
+    "pagina", "paginas", "inicio", "portal", "sitio",
+    "contacto", "contactos", "servicio", "servicios",
+    "producto", "productos", "evento", "eventos",
+    "noticia", "noticias", "formulario", "formularios",
+    "requisito", "requisitos", "proceso", "procesos",
+    "manual", "manuales", "guia", "guias",
+    "ayuda", "soporte", "login", "logout", "usuario",
+    "contrasena", "password", "menu", "principal",
+    # Dias (rara vez son nombres en espanol)
+    "lunes", "martes", "miercoles", "jueves",
+    "viernes", "sabado", "domingo",
+    # Navegacion
+    "anterior", "siguiente", "atras", "adelante",
+    "mas", "aqui", "aca", "alla",
+    "todos", "todas", "ninguno", "ninguna",
+}
+
+
+def _normalizar_palabra(palabra: str) -> str:
+    """Quita acentos y pasa a minusculas para comparacion robusta."""
+    palabra = palabra.lower()
+    palabra = unicodedata.normalize("NFKD", palabra)
+    return "".join(c for c in palabra if not unicodedata.combining(c))
+
+
 def parece_nombre_persona(linea: str) -> bool:
     """
     Heuristica simple: detecta si una linea podria ser un nombre de persona.
@@ -646,6 +686,7 @@ def parece_nombre_persona(linea: str) -> bool:
     - Entre 2 y 6 palabras
     - Al menos 2 palabras de 3+ letras
     - Menos del 40% de palabras son terminos de cargo conocidos
+    - Ninguna palabra coincide con etiquetas de UI conocidas
     - No tiene numeros
     - No tiene caracteres especiales como @, /, :, =
     """
@@ -666,6 +707,10 @@ def parece_nombre_persona(linea: str) -> bool:
 
     matches_cargo = sum(1 for p in palabras if p in _PALABRAS_CARGO)
     if len(palabras) > 0 and matches_cargo / len(palabras) > 0.4:
+        return False
+
+    palabras_norm = [_normalizar_palabra(p) for p in palabras]
+    if any(p in _PALABRAS_UI_NO_PEP for p in palabras_norm):
         return False
 
     return True
