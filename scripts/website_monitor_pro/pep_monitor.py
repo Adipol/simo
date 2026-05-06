@@ -39,9 +39,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Database type from environment
-DB_TYPE = os.getenv("DB_TYPE", "postgres").lower()
-
 
 # ════════════════════════════════════════════════════════════════
 # CONFIGURACION
@@ -297,7 +294,7 @@ class DatabaseManager:
         lineas_nuevas: int,
         diff_texto: str,
         posibles_peps: str,
-    ) -> int:
+    ) -> Optional[int]:
         self._ensure_connection()
         self.cursor.execute(
             """INSERT INTO cambios
@@ -660,6 +657,12 @@ _PALABRAS_UI_NO_PEP = {
     "manual", "manuales", "guia", "guias",
     "ayuda", "soporte", "login", "logout", "usuario",
     "contrasena", "password", "menu", "principal",
+    # Encabezados de seccion institucional
+    "nomina", "nominas", "autoridad", "autoridades",
+    "funcionario", "funcionarios", "puesto", "puestos",
+    "cargo", "cargos", "denominacion", "nomenclatura",
+    "directorio", "staff", "personal", "equipo",
+    "organigrama", "plantilla", "plantel",
     # Dias (rara vez son nombres en espanol)
     "lunes", "martes", "miercoles", "jueves",
     "viernes", "sabado", "domingo",
@@ -1202,7 +1205,7 @@ class Exportador:
 # ════════════════════════════════════════════════════════════════
 # CLI
 # ════════════════════════════════════════════════════════════════
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="PEP Monitor — Detecta cambios en paginas institucionales",
         formatter_class=argparse.RawDescriptionHelpFormatter,
