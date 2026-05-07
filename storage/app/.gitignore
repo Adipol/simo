@@ -1,4 +1,6 @@
 *
 !private/
 !public/
+!img_cambios/
+!img_cambios/.gitkeep
 !.gitignore
