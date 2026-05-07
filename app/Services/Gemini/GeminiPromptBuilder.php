@@ -278,6 +278,61 @@ PROMPT;
     }
 
     /**
+     * Build a prompt for Gemini Vision (multimodal) to analyze a government source change.
+     * The images are sent as separate inline_data parts — this method returns only the text part.
+     *
+     * @param  int  $cantidadImagenes  Number of images being sent alongside this prompt
+     */
+    public function analisisCambioMultimodal(
+        string $diff,
+        string $fuente,
+        string $organismo,
+        int $cantidadImagenes,
+    ): string {
+        $truncatedDiff = $this->truncarDiff($diff);
+        $imagenLabel = $cantidadImagenes === 1 ? 'imagen' : 'imágenes';
+
+        return <<<PROMPT
+Junto a este diff de texto, te adjunto {$cantidadImagenes} {$imagenLabel} que aparecieron o cambiaron en la página de {$organismo} (fuente: {$fuente}). Estas imágenes pueden contener nóminas de autoridades, organigramas, o resoluciones que el extractor de texto no capturó. Analizá AMBOS: el diff de texto Y el contenido visual de las imágenes. Si encontrás nombres en las imágenes, reportalos en `persona_nueva`/`persona_removida` igual que si vinieran del texto.
+
+Sos un experto en gobierno corporativo y análisis de cambios en organismos públicos de Latinoamérica.
+Analizá el siguiente diff de {$organismo} (fuente: {$fuente}) para detectar cambio de autoridades.
+
+PASO 0 — FILTRO DE NOMBRES:
+Antes de cualquier análisis, revisá las líneas que empiezan con + o - Y el contenido visual de las imágenes adjuntas.
+¿Aparece algún NOMBRE PROPIO DE PERSONA HUMANA (nombre y apellido, o título + apellido)?
+- Si NO aparece ningún nombre de persona → respondé inmediatamente:
+  {"persona_removida":null,"persona_nueva":null,"cargo":null,"es_mae":false,"riesgo":"bajo","analisis":"No se detectaron nombres de personas en el diff ni en las imágenes."}
+- Si SÍ aparece al menos un nombre → continuá con los pasos siguientes.
+
+REGLA DE NULIDAD: persona_removida y persona_nueva DEBEN ser null salvo que identifiques
+un nombre propio de persona humana (no institución, no sigla, no documento, no cargo genérico).
+
+REGLA CRÍTICA: Solo reportá cambios de PERSONAS en cargos públicos.
+Si el diff solo contiene cambios de documentos, resoluciones, decretos, números de expediente,
+fechas de publicación, títulos de eventos o textos administrativos SIN mencionar personas
+que entran o salen de un cargo, respondé con es_mae=false, riesgo="bajo" y explicá en el
+análisis que no se detectaron cambios de personal.
+
+PASOS:
+1. Determiná si el diff Y las imágenes contienen cambios de PERSONAS (nombres propios que entran/salen de cargos)
+2. Si NO hay personas → responder con riesgo bajo y sin personas
+3. Si SÍ hay personas:
+   a. Identificá personas removidas (líneas que empiezan con - en el diff, o personas ausentes en las imágenes)
+   b. Identificá personas nuevas (líneas que empiezan con + en el diff, o personas nuevas en las imágenes)
+   c. Determiná si el cargo es MAE (Máxima Autoridad Ejecutiva: ministro, secretario ejecutivo, director general)
+   d. Evaluá riesgo AML: alto (MAE o cargo clave), medio (gerencia), bajo (técnico/administrativo)
+4. Escribí análisis conciso (máx 300 caracteres)
+
+JSON de salida (SOLO JSON válido):
+{"persona_removida":string|null,"persona_nueva":string|null,"cargo":string|null,"es_mae":boolean,"riesgo":"alto"|"medio"|"bajo","analisis":string}
+
+DIFF:
+{$truncatedDiff}
+PROMPT;
+    }
+
+    /**
      * Intelligently truncate a diff to fit within token limits.
      */
     public function truncarDiff(string $diff): string

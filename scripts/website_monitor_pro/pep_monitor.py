@@ -16,6 +16,7 @@ import sys
 import csv
 import time
 import hashlib
+import json
 import logging
 import argparse
 import re
@@ -294,13 +295,27 @@ class DatabaseManager:
         lineas_nuevas: int,
         diff_texto: str,
         posibles_peps: str,
+        *,
+        imagenes: Optional[list[dict]] = None,
     ) -> Optional[int]:
+        """
+        Inserta un cambio detectado en la tabla cambios.
+
+        Args:
+            imagenes: si se provee y no está vacía, se serializa como JSON
+                      en la columna imagenes_cambio_json. Si None o [] el
+                      campo queda NULL (se puede actualizar después via UPDATE).
+
+        Returns:
+            ID del cambio insertado, o None si falla.
+        """
         self._ensure_connection()
+        imagenes_json = json.dumps(imagenes) if imagenes else None
         self.cursor.execute(
             """INSERT INTO cambios
                (fuente_id, hash_anterior, hash_nuevo, lineas_quitadas,
-                lineas_nuevas, diff_texto, posibles_peps)
-               VALUES (%s, %s, %s, %s, %s, %s, %s)
+                lineas_nuevas, diff_texto, posibles_peps, imagenes_cambio_json)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                RETURNING id""",
             (
                 fuente_id,
@@ -310,10 +325,21 @@ class DatabaseManager:
                 lineas_nuevas,
                 diff_texto,
                 posibles_peps,
+                imagenes_json,
             ),
         )
         row = self.cursor.fetchone()
         return row["id"] if row else None
+
+    def actualizar_imagenes_cambio(
+        self, cambio_id: int, imagenes: list[dict]
+    ) -> None:
+        """Actualiza imagenes_cambio_json de un cambio ya insertado."""
+        self._ensure_connection()
+        self.cursor.execute(
+            "UPDATE cambios SET imagenes_cambio_json = %s WHERE id = %s",
+            (json.dumps(imagenes), cambio_id),
+        )
 
     def get_historial(self, fuente_id: int, limite: int = 20) -> list[dict]:
         self._ensure_connection()
@@ -855,6 +881,350 @@ def create_http_session() -> requests.Session:
 
 
 # ════════════════════════════════════════════════════════════════
+# IMAGENES — EXTRACCION, CASCADA Y PERSISTENCIA
+# ════════════════════════════════════════════════════════════════
+
+# MIME types soportados para análisis multimodal (Gemini 2.5-flash)
+_MIME_SOPORTADOS = {
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+}
+
+# Mapa de extensión → MIME
+_EXT_A_MIME: dict[str, str] = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+    ".tiff": "image/tiff",
+    ".tif": "image/tiff",
+    ".avif": "image/avif",
+    ".heic": "image/heic",
+    ".heif": "image/heif",
+}
+
+
+class ImagenStorageError(Exception):
+    """Error al guardar imagen a disco (permisos, disco lleno, etc.)."""
+    pass
+
+
+def extraer_imagenes_html(html: str, base_url: str) -> list[dict]:
+    """
+    Extrae todas las imágenes de un HTML y resuelve sus URLs absolutas.
+
+    Args:
+        html: HTML completo de la página.
+        base_url: URL base para resolver URLs relativas.
+
+    Returns:
+        Lista de dicts: [{src, src_absoluto, mime_hint}]
+        - src: valor original del atributo src
+        - src_absoluto: URL absoluta resuelta
+        - mime_hint: MIME type deducido de la extensión (o None)
+    """
+    from urllib.parse import urljoin, urlparse
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "lxml")
+    resultado: list[dict] = []
+
+    for img in soup.find_all("img"):
+        src = img.get("src") or ""
+        src = src.strip()
+
+        # Filtrar src vacíos y data URIs inline
+        if not src:
+            continue
+        if src.lower().startswith("data:"):
+            continue
+
+        # Resolver URL absoluta
+        src_absoluto = urljoin(base_url, src)
+
+        # Deducir MIME desde extensión de la URL (sin query params)
+        parsed = urlparse(src_absoluto)
+        path_sin_query = parsed.path.lower()
+        mime_hint: Optional[str] = None
+        for ext, mime in _EXT_A_MIME.items():
+            if path_sin_query.endswith(ext):
+                mime_hint = mime
+                break
+
+        resultado.append({
+            "src": src,
+            "src_absoluto": src_absoluto,
+            "mime_hint": mime_hint,
+        })
+
+    return resultado
+
+
+def comparar_imagenes_cascada(
+    imgs_actual: list[dict],
+    imgs_anterior: list[dict],
+    session: requests.Session,
+    max_image_bytes: int = 5 * 1024 * 1024,
+) -> tuple[list[dict], list[dict]]:
+    """
+    Determina qué imágenes cambiaron usando una cascada de 3 niveles:
+      L1: URL nueva → descargar siempre
+      L2: URL conocida, ETag o Content-Length difieren → GET + SHA-256 compare
+      L3: URL conocida, metadata idéntica → skip (no GET)
+
+    Filtros pre-download:
+      - Content-Length > max_image_bytes → skip
+      - MIME no soportado (ej: SVG) → skip
+
+    Args:
+        imgs_actual: output de extraer_imagenes_html para la página actual.
+        imgs_anterior: filas de snapshot_imagenes (dicts con src, sha256,
+                       content_length, etag, last_modified, mime_type).
+        session: requests.Session para HEAD y GET.
+        max_image_bytes: límite por imagen en bytes (default 5MB).
+
+    Returns:
+        - imgs_a_analizar: imágenes que cambiaron, con bytes descargados.
+        - imgs_metadata: metadata completa para upsert en snapshot_imagenes.
+    """
+    # Índice de imgs_anterior por src para lookup O(1)
+    anterior_por_src: dict[str, dict] = {
+        img["src"]: img for img in imgs_anterior
+    }
+
+    imgs_a_analizar: list[dict] = []
+    imgs_metadata: list[dict] = []
+
+    for img in imgs_actual:
+        src_abs = img["src_absoluto"]
+
+        # ── HEAD request ───────────────────────────────────────────
+        try:
+            head_resp = session.head(src_abs, timeout=15, allow_redirects=True)
+            head_headers = head_resp.headers
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"HEAD fallido para {src_abs}: {e} — saltando imagen")
+            continue
+
+        # ── Leer metadata del HEAD ──────────────────────────────────
+        content_type = head_headers.get("Content-Type", "").split(";")[0].strip().lower()
+        content_length_str = head_headers.get("Content-Length")
+        content_length: Optional[int] = int(content_length_str) if content_length_str else None
+        etag = head_headers.get("ETag")
+        last_modified = head_headers.get("Last-Modified")
+
+        # ── Filtro: MIME no soportado ──────────────────────────────
+        # Solo filtramos si el servidor realmente nos dice el MIME
+        if content_type and content_type not in _MIME_SOPORTADOS:
+            logger.warning(f"MIME no soportado ({content_type}) para {src_abs} — saltando")
+            continue
+
+        # ── Filtro: tamaño excede límite ───────────────────────────
+        if content_length is not None and content_length > max_image_bytes:
+            logger.warning(
+                f"Imagen muy grande ({content_length} bytes > {max_image_bytes}) "
+                f"para {src_abs} — saltando"
+            )
+            continue
+
+        # ── Determinar nivel de cascada ────────────────────────────
+        prev = anterior_por_src.get(src_abs)
+
+        if prev is None:
+            # L1: URL nueva → descargar siempre
+            nivel = 1
+            debe_descargar = True
+        else:
+            # Comparar ETag y Content-Length
+            etag_cambio = etag is not None and etag != prev.get("etag")
+            length_cambio = (
+                content_length is not None
+                and content_length != prev.get("content_length")
+            )
+            if etag_cambio or length_cambio:
+                # L2: metadata cambió → GET + SHA-256 compare
+                nivel = 2
+                debe_descargar = True
+            else:
+                # L3: sin cambios detectables → skip
+                nivel = 3
+                debe_descargar = False
+
+        if debe_descargar:
+            # ── GET y SHA-256 ─────────────────────────────────────
+            try:
+                get_resp = session.get(src_abs, timeout=30)
+                image_bytes = get_resp.content
+            except requests.exceptions.RequestException as e:
+                logger.warning(f"GET fallido para {src_abs}: {e} — saltando imagen")
+                continue
+
+            sha256_nuevo = hashlib.sha256(image_bytes).hexdigest()
+
+            # Determinar MIME real: preferir Content-Type del HEAD,
+            # fallback a mime_hint desde extensión
+            mime_real = content_type if content_type in _MIME_SOPORTADOS else img.get("mime_hint")
+
+            entry_metadata: dict = {
+                "src": src_abs,
+                "sha256": sha256_nuevo,
+                "content_length": content_length if content_length is not None else len(image_bytes),
+                "etag": etag,
+                "last_modified": last_modified,
+                "mime_type": mime_real,
+            }
+            imgs_metadata.append(entry_metadata)
+
+            # Para L2: solo añadir a_analizar si el SHA cambió realmente
+            sha256_anterior = prev.get("sha256") if prev else None
+            if sha256_anterior is None or sha256_nuevo != sha256_anterior:
+                entry_analizar = dict(entry_metadata)
+                entry_analizar["bytes"] = image_bytes
+                entry_analizar["src_absoluto"] = src_abs
+                imgs_a_analizar.append(entry_analizar)
+            else:
+                logger.debug(f"SHA-256 sin cambio para {src_abs} (nivel {nivel}) — no se analiza")
+
+        else:
+            # L3: sin cambio → metadata para actualizar ultima_vez_visto
+            mime_real = content_type if (content_type and content_type in _MIME_SOPORTADOS) else prev.get("mime_type")
+            entry_metadata = {
+                "src": src_abs,
+                "sha256": prev.get("sha256"),
+                "content_length": content_length if content_length is not None else prev.get("content_length"),
+                "etag": etag if etag else prev.get("etag"),
+                "last_modified": last_modified if last_modified else prev.get("last_modified"),
+                "mime_type": mime_real,
+            }
+            imgs_metadata.append(entry_metadata)
+
+    return imgs_a_analizar, imgs_metadata
+
+
+def guardar_imagen_local(
+    image_bytes: bytes,
+    cambio_id: int,
+    idx: int,
+    mime_type: Optional[str],
+) -> str:
+    """
+    Guarda bytes de imagen a disco y retorna el path RELATIVO al storage.
+
+    El path relativo retornado (ej: 'img_cambios/42_0.png') es el que se
+    persiste en cambios.imagenes_cambio_json y que Laravel resuelve con
+    storage_path('app/' . $path).
+
+    El directorio de destino se configura con LARAVEL_STORAGE_PATH
+    (default: '../../storage/app' relativo al script).
+
+    Args:
+        image_bytes: contenido binario de la imagen.
+        cambio_id: ID del cambio en la tabla cambios.
+        idx: índice de la imagen (0-based) para el nombre de archivo.
+        mime_type: MIME type para determinar extensión.
+
+    Returns:
+        Path relativo al storage: 'img_cambios/{cambio_id}_{idx}.{ext}'
+
+    Raises:
+        ImagenStorageError: si no se puede escribir a disco.
+    """
+    # Determinar extensión desde MIME
+    mime_a_ext: dict[str, str] = {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/webp": ".webp",
+        "image/gif": ".gif",
+        "image/bmp": ".bmp",
+        "image/tiff": ".tiff",
+        "image/avif": ".avif",
+        "image/heic": ".heic",
+        "image/heif": ".heif",
+    }
+    ext = mime_a_ext.get(mime_type or "", ".bin")
+
+    nombre_archivo = f"{cambio_id}_{idx}{ext}"
+    path_relativo = f"img_cambios/{nombre_archivo}"
+
+    # Resolver directorio absoluto
+    # LARAVEL_STORAGE_PATH: path absoluto o relativo al script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    storage_base = os.getenv(
+        "LARAVEL_STORAGE_PATH",
+        os.path.join(script_dir, "..", "..", "storage", "app"),
+    )
+    directorio = os.path.join(storage_base, "img_cambios")
+
+    try:
+        os.makedirs(directorio, exist_ok=True)
+        path_absoluto = os.path.join(directorio, nombre_archivo)
+        with open(path_absoluto, "wb") as f:
+            f.write(image_bytes)
+        logger.debug(f"Imagen guardada: {path_absoluto}")
+    except OSError as e:
+        raise ImagenStorageError(
+            f"No se pudo guardar imagen {nombre_archivo}: {e}"
+        ) from e
+
+    return path_relativo
+
+
+def registrar_snapshot_imagenes(
+    cursor,
+    snapshot_id: int,
+    fuente_id: int,
+    imagenes_metadata: list[dict],
+) -> None:
+    """
+    Upsert en snapshot_imagenes para todas las imágenes del ciclo actual.
+
+    Usa ON CONFLICT (fuente_id, src) DO UPDATE para mantener metadata
+    actualizada incluso cuando la imagen no cambió (actualiza ultima_vez_visto).
+
+    Args:
+        cursor: psycopg2 cursor con autocommit.
+        snapshot_id: ID del snapshot recién creado.
+        fuente_id: ID de la fuente.
+        imagenes_metadata: lista de dicts con {src, sha256, content_length,
+                           etag, last_modified, mime_type}.
+    """
+    if not imagenes_metadata:
+        return
+
+    for img in imagenes_metadata:
+        cursor.execute(
+            """
+            INSERT INTO snapshot_imagenes
+                (snapshot_id, fuente_id, src, sha256, content_length,
+                 etag, last_modified, mime_type, ultima_vez_visto)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            ON CONFLICT (fuente_id, src) DO UPDATE SET
+                snapshot_id    = EXCLUDED.snapshot_id,
+                sha256         = EXCLUDED.sha256,
+                content_length = EXCLUDED.content_length,
+                etag           = EXCLUDED.etag,
+                last_modified  = EXCLUDED.last_modified,
+                mime_type      = EXCLUDED.mime_type,
+                ultima_vez_visto = NOW()
+            """,
+            (
+                snapshot_id,
+                fuente_id,
+                img["src"],
+                img.get("sha256"),
+                img.get("content_length"),
+                img.get("etag"),
+                img.get("last_modified"),
+                img.get("mime_type"),
+            ),
+        )
+
+
+# ════════════════════════════════════════════════════════════════
 # MONITOR PRINCIPAL
 # ════════════════════════════════════════════════════════════════
 class PEPMonitor:
@@ -912,76 +1282,262 @@ class PEPMonitor:
             logger.error(f"Error HTTP en {url}: {e}")
             return [], "error_http"
 
+    def _cargar_imgs_anterior(self, fuente_id: int) -> list[dict]:
+        """Carga metadata de imágenes previas desde snapshot_imagenes."""
+        self.db._ensure_connection()
+        try:
+            self.db.cursor.execute(
+                """SELECT src, sha256, content_length, etag, last_modified, mime_type
+                   FROM snapshot_imagenes
+                   WHERE fuente_id = %s""",
+                (fuente_id,),
+            )
+            return [dict(row) for row in self.db.cursor.fetchall()]
+        except Exception as e:
+            logger.warning(f"No se pudo leer snapshot_imagenes para fuente {fuente_id}: {e}")
+            return []
+
+    def _obtener_html_raw(self, fuente: dict) -> tuple[str, str]:
+        """
+        Retorna el HTML crudo (sin limpiar) junto con el método usado.
+        Necesario para extraer imágenes antes de limpiar el texto.
+        """
+        url = fuente["url"]
+        tipo = fuente.get("tipo", "html")
+        selector = fuente.get("selector_css")
+
+        if tipo == "pdf" or url.lower().endswith(".pdf"):
+            # PDF no tiene HTML — retornar vacío
+            return "", "pdf"
+
+        if tipo == "js":
+            html, metodo_js = obtener_html_js(url)
+            return html, f"js_playwright"
+
+        try:
+            resp = self.http.get(url, timeout=config.REQUEST_TIMEOUT)
+            resp.raise_for_status()
+            html = resp.text
+            # Fallback JS si el HTML tiene poco contenido
+            lineas_test, _ = limpiar_html(html, selector)
+            if len(lineas_test) < 3:
+                html_js, _ = obtener_html_js(url)
+                if html_js:
+                    lineas_js, _ = limpiar_html(html_js, selector)
+                    if len(lineas_js) > len(lineas_test):
+                        return html_js, "js_fallback"
+            return html, "html_estatico"
+        except requests.ConnectionError:
+            raise
+        except requests.RequestException as e:
+            logger.error(f"Error HTTP en {url}: {e}")
+            return "", "error_http"
+
     def procesar_fuente(self, fuente: dict) -> None:
         """
         Flujo completo para una fuente:
-        1. Descargar y limpiar contenido
-        2. Comparar con snapshot anterior
-        3. Si hay cambio: guardar diff + mostrar alerta
-        4. Actualizar snapshot
+        1. Descargar HTML crudo
+        2. Extraer imágenes del HTML (multimoda)
+        3. Limpiar texto y comparar con snapshot anterior
+        4. Cascada de imágenes para detectar cambios visuales
+        5. Si hay cambio (texto o imagen): guardar diff, imágenes, alertar
+        6. Actualizar snapshot + snapshot_imagenes
         """
         url = fuente["url"]
+        fuente_id = fuente["id"]
         nombre = fuente.get("nombre") or fuente.get("organismo") or url
         logger.info(f"Verificando: {nombre}")
 
+        # ── 8.4a: Obtener HTML crudo ───────────────────────────────
         try:
-            lineas_nuevas, metodo = self._obtener_lineas(fuente)
+            html_raw, metodo_raw = self._obtener_html_raw(fuente)
         except requests.ConnectionError:
             logger.warning(f"Sin conexion al verificar: {nombre}")
             return
 
+        # Para PDFs o errores sin HTML, fallback al flujo original de líneas
+        if not html_raw:
+            if fuente.get("tipo") == "pdf" or url.lower().endswith(".pdf"):
+                lineas_nuevas, metodo = limpiar_pdf(url, self.http)
+                html_raw = ""
+            else:
+                logger.warning(f"Sin contenido extraido de: {nombre}")
+                self.db.update_ultimo_check(fuente_id)
+                return
+            imgs_actual: list[dict] = []
+        else:
+            # Limpiar texto desde el HTML crudo
+            lineas_nuevas, metodo = limpiar_html(html_raw, fuente.get("selector_css"))
+            # Extraer imágenes del HTML crudo (antes de limpiar)
+            imgs_actual = extraer_imagenes_html(html_raw, url)
+
         if not lineas_nuevas:
             logger.warning(f"Sin contenido extraido de: {nombre}")
-            self.db.update_ultimo_check(fuente["id"])
+            self.db.update_ultimo_check(fuente_id)
             return
 
-        # Hash del contenido actual
+        # ── Texto: hash y snapshot anterior ───────────────────────
         texto_nuevo = "\n".join(lineas_nuevas)
         hash_nuevo = hashlib.sha256(texto_nuevo.encode("utf-8")).hexdigest()
-
-        # Obtener snapshot anterior
-        snapshot_anterior = self.db.get_ultimo_snapshot(fuente["id"])
+        snapshot_anterior = self.db.get_ultimo_snapshot(fuente_id)
 
         if snapshot_anterior is None:
             # Primera vez — guardar estado inicial sin alertar
-            self.db.guardar_snapshot(fuente["id"], hash_nuevo, texto_nuevo, metodo)
+            self.db.guardar_snapshot(fuente_id, hash_nuevo, texto_nuevo, metodo)
             logger.info(
                 f"[INICIO] Estado inicial guardado: {nombre} "
                 f"({len(lineas_nuevas)} lineas, metodo: {metodo})"
             )
-        elif snapshot_anterior["hash"] != hash_nuevo:
-            # Hay diferencia — calcular diff
+            self.db.update_ultimo_check(fuente_id)
+            return
+
+        # ── 8.4a: Cascada de imágenes ──────────────────────────────
+        max_image_bytes = int(
+            os.getenv("GEMINI_MULTIMODAL_MAX_IMAGE_BYTES", str(5 * 1024 * 1024))
+        )
+        imgs_anterior = self._cargar_imgs_anterior(fuente_id)
+        imgs_a_analizar: list[dict] = []
+        imgs_metadata: list[dict] = []
+
+        if imgs_actual and html_raw:
+            try:
+                imgs_a_analizar, imgs_metadata = comparar_imagenes_cascada(
+                    imgs_actual, imgs_anterior, self.http, max_image_bytes
+                )
+            except Exception as e:
+                logger.error(f"Error en cascada de imágenes para {nombre}: {e}")
+                imgs_a_analizar = []
+                imgs_metadata = []
+
+        # ── Determinar si hay cambio real ──────────────────────────
+        texto_cambio = snapshot_anterior["hash"] != hash_nuevo
+        hay_diff_texto = False
+        diff: dict = {}
+
+        if texto_cambio:
             lineas_anteriores = snapshot_anterior["texto"].split("\n")
             diff = calcular_diff(lineas_anteriores, lineas_nuevas)
+            hay_diff_texto = bool(diff.get("quitadas") or diff.get("nuevas"))
 
-            # Solo alertar si hay lineas realmente nuevas o quitadas
-            # (el hash puede diferir por orden, pero sin contenido nuevo)
-            if diff["quitadas"] or diff["nuevas"]:
-                cambio_id = self.db.guardar_cambio(
-                    fuente_id=fuente["id"],
-                    hash_anterior=snapshot_anterior["hash"],
-                    hash_nuevo=hash_nuevo,
-                    lineas_quitadas=len(diff["quitadas"]),
-                    lineas_nuevas=len(diff["nuevas"]),
-                    diff_texto=diff["diff_texto"],
-                    posibles_peps=diff["posibles_peps"],
-                )
-                # Mostrar alerta en consola y guardar en log
-                mostrar_alerta(fuente, diff, cambio_id)
-                logger.warning(
-                    f"[CAMBIO #{cambio_id}] {nombre}: "
-                    f"+{len(diff['nuevas'])} nuevas, "
-                    f"-{len(diff['quitadas'])} eliminadas"
-                )
-            else:
+        hay_cambio_imagen = bool(imgs_a_analizar)
+
+        # Si no hay ningún cambio real → skip
+        if not hay_diff_texto and not hay_cambio_imagen:
+            if texto_cambio:
                 logger.debug(f"[OK] Reordenamiento sin contenido nuevo: {nombre}")
+            else:
+                logger.debug(f"[OK] Sin cambios: {nombre}")
+            # Actualizar snapshot si el hash cambió
+            if texto_cambio:
+                self.db.guardar_snapshot(fuente_id, hash_nuevo, texto_nuevo, metodo)
+            # Actualizar metadata de imágenes (ultima_vez_visto) si hubo imágenes
+            if imgs_metadata:
+                snapshot_row = self.db.get_ultimo_snapshot(fuente_id)
+                snap_id = None
+                if snapshot_row:
+                    self.db._ensure_connection()
+                    self.db.cursor.execute(
+                        "SELECT id FROM snapshots WHERE fuente_id = %s ORDER BY fecha DESC LIMIT 1",
+                        (fuente_id,),
+                    )
+                    snap_row = self.db.cursor.fetchone()
+                    snap_id = snap_row["id"] if snap_row else None
+                if snap_id:
+                    registrar_snapshot_imagenes(
+                        self.db.cursor, snap_id, fuente_id, imgs_metadata
+                    )
+            self.db.update_ultimo_check(fuente_id)
+            return
 
-            # Actualizar snapshot con el estado actual
-            self.db.guardar_snapshot(fuente["id"], hash_nuevo, texto_nuevo, metodo)
-        else:
-            logger.debug(f"[OK] Sin cambios: {nombre}")
+        # ── Hay cambio real: insertar en cambios ───────────────────
+        if not diff:
+            # Cambio solo de imagen, sin diff de texto
+            diff = {"quitadas": [], "nuevas": [], "diff_texto": "", "posibles_peps": ""}
 
-        self.db.update_ultimo_check(fuente["id"])
+        cambio_id = self.db.guardar_cambio(
+            fuente_id=fuente_id,
+            hash_anterior=snapshot_anterior["hash"],
+            hash_nuevo=hash_nuevo,
+            lineas_quitadas=len(diff.get("quitadas", [])),
+            lineas_nuevas=len(diff.get("nuevas", [])),
+            diff_texto=diff.get("diff_texto", ""),
+            posibles_peps=diff.get("posibles_peps", ""),
+            # imagenes: None por ahora — se actualiza después del guardado a disco
+        )
+
+        if cambio_id is None:
+            logger.error(f"Fallo al insertar cambio para {nombre}")
+            self.db.update_ultimo_check(fuente_id)
+            return
+
+        # ── 8.4b: Guardar imágenes a disco ─────────────────────────
+        entries_imagenes: list[dict] = []
+        for idx, img in enumerate(imgs_a_analizar):
+            try:
+                path_relativo = guardar_imagen_local(
+                    img["bytes"], cambio_id, idx, img.get("mime_type")
+                )
+                entries_imagenes.append({
+                    "path": path_relativo,
+                    "src_original": img["src_absoluto"],
+                    "sha256": img["sha256"],
+                    "mime_type": img.get("mime_type"),
+                })
+            except ImagenStorageError as e:
+                logger.error(f"No se pudo guardar imagen idx={idx} para cambio #{cambio_id}: {e}")
+                # Continuar con las demás imágenes
+
+        # ── Actualizar imagenes_cambio_json si hay entries ─────────
+        if entries_imagenes:
+            try:
+                self.db.actualizar_imagenes_cambio(cambio_id, entries_imagenes)
+                logger.info(
+                    f"[CAMBIO #{cambio_id}] {len(entries_imagenes)} imagen(es) guardadas"
+                )
+            except Exception as e:
+                logger.error(f"Error actualizando imagenes_cambio_json para #{cambio_id}: {e}")
+
+        # ── Mostrar alerta ─────────────────────────────────────────
+        if hay_diff_texto:
+            mostrar_alerta(fuente, diff, cambio_id)
+            logger.warning(
+                f"[CAMBIO #{cambio_id}] {nombre}: "
+                f"+{len(diff.get('nuevas', []))} nuevas, "
+                f"-{len(diff.get('quitadas', []))} eliminadas"
+                + (f", {len(entries_imagenes)} img" if entries_imagenes else "")
+            )
+        elif hay_cambio_imagen:
+            logger.warning(
+                f"[CAMBIO #{cambio_id}] {nombre}: "
+                f"solo imágenes ({len(entries_imagenes)} nueva(s))"
+            )
+
+        # ── 8.4c: Registrar snapshot_imagenes ──────────────────────
+        # Actualizar snapshot de texto
+        self.db.guardar_snapshot(fuente_id, hash_nuevo, texto_nuevo, metodo)
+
+        # Obtener el ID del snapshot recién creado
+        try:
+            self.db._ensure_connection()
+            self.db.cursor.execute(
+                "SELECT id FROM snapshots WHERE fuente_id = %s ORDER BY fecha DESC LIMIT 1",
+                (fuente_id,),
+            )
+            snap_row = self.db.cursor.fetchone()
+            snap_id = snap_row["id"] if snap_row else None
+        except Exception as e:
+            logger.error(f"No se pudo obtener snapshot_id para fuente {fuente_id}: {e}")
+            snap_id = None
+
+        if snap_id and imgs_metadata:
+            try:
+                registrar_snapshot_imagenes(
+                    self.db.cursor, snap_id, fuente_id, imgs_metadata
+                )
+            except Exception as e:
+                logger.error(f"Error registrando snapshot_imagenes para #{cambio_id}: {e}")
+
+        self.db.update_ultimo_check(fuente_id)
 
     def check_all(self) -> None:
         """Procesa todas las fuentes activas. Registra inicio/fin en log_scripts."""

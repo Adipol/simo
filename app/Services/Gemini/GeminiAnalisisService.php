@@ -6,6 +6,7 @@ namespace App\Services\Gemini;
 
 use App\Exceptions\Gemini\GeminiBadRequestException;
 use App\Exceptions\Gemini\GeminiInvalidResponseException;
+use App\Exceptions\Gemini\GeminiPayloadTooLargeException;
 use App\Models\Cambio;
 use App\Services\Gemini\DTOs\AnalisisCambioDTO;
 use Illuminate\Support\Collection;
@@ -20,15 +21,26 @@ class GeminiAnalisisService
 
     public function analizarLote(Collection $records): void
     {
+        $multimodalEnabled = (bool) config('services.gemini.multimodal_enabled', true);
+
+        // Eager-load fuente para evitar N+1 dentro del loop (solo si es EloquentCollection)
+        if ($records instanceof \Illuminate\Database\Eloquent\Collection) {
+            $records->loadMissing('fuente');
+        }
+
         foreach ($records as $cambio) {
-            $this->procesarCambio($cambio);
+            if ($multimodalEnabled && $cambio->tieneImagenes()) {
+                $this->procesarCambioMultimodal($cambio);
+            } else {
+                $this->procesarCambio($cambio);
+            }
         }
     }
 
     private function procesarCambio(Cambio $cambio): void
     {
         try {
-            $diff = $this->builder->truncarDiff($cambio->diff_texto ?? '');
+            $diff = $cambio->diff_texto ?? '';
 
             $fuente = $cambio->fuente;
             $fuenteNombre = $fuente?->nombre ?? '';
@@ -44,6 +56,90 @@ class GeminiAnalisisService
         } catch (GeminiInvalidResponseException|GeminiBadRequestException $e) {
             $this->marcarFallido($cambio, $e);
         }
+    }
+
+    private function procesarCambioMultimodal(Cambio $cambio): void
+    {
+        try {
+            $diff = $cambio->diff_texto ?? '';
+
+            $fuente = $cambio->fuente;
+            $fuenteNombre = $fuente?->nombre ?? '';
+            $organismoNombre = $fuente?->organismo ?? '';
+
+            $imagenes = $this->resolverImagenes($cambio);
+
+            if (empty($imagenes)) {
+                // Degrade to text-only if no readable images
+                Log::channel('gemini')->warning('procesarCambioMultimodal: no readable images, degrading to text-only', [
+                    'cambio_id' => $cambio->id,
+                ]);
+                $this->procesarCambio($cambio);
+
+                return;
+            }
+
+            $prompt = $this->builder->analisisCambioMultimodal(
+                $diff,
+                $fuenteNombre,
+                $organismoNombre,
+                count($imagenes),
+            );
+
+            $visionModel = config('services.gemini.vision_model', config('services.gemini.pro_model'));
+
+            Log::channel('gemini')->info('AnalisisCambio multimodal iniciado', [
+                'cambio_id' => $cambio->id,
+                'image_count' => count($imagenes),
+            ]);
+
+            $response = $this->gemini->sendMultimodal($prompt, $imagenes, $visionModel);
+
+            $dto = AnalisisCambioDTO::fromArray($response);
+
+            $this->persistirAnalisis($cambio, $dto);
+
+            Log::channel('gemini')->info('procesarCambioMultimodal completado', [
+                'cambio_id' => $cambio->id,
+                'image_count' => count($imagenes),
+                'es_mae' => $dto->esMae,
+                'riesgo' => $dto->riesgo,
+            ]);
+        } catch (GeminiInvalidResponseException|GeminiBadRequestException|GeminiPayloadTooLargeException $e) {
+            $this->marcarFallido($cambio, $e);
+        }
+    }
+
+    /**
+     * Resolve image entries from cambio JSON to absolute filesystem paths, filtering unreadable files.
+     *
+     * @return array<int,array{path:string,mime_type:string}>
+     */
+    private function resolverImagenes(Cambio $cambio): array
+    {
+        $entries = $cambio->imagenes_cambio_json ?? [];
+
+        $resolved = [];
+
+        foreach ($entries as $entry) {
+            $absPath = storage_path('app/' . $entry['path']);
+
+            if (! is_readable($absPath)) {
+                Log::channel('gemini')->warning('resolverImagenes: image not readable, skipping', [
+                    'cambio_id' => $cambio->id,
+                    'path' => $absPath,
+                ]);
+
+                continue;
+            }
+
+            $resolved[] = [
+                'path' => $absPath,
+                'mime_type' => $entry['mime_type'],
+            ];
+        }
+
+        return $resolved;
     }
 
     private function persistirAnalisis(Cambio $cambio, AnalisisCambioDTO $dto): void
