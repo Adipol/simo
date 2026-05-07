@@ -41,10 +41,14 @@ return [
         'enabled' => env('GEMINI_ENABLED', true),
         'flash_model' => env('GEMINI_FLASH_MODEL', 'gemini-1.5-flash'),
         'pro_model' => env('GEMINI_PRO_MODEL', 'gemini-1.5-pro'),
+        'vision_model' => env('GEMINI_VISION_MODEL', 'gemini-2.5-flash'),
         'timeout' => (int) env('GEMINI_TIMEOUT', 90),
         'flash_delay' => (int) env('GEMINI_FLASH_DELAY', 4),
         'pro_delay' => (int) env('GEMINI_PRO_DELAY', 30),
         'min_confianza_pep' => (int) env('GEMINI_MIN_CONFIANZA_PEP', 70),
+        'multimodal_enabled' => (bool) env('GEMINI_MULTIMODAL_ENABLED', true),
+        'multimodal_max_payload_bytes' => (int) env('GEMINI_MULTIMODAL_MAX_PAYLOAD_BYTES', 100 * 1024 * 1024),
+        'multimodal_max_image_bytes' => (int) env('GEMINI_MULTIMODAL_MAX_IMAGE_BYTES', 5 * 1024 * 1024),
     ],
 
 ];

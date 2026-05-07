@@ -4,11 +4,15 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Cambio extends Model
 {
+    use HasFactory;
+
     protected $table = 'cambios';
 
     public $timestamps = false;
@@ -18,6 +22,7 @@ class Cambio extends Model
         'lineas_quitadas', 'lineas_nuevas', 'diff_texto',
         'posibles_peps', 'revisado',
         'gemini_analyzed', 'gemini_analisis_json',
+        'imagenes_cambio_json',
     ];
 
     protected $casts = [
@@ -25,11 +30,29 @@ class Cambio extends Model
         'revisado' => 'boolean',
         'gemini_analyzed' => 'boolean',
         'gemini_analisis_json' => 'array',
+        'imagenes_cambio_json' => 'array',
     ];
 
     public function fuente(): BelongsTo
     {
         return $this->belongsTo(Fuente::class, 'fuente_id');
+    }
+
+    /**
+     * Indica si el cambio tiene imágenes adjuntas para análisis multimodal.
+     */
+    public function tieneImagenes(): bool
+    {
+        return is_array($this->imagenes_cambio_json) && count($this->imagenes_cambio_json) > 0;
+    }
+
+    /**
+     * Scope: cambios con imágenes procesadas (para análisis multimodal).
+     */
+    public function scopeMultimodal(Builder $query): Builder
+    {
+        return $query->whereNotNull('imagenes_cambio_json')
+            ->whereRaw("jsonb_array_length(imagenes_cambio_json::jsonb) > 0");
     }
 
     public static function marcarComoRevisado(int $id): void
