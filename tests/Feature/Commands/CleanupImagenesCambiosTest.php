@@ -19,7 +19,7 @@ class CleanupImagenesCambiosTest extends TestCase
     {
         parent::setUp();
         Queue::fake();
-        Storage::fake('local');
+        Storage::fake('img_cambios');
     }
 
     // ─── Helper para crear un archivo falso en el disco fake ─────────────────
@@ -27,7 +27,7 @@ class CleanupImagenesCambiosTest extends TestCase
     private function crearArchivoFake(int $cambioId, int $idx = 0, string $ext = 'png'): string
     {
         $nombre = "{$cambioId}_{$idx}.{$ext}";
-        Storage::disk('local')->put("img_cambios/{$nombre}", 'fake-image-bytes');
+        Storage::disk('img_cambios')->put($nombre, 'fake-image-bytes');
 
         return $nombre;
     }
@@ -41,12 +41,12 @@ class CleanupImagenesCambiosTest extends TestCase
     {
         $this->crearArchivoFake(cambioId: 99999, idx: 0);
 
-        Storage::disk('local')->assertExists('img_cambios/99999_0.png');
+        Storage::disk('img_cambios')->assertExists('99999_0.png');
 
         $this->artisan('cleanup:imagenes-cambios', ['--days' => 90])
             ->assertExitCode(0);
 
-        Storage::disk('local')->assertMissing('img_cambios/99999_0.png');
+        Storage::disk('img_cambios')->assertMissing('99999_0.png');
     }
 
     /**
@@ -58,12 +58,12 @@ class CleanupImagenesCambiosTest extends TestCase
 
         $this->crearArchivoFake(cambioId: $cambio->id, idx: 0);
 
-        Storage::disk('local')->assertExists("img_cambios/{$cambio->id}_0.png");
+        Storage::disk('img_cambios')->assertExists("{$cambio->id}_0.png");
 
         $this->artisan('cleanup:imagenes-cambios', ['--days' => 90])
             ->assertExitCode(0);
 
-        Storage::disk('local')->assertExists("img_cambios/{$cambio->id}_0.png");
+        Storage::disk('img_cambios')->assertExists("{$cambio->id}_0.png");
     }
 
     /**
@@ -75,33 +75,32 @@ class CleanupImagenesCambiosTest extends TestCase
 
         $this->crearArchivoFake(cambioId: $cambio->id, idx: 0);
 
-        Storage::disk('local')->assertExists("img_cambios/{$cambio->id}_0.png");
+        Storage::disk('img_cambios')->assertExists("{$cambio->id}_0.png");
 
         $this->artisan('cleanup:imagenes-cambios', ['--days' => 90])
             ->assertExitCode(0);
 
-        Storage::disk('local')->assertMissing("img_cambios/{$cambio->id}_0.png");
+        Storage::disk('img_cambios')->assertMissing("{$cambio->id}_0.png");
     }
 
     /**
-     * Directorio existe pero está vacío → exit 0 sin errores.
+     * Disk vacío (sin archivos) → exit 0 sin errores.
      */
     public function test_funciona_con_directorio_vacio(): void
     {
-        // img_cambios existe vía Storage::fake pero sin archivos
-        Storage::disk('local')->makeDirectory('img_cambios');
+        // Storage::fake('img_cambios') ya crea el root vacío
 
         $this->artisan('cleanup:imagenes-cambios', ['--days' => 90])
             ->assertExitCode(0);
     }
 
     /**
-     * Directorio img_cambios no existe en absoluto → exit 0 sin errores.
+     * Storage::fake garantiza que el disk root existe físicamente, así que
+     * este escenario realmente prueba el caso "disk vacío" — equivalente al test anterior.
+     * Lo mantenemos por documentación del comportamiento esperado.
      */
     public function test_funciona_si_directorio_no_existe(): void
     {
-        // Storage::fake está limpio; img_cambios nunca fue creado
-
         $this->artisan('cleanup:imagenes-cambios', ['--days' => 90])
             ->assertExitCode(0);
     }

@@ -932,6 +932,7 @@ def extraer_imagenes_html(html: str, base_url: str) -> list[dict]:
 
     soup = BeautifulSoup(html, "lxml")
     resultado: list[dict] = []
+    vistos: set[str] = set()
 
     for img in soup.find_all("img"):
         src = img.get("src") or ""
@@ -945,6 +946,12 @@ def extraer_imagenes_html(html: str, base_url: str) -> list[dict]:
 
         # Resolver URL absoluta
         src_absoluto = urljoin(base_url, src)
+
+        # Dedup: si la misma URL absoluta ya apareció (logos, sprites, sociales
+        # repetidos en el HTML), no la procesamos de nuevo.
+        if src_absoluto in vistos:
+            continue
+        vistos.add(src_absoluto)
 
         # Deducir MIME desde extensión de la URL (sin query params)
         parsed = urlparse(src_absoluto)

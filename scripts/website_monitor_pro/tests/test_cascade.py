@@ -135,6 +135,29 @@ class TestExtraerImagenesHtml:
         resultado = extraer_imagenes_html(html, "https://example.com")
         assert resultado == []
 
+    def test_deduplica_misma_url_absoluta(self):
+        """Si una misma imagen aparece N veces (mismo src absoluto), devolverla 1 sola vez.
+
+        Caso típico: páginas institucionales repiten logos, social icons, sprites
+        en múltiples lugares del HTML. Sin dedup el scraper baja N copias del mismo archivo.
+        """
+        html = """
+        <html><body>
+          <img src="logo.png">
+          <img src="banner.jpg">
+          <img src="logo.png">
+          <img src="https://example.com/logo.png">
+          <img src="banner.jpg">
+        </body></html>
+        """
+        resultado = extraer_imagenes_html(html, "https://example.com/")
+        assert len(resultado) == 2
+        srcs = sorted(r["src_absoluto"] for r in resultado)
+        assert srcs == [
+            "https://example.com/banner.jpg",
+            "https://example.com/logo.png",
+        ]
+
 
 # ════════════════════════════════════════════════════════════════
 # TESTS: comparar_imagenes_cascada — Nivel 1 (URL nueva)

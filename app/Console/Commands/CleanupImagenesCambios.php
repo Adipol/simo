@@ -22,16 +22,17 @@ class CleanupImagenesCambios extends Command
         $days = (int) $this->option('days');
         $umbral = Carbon::now()->subDays($days);
 
-        $disk = Storage::disk('local');
+        // Disk dedicado en config/filesystems.php apuntando a storage/app/img_cambios
+        $disk = Storage::disk('img_cambios');
 
-        // Si el directorio no existe, terminar sin error
-        if (! $disk->directoryExists('img_cambios')) {
+        // Si el root del disk no existe físicamente, terminar sin error
+        if (! is_dir($disk->path(''))) {
             $this->info('Directorio img_cambios/ no existe. Nada que limpiar.');
 
             return self::SUCCESS;
         }
 
-        $archivos = $disk->files('img_cambios');
+        $archivos = $disk->files('');
 
         if (empty($archivos)) {
             $this->info('Directorio img_cambios/ vacío. Nada que limpiar.');

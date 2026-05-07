@@ -47,6 +47,15 @@ return [
             'report' => false,
         ],
 
+        // Disk dedicado para imágenes de cambios escritas por el scraper Python.
+        // Path consistente con LARAVEL_STORAGE_PATH del scraper.
+        'img_cambios' => [
+            'driver' => 'local',
+            'root' => storage_path('app/img_cambios'),
+            'throw' => false,
+            'report' => false,
+        ],
+
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),
