@@ -116,9 +116,10 @@ class ResultadoScrapingTest extends TestCase
     }
 
     /**
-     * P3.T7 — secondaries() scope filters to whereNotNull('secundario_de').
+     * P3.T7 — onlySecondaries() scope filters to whereNotNull('secundario_de').
+     * NOTE: scope is named onlySecondaries (not secondaries) to avoid collision with secondaries() HasMany.
      */
-    public function test_secondaries_scope_matches_where_not_null_secundario_de(): void
+    public function test_only_secondaries_scope_matches_where_not_null_secundario_de(): void
     {
         // Disable Gemini to avoid job dispatch
         config(['services.gemini.enabled' => false]);
@@ -127,10 +128,10 @@ class ResultadoScrapingTest extends TestCase
         ResultadoScraping::factory()->create(['secundario_de' => $primary->id]);
         ResultadoScraping::factory()->create(['secundario_de' => $primary->id]);
 
-        $scopeCount = ResultadoScraping::secondaries()->count();
+        $scopeCount = ResultadoScraping::onlySecondaries()->count();
         $directCount = ResultadoScraping::whereNotNull('secundario_de')->count();
 
-        $this->assertSame($directCount, $scopeCount, 'secondaries() scope must match whereNotNull(secundario_de) count');
+        $this->assertSame($directCount, $scopeCount, 'onlySecondaries() scope must match whereNotNull(secundario_de) count');
         $this->assertSame(2, $scopeCount, 'Only 2 secondary articles should be returned');
     }
 }
