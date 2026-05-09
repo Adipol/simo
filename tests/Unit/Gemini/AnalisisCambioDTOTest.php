@@ -121,4 +121,38 @@ class AnalisisCambioDTOTest extends TestCase
         $ref = new \ReflectionClass($dto);
         $this->assertTrue($ref->isReadOnly());
     }
+
+    public function test_from_array_parses_personas_detectadas(): void
+    {
+        $data = $this->validData();
+        $data['personas_detectadas'] = [
+            ['nombre' => 'Davalos Yoshida Adolfo Arturo', 'cargo' => 'Director Ejecutivo'],
+            ['nombre' => 'Camacho Garcia Lorna Alcira', 'cargo' => 'Director Administrativo Financiero'],
+        ];
+
+        $dto = AnalisisCambioDTO::fromArray($data);
+
+        $this->assertCount(2, $dto->personasDetectadas);
+        $this->assertSame('Davalos Yoshida Adolfo Arturo', $dto->personasDetectadas[0]['nombre']);
+        $this->assertSame('Director Ejecutivo', $dto->personasDetectadas[0]['cargo']);
+    }
+
+    public function test_from_array_defaults_personas_detectadas_to_empty_array(): void
+    {
+        $data = $this->validData();
+        // No personas_detectadas en la respuesta — Gemini puede omitirlo
+        $dto = AnalisisCambioDTO::fromArray($data);
+
+        $this->assertSame([], $dto->personasDetectadas);
+    }
+
+    public function test_sin_novedad_includes_empty_personas_detectadas(): void
+    {
+        $dto = AnalisisCambioDTO::sinNovedad('Sin diff ni imágenes');
+
+        $this->assertSame([], $dto->personasDetectadas);
+        $this->assertNull($dto->personaNueva);
+        $this->assertNull($dto->personaRemovida);
+        $this->assertSame('bajo', $dto->riesgo);
+    }
 }

@@ -10,6 +10,9 @@ final readonly class AnalisisCambioDTO
 {
     private const RIESGO_VALUES = ['alto', 'medio', 'bajo'];
 
+    /**
+     * @param  array<int,array{nombre:string,cargo:?string}>  $personasDetectadas
+     */
     public function __construct(
         public ?string $personaRemovida,
         public ?string $personaNueva,
@@ -17,6 +20,7 @@ final readonly class AnalisisCambioDTO
         public bool $esMae,
         public string $riesgo,
         public string $analisis,
+        public array $personasDetectadas = [],
     ) {}
 
     /**
@@ -34,6 +38,7 @@ final readonly class AnalisisCambioDTO
             esMae: false,
             riesgo: 'bajo',
             analisis: $motivo,
+            personasDetectadas: [],
         );
     }
 
@@ -57,6 +62,22 @@ final readonly class AnalisisCambioDTO
             );
         }
 
+        // personas_detectadas: array de personas presentes en el diff o imagen,
+        // independiente de si "entraron" o "salieron". Solo nombres LITERALMENTE
+        // escritos. Default vacío si Gemini lo omite.
+        $personasDetectadas = [];
+        if (isset($data['personas_detectadas']) && is_array($data['personas_detectadas'])) {
+            foreach ($data['personas_detectadas'] as $persona) {
+                if (! is_array($persona) || empty($persona['nombre'])) {
+                    continue;
+                }
+                $personasDetectadas[] = [
+                    'nombre' => (string) $persona['nombre'],
+                    'cargo' => isset($persona['cargo']) ? (string) $persona['cargo'] : null,
+                ];
+            }
+        }
+
         return new self(
             personaRemovida: $data['persona_removida'] ?? null,
             personaNueva: $data['persona_nueva'] ?? null,
@@ -64,6 +85,7 @@ final readonly class AnalisisCambioDTO
             esMae: (bool) $data['es_mae'],
             riesgo: $riesgo,
             analisis: (string) $data['analisis'],
+            personasDetectadas: $personasDetectadas,
         );
     }
 }

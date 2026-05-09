@@ -125,6 +125,28 @@
                                 @if($analisis['analisis'] ?? null)
                                     <p class="text-xs text-gray-600 mt-2 bg-white rounded p-2">{{ $analisis['analisis'] }}</p>
                                 @endif
+
+                                @if(!empty($analisis['personas_detectadas'] ?? []))
+                                    <div class="mt-3 bg-white rounded p-3 border border-indigo-100">
+                                        <p class="text-[11px] font-semibold text-indigo-700 mb-2 uppercase tracking-wide">
+                                            Personas detectadas en imagen ({{ count($analisis['personas_detectadas']) }})
+                                        </p>
+                                        <div class="space-y-1.5">
+                                            @foreach($analisis['personas_detectadas'] as $persona)
+                                                <div class="flex items-baseline gap-2 text-xs" wire:key="persona-{{ $loop->index }}">
+                                                    <span class="font-medium text-gray-800">{{ $persona['nombre'] ?? '—' }}</span>
+                                                    @if($persona['cargo'] ?? null)
+                                                        <span class="text-gray-400">·</span>
+                                                        <span class="text-gray-600">{{ $persona['cargo'] }}</span>
+                                                    @endif
+                                                </div>
+                                            @endforeach
+                                        </div>
+                                        <p class="text-[10px] text-gray-400 mt-2 italic">
+                                            Lista de personas extraídas literalmente del contenido visual. No implica que sean nuevas designaciones — verificar contra el sitio fuente.
+                                        </p>
+                                    </div>
+                                @endif
                             </div>
                         @endif
 
@@ -134,17 +156,17 @@
                                     <tbody>
                                         @foreach($this->cambioDetalle->parsedDiff() as $line)
                                             @if($line['type'] === 'added')
-                                                <tr class="bg-emerald-50">
+                                                <tr wire:key="diff-{{ $loop->index }}" class="bg-emerald-50">
                                                     <td class="pl-4 pr-2 text-emerald-500 select-none w-5">+</td>
                                                     <td class="pr-5 py-0.5 text-emerald-800 whitespace-pre-wrap break-all">{{ $line['text'] }}</td>
                                                 </tr>
                                             @elseif($line['type'] === 'removed')
-                                                <tr class="bg-rose-50">
+                                                <tr wire:key="diff-{{ $loop->index }}" class="bg-rose-50">
                                                     <td class="pl-4 pr-2 text-rose-400 select-none w-5">-</td>
                                                     <td class="pr-5 py-0.5 text-rose-700 whitespace-pre-wrap break-all line-through opacity-60">{{ $line['text'] }}</td>
                                                 </tr>
                                             @else
-                                                <tr>
+                                                <tr wire:key="diff-{{ $loop->index }}">
                                                     <td class="pl-4 pr-2 text-gray-200 select-none w-5"> </td>
                                                     <td class="pr-5 py-0.5 text-gray-500 whitespace-pre-wrap break-all">{{ $line['text'] }}</td>
                                                 </tr>

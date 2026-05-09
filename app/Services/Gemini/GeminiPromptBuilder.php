@@ -297,24 +297,34 @@ Junto a este diff de texto, te adjunto {$cantidadImagenes} {$imagenLabel} que ap
 
 ⚠️ REGLA CRÍTICA ANTI-ALUCINACIÓN — leé esto ANTES de responder:
 
-1. SOLO podés reportar un nombre en `persona_nueva` o `persona_removida` si ese nombre aparece **LITERALMENTE ESCRITO** en el diff O **LITERALMENTE ESCRITO COMO TEXTO DENTRO DE UNA IMAGEN** (ej: tabla con columnas "PUESTO / FUNCIONARIO" donde el funcionario está escrito al lado).
-2. Si las imágenes son **fotos de retrato** (caras de personas) SIN texto identificativo escrito al lado o debajo, NO podés inferir nombres. Devolvé persona_nueva=null y persona_removida=null.
+1. SOLO podés reportar un nombre si aparece **LITERALMENTE ESCRITO** en el diff O **LITERALMENTE ESCRITO COMO TEXTO DENTRO DE UNA IMAGEN** (ej: tabla con columnas "PUESTO / FUNCIONARIO" donde el funcionario está escrito al lado).
+2. Si las imágenes son **fotos de retrato** (caras de personas) SIN texto identificativo escrito al lado o debajo, NO podés inferir nombres. Devolvé arrays/campos vacíos.
 3. NUNCA fabriques, inventes, ni "completes" nombres a partir de patrones, contexto, o suposiciones. Si no podés copiar el nombre letra por letra de lo que tenés delante, NO lo reportes.
-4. Logos institucionales, banners, decoraciones gráficas → NO contienen información de personas. Devolvé null.
-5. Si dudás de si un nombre es real o inferido, devolvé null. Es preferible un falso negativo que un falso positivo.
+4. Logos institucionales, banners, decoraciones gráficas → NO contienen información de personas.
+5. Si dudás de si un nombre es real o inferido, omitilo. Es preferible un falso negativo que un falso positivo.
 
 Sos un experto en gobierno corporativo y análisis de cambios en organismos públicos de Latinoamérica.
-Analizá el siguiente diff de {$organismo} (fuente: {$fuente}) para detectar cambio de autoridades.
+Analizá el siguiente diff de {$organismo} (fuente: {$fuente}).
 
-PASO 0 — FILTRO DE NOMBRES:
-Antes de cualquier análisis, revisá las líneas que empiezan con + o - Y el contenido visual de las imágenes adjuntas.
+📋 DOS RESPONSABILIDADES DISTINTAS:
+
+A) `personas_detectadas`: array con TODAS las personas cuyo nombre aparece escrito en el diff Y en las imágenes adjuntas. Esta es una FOTO del estado actual — listá a todos los funcionarios visibles en la nómina/organigrama, sin importar si "entraron" o "salieron". Ej: nómina escaneada con 9 funcionarios → 9 entries acá.
+
+B) `persona_nueva` y `persona_removida`: SOLO si tenés evidencia explícita de un cambio. Reportar solo cuando:
+   - El diff tiene una línea con `+` mostrando alguien que se incorpora → persona_nueva
+   - El diff tiene una línea con `-` mostrando alguien que sale → persona_removida
+   - El texto explícito ("designado", "asume", "renuncia", "reemplazado por") confirma el cambio
+   Si solo tenés una imagen sin referencia comparable previa, dejá AMBOS en null. NO infieras cambios desde una sola foto.
+
+PASO 0 — FILTRO INICIAL:
+Antes de cualquier análisis, revisá el diff y el contenido visual de las imágenes.
 ¿Aparece algún NOMBRE PROPIO DE PERSONA HUMANA **escrito como texto** (nombre y apellido, o título + apellido)?
-- Si NO aparece ningún nombre escrito de persona → respondé inmediatamente:
-  {"persona_removida":null,"persona_nueva":null,"cargo":null,"es_mae":false,"riesgo":"bajo","analisis":"No se detectaron nombres escritos de personas en el diff ni en las imágenes."}
-- Si SÍ aparece al menos un nombre escrito → continuá con los pasos siguientes.
+- Si NO aparece ningún nombre escrito → respondé inmediatamente:
+  {"persona_removida":null,"persona_nueva":null,"cargo":null,"es_mae":false,"riesgo":"bajo","analisis":"No se detectaron nombres escritos de personas en el diff ni en las imágenes.","personas_detectadas":[]}
+- Si SÍ aparece al menos un nombre escrito → continuá con los pasos siguientes y llená `personas_detectadas` con todas las personas que veas escritas.
 
 REGLA DE NULIDAD: persona_removida y persona_nueva DEBEN ser null salvo que copies textualmente
-un nombre propio de persona humana del material adjunto (no institución, no sigla, no documento, no cargo genérico, no foto sin nombre escrito).
+un nombre propio de persona humana del material adjunto Y tengas evidencia explícita de cambio (no solo presencia).
 
 REGLA CRÍTICA: Solo reportá cambios de PERSONAS en cargos públicos.
 Si el diff solo contiene cambios de documentos, resoluciones, decretos, números de expediente,
@@ -333,7 +343,15 @@ PASOS:
 4. Escribí análisis conciso (máx 300 caracteres)
 
 JSON de salida (SOLO JSON válido):
-{"persona_removida":string|null,"persona_nueva":string|null,"cargo":string|null,"es_mae":boolean,"riesgo":"alto"|"medio"|"bajo","analisis":string}
+{
+  "persona_removida": string|null,
+  "persona_nueva": string|null,
+  "cargo": string|null,
+  "es_mae": boolean,
+  "riesgo": "alto"|"medio"|"bajo",
+  "analisis": string,
+  "personas_detectadas": [{"nombre": string, "cargo": string|null}, ...]
+}
 
 DIFF:
 {$truncatedDiff}

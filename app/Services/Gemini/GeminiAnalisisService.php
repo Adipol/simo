@@ -175,6 +175,7 @@ class GeminiAnalisisService
                 'es_mae' => $dto->esMae,
                 'riesgo' => $dto->riesgo,
                 'analisis' => $dto->analisis,
+                'personas_detectadas' => $dto->personasDetectadas,
             ],
         ]);
 
