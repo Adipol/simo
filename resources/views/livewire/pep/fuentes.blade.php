@@ -48,7 +48,7 @@
             </thead>
             <tbody>
                 @forelse($fuentes as $f)
-                    <tr>
+                    <tr wire:key="fuente-{{ $f->id }}">
                         <td>
                             <div class="text-xs font-semibold text-gray-800">{{ $f->nombre ?? $f->organismo ?? '—' }}</div>
                             @if($f->organismo && $f->nombre)
@@ -66,7 +66,15 @@
                             <div class="text-[10px] capitalize text-gray-400 mt-0.5">{{ $f->nivel }}</div>
                         </td>
                         <td>
-                            <span class="text-[10px] uppercase font-medium text-gray-500 tracking-wider">{{ $f->tipo }}</span>
+                            <div class="flex flex-col gap-1">
+                                <span class="text-[10px] uppercase font-medium text-gray-500 tracking-wider">{{ $f->tipo }}</span>
+                                @if($f->analizar_imagenes)
+                                    <span class="simo-badge bg-amber-50 text-amber-700 border-amber-200 inline-flex items-center gap-1 w-fit"
+                                          title="Análisis multimodal de imágenes activo">
+                                        📷 Multimodal
+                                    </span>
+                                @endif
+                            </div>
                         </td>
                         <td class="text-xs text-gray-500">
                             {{ $f->ultimo_check ? $f->ultimo_check->diffForHumans() : 'Nunca' }}
@@ -176,6 +184,22 @@
                     <input wire:model="selector_css" type="text"
                         placeholder="ej: table.funcionarios, #lista-peps"
                         class="simo-input" />
+                </div>
+
+                <div class="rounded-lg border border-amber-200 bg-amber-50/60 px-4 py-3">
+                    <label class="flex items-start gap-3 cursor-pointer select-none">
+                        <input wire:model="analizar_imagenes" type="checkbox"
+                               class="mt-0.5 rounded border-amber-300 text-amber-600 focus:ring-amber-400" />
+                        <span class="text-sm">
+                            <span class="font-medium text-amber-900">Analizar imágenes con Gemini multimodal</span>
+                            <span class="block text-[11px] text-amber-700 mt-0.5 leading-snug">
+                                Activar SOLO si los nombres de PEPs aparecen <strong>dentro</strong> de imágenes
+                                (nómina escaneada, organigrama en PNG). Si los nombres están en texto del HTML
+                                (lo más común), dejá desactivado para evitar consumo innecesario de tokens y
+                                falsos positivos.
+                            </span>
+                        </span>
+                    </label>
                 </div>
             </div>
             <div class="flex justify-end gap-2 px-6 py-4 border-t border-gray-100">

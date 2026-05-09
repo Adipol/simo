@@ -1,11 +1,17 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Livewire\Pep;
 
 use App\Models\Fuente;
 use App\Models\Pais;
+use App\Services\Fuente\FuenteService;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
+use Illuminate\View\View;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\Url;
 use Livewire\Component;
 use Livewire\WithPagination;
 
@@ -14,12 +20,16 @@ class Fuentes extends Component
 {
     use WithPagination;
 
+    #[Url]
     public string $busqueda = '';
 
+    #[Url]
     public string $filtroNivel = '';
 
+    #[Url]
     public string $filtroActivo = '';
 
+    #[Url]
     public string $filtroPais = '';
 
     // Formulario
@@ -42,6 +52,8 @@ class Fuentes extends Component
     public bool $activo = true;
 
     public string $selector_css = '';
+
+    public bool $analizar_imagenes = false;
 
     public function updatingBusqueda(): void
     {
@@ -78,6 +90,7 @@ class Fuentes extends Component
             'tipo' => ['required', 'in:html,pdf,js'],
             'activo' => ['boolean'],
             'selector_css' => ['nullable', 'string', 'max:500'],
+            'analizar_imagenes' => ['boolean'],
         ];
     }
 
@@ -96,11 +109,13 @@ class Fuentes extends Component
             $this->tipo = $f->tipo;
             $this->activo = $f->activo;
             $this->selector_css = $f->selector_css ?? '';
+            $this->analizar_imagenes = (bool) $f->analizar_imagenes;
         } else {
             $this->url = $this->nombre = $this->pais = $this->organismo = $this->selector_css = '';
             $this->nivel = 'nacional';
             $this->tipo = 'html';
             $this->activo = true;
+            $this->analizar_imagenes = false;
         }
 
         $this->modalAbierto = true;
@@ -112,52 +127,38 @@ class Fuentes extends Component
         $this->editandoId = null;
     }
 
-    public function guardar(): void
+    public function guardar(FuenteService $service): void
     {
         $data = $this->validate();
 
         if ($this->editandoId) {
-            Fuente::where('id', $this->editandoId)->update($data);
+            $service->actualizar($this->editandoId, $data);
         } else {
-            Fuente::create($data);
+            $service->crear($data);
         }
 
         $this->cerrarModal();
     }
 
-    public function toggleActivo(int $id): void
+    public function toggleActivo(int $id, FuenteService $service): void
     {
-        $f = Fuente::findOrFail($id);
-        $f->update(['activo' => ! $f->activo]);
+        $service->toggleActivo($id);
     }
 
-    public function render()
+    public function render(FuenteService $service): View
     {
-        $q = Fuente::withCount(['cambios as cambios_sin_revisar' => fn ($q) => $q->where('revisado', false)]);
-
-        if ($this->busqueda) {
-            $b = '%'.$this->busqueda.'%';
-            $q->where(fn ($s) => $s->where('nombre', 'like', $b)
-                ->orWhere('url', 'like', $b)
-                ->orWhere('organismo', 'like', $b));
-        }
-        if ($this->filtroNivel) {
-            $q->where('nivel', $this->filtroNivel);
-        }
-        if ($this->filtroActivo !== '') {
-            $q->where('activo', (bool) $this->filtroActivo);
-        }
-        if ($this->filtroPais) {
-            $q->where('pais', $this->filtroPais);
-        }
-
-        $fuentes = $q->with('paisRelacion')->orderBy('nombre')->paginate(20);
+        $fuentes = $service->paginar([
+            'busqueda' => $this->busqueda,
+            'nivel' => $this->filtroNivel,
+            'activo' => $this->filtroActivo,
+            'pais' => $this->filtroPais,
+        ]);
 
         return view('livewire.pep.fuentes', ['fuentes' => $fuentes, 'paises' => $this->paises]);
     }
 
     #[Computed]
-    public function paises()
+    public function paises(): EloquentCollection
     {
         return Pais::where('activo', true)->orderBy('nombre')->get();
     }
