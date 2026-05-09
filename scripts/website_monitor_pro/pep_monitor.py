@@ -32,6 +32,7 @@ import urllib3
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from urllib.parse import urlparse
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 import psycopg2
@@ -571,7 +572,7 @@ def limpiar_pdf(url: str, session: requests.Session) -> tuple[list[str], str]:
         return [], "error_dependencia"
 
     try:
-        resp = session.get(url, timeout=30)
+        resp = session.get(url, timeout=30, verify=verify_para_url(url))
         resp.raise_for_status()
         lineas = []
         with pdfplumber.open(io.BytesIO(resp.content)) as pdf:
@@ -855,6 +856,37 @@ def mostrar_alerta(fuente: dict, diff: dict, cambio_id: int) -> None:
 # ════════════════════════════════════════════════════════════════
 # HTTP CLIENT
 # ════════════════════════════════════════════════════════════════
+
+def _ssl_skip_hosts() -> set[str]:
+    """
+    Lee la lista de hosts donde se acepta certificado SSL inválido.
+    Configurable via env SSL_VERIFY_SKIP_HOSTS (CSV).
+
+    Default vacío: TODOS los sitios verifican SSL estrictamente. Solo agregar
+    hosts cuando el scraper falle con 'certificate verify failed' y el operador
+    confirme que el certificado del sitio es legítimamente autofirmado/expirado
+    (caso típico: portales gubernamentales legacy).
+    """
+    raw = os.getenv("SSL_VERIFY_SKIP_HOSTS", "").strip()
+    if not raw:
+        return set()
+    return {h.strip().lower() for h in raw.split(",") if h.strip()}
+
+
+def verify_para_url(url: str, skip_hosts: Optional[set[str]] = None) -> bool:
+    """
+    Decide si un request a `url` debe verificar SSL.
+
+    Returns True (verifica) salvo que el host esté en `skip_hosts`.
+    El parámetro skip_hosts permite override en tests; en runtime usa la env var.
+    """
+    hosts = skip_hosts if skip_hosts is not None else _ssl_skip_hosts()
+    if not hosts:
+        return True
+    host = (urlparse(url).hostname or "").lower()
+    return host not in hosts
+
+
 def create_http_session() -> requests.Session:
     """Sesion HTTP con reintentos y User-Agent de navegador."""
     session = requests.Session()
@@ -874,9 +906,10 @@ def create_http_session() -> requests.Session:
             "Chrome/120.0.0.0 Safari/537.36"
         }
     )
-    # Varios sitios gubernamentales .gob.bo tienen certificados SSL
-    # invalidos o autofirmados — desactivar verificacion globalmente
-    session.verify = False
+    # SSL verification activada por default (seguro). Cada call site usa
+    # verify_para_url(url) para decidir si saltar la verificación según
+    # SSL_VERIFY_SKIP_HOSTS — typically solo dominios .gob.bo legacy.
+    session.verify = True
     return session
 
 
@@ -1011,7 +1044,7 @@ def comparar_imagenes_cascada(
 
         # ── HEAD request ───────────────────────────────────────────
         try:
-            head_resp = session.head(src_abs, timeout=15, allow_redirects=True)
+            head_resp = session.head(src_abs, timeout=15, allow_redirects=True, verify=verify_para_url(src_abs))
             head_headers = head_resp.headers
         except requests.exceptions.RequestException as e:
             logger.warning(f"HEAD fallido para {src_abs}: {e} — saltando imagen")
@@ -1064,7 +1097,7 @@ def comparar_imagenes_cascada(
         if debe_descargar:
             # ── GET y SHA-256 ─────────────────────────────────────
             try:
-                get_resp = session.get(src_abs, timeout=30)
+                get_resp = session.get(src_abs, timeout=30, verify=verify_para_url(src_abs))
                 image_bytes = get_resp.content
             except requests.exceptions.RequestException as e:
                 logger.warning(f"GET fallido para {src_abs}: {e} — saltando imagen")
@@ -1264,7 +1297,7 @@ class PEPMonitor:
 
         # HTML estatico (intentar primero — mas rapido)
         try:
-            resp = self.http.get(url, timeout=config.REQUEST_TIMEOUT)
+            resp = self.http.get(url, timeout=config.REQUEST_TIMEOUT, verify=verify_para_url(url))
             resp.raise_for_status()
             lineas, metodo = limpiar_html(resp.text, selector)
 
@@ -1322,7 +1355,7 @@ class PEPMonitor:
             return html, f"js_playwright"
 
         try:
-            resp = self.http.get(url, timeout=config.REQUEST_TIMEOUT)
+            resp = self.http.get(url, timeout=config.REQUEST_TIMEOUT, verify=verify_para_url(url))
             resp.raise_for_status()
             html = resp.text
             # Fallback JS si el HTML tiene poco contenido
