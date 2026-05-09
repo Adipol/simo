@@ -90,7 +90,7 @@ class ConfigScript extends Model
      */
     public function dedupeThreshold(): float
     {
-        $payload = json_decode($this->notas ?? '{}', true);
+        $payload = json_decode($this->notas ?? '{}', true) ?? [];
 
         return (float) ($payload['threshold'] ?? 0.90);
     }
