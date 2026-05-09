@@ -205,16 +205,18 @@ class TestCascadaNivel1:
         assert metadata[0]["src"] == "https://x.com/foto.png"
 
     def test_head_se_llama_con_url_correcta(self):
-        """Debe llamar HEAD a la URL absoluta."""
+        """Debe llamar HEAD a la URL absoluta con verify según whitelist."""
         session = _make_session_mock()
         imgs_actual = [
             {"src": "foto.png", "src_absoluto": "https://site.com/foto.png", "mime_hint": "image/png"}
         ]
         comparar_imagenes_cascada(imgs_actual, [], session)
+        # site.com no está en SSL_VERIFY_SKIP_HOSTS → verify=True
         session.head.assert_called_once_with(
             "https://site.com/foto.png",
             timeout=15,
             allow_redirects=True,
+            verify=True,
         )
 
 

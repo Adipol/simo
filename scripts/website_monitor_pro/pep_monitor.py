@@ -37,9 +37,15 @@ from urllib.parse import urlparse
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 import psycopg2
 import psycopg2.extras
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# Cargar .env de Laravel (raíz del proyecto), NO un .env del subdirectorio.
+# pep_monitor.py vive en scripts/website_monitor_pro/, el .env real está 2 niveles arriba.
+# find_dotenv() falla porque encuentra primero un .env vacío en el subdirectorio.
+_LARAVEL_ROOT = Path(__file__).resolve().parent.parent.parent
+_DOTENV_PATH = _LARAVEL_ROOT / ".env"
+load_dotenv(dotenv_path=_DOTENV_PATH if _DOTENV_PATH.is_file() else None)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -1274,53 +1280,6 @@ class PEPMonitor:
         self.db = DatabaseManager()
         self.http = create_http_session()
         self.running = True
-
-    def _obtener_lineas(self, fuente: dict) -> tuple[list[str], str]:
-        """
-        Descarga la fuente y retorna (lista_lineas_limpias, metodo).
-        Selecciona la estrategia segun el tipo configurado.
-        Fallback automatico a Playwright si HTML estatico no da contenido util.
-        """
-        url = fuente["url"]
-        tipo = fuente.get("tipo", "html")
-        selector = fuente.get("selector_css")
-
-        if tipo == "pdf" or url.lower().endswith(".pdf"):
-            return limpiar_pdf(url, self.http)
-
-        if tipo == "js":
-            html, metodo_js = obtener_html_js(url)
-            if html:
-                lineas, metodo_html = limpiar_html(html, selector)
-                return lineas, f"js_playwright+{metodo_html}"
-            return [], "error_js"
-
-        # HTML estatico (intentar primero — mas rapido)
-        try:
-            resp = self.http.get(url, timeout=config.REQUEST_TIMEOUT, verify=verify_para_url(url))
-            resp.raise_for_status()
-            lineas, metodo = limpiar_html(resp.text, selector)
-
-            # Si el resultado tiene muy pocas lineas probablemente
-            # la pagina carga con JS → fallback automatico a Playwright
-            if len(lineas) < 3:
-                logger.info(
-                    f"HTML estatico con poco contenido ({len(lineas)} lineas), "
-                    f"intentando Playwright: {url}"
-                )
-                html_js, _ = obtener_html_js(url)
-                if html_js:
-                    lineas_js, metodo_js = limpiar_html(html_js, selector)
-                    if len(lineas_js) > len(lineas):
-                        return lineas_js, f"js_fallback+{metodo_js}"
-
-            return lineas, metodo
-
-        except requests.ConnectionError:
-            raise  # se maneja arriba
-        except requests.RequestException as e:
-            logger.error(f"Error HTTP en {url}: {e}")
-            return [], "error_http"
 
     def _cargar_imgs_anterior(self, fuente_id: int) -> list[dict]:
         """Carga metadata de imágenes previas desde snapshot_imagenes."""
