@@ -42,11 +42,15 @@ class GeminiAnalisisServiceMultimodalTest extends TestCase
 
     private function createFuente(array $overrides = []): Fuente
     {
+        // Default: analizar_imagenes=true para que los tests multimodal preexistentes
+        // sigan disparando la rama multimodal. Tests específicos del guard de toggle
+        // pasan analizar_imagenes=false explícitamente.
         return Fuente::create(array_merge([
             'url' => 'https://gobierno.bo/ministerio',
             'nombre' => 'Ministerio de Economía',
             'organismo' => 'Ministerio de Economía y Finanzas Públicas',
             'pais' => 'BO',
+            'analizar_imagenes' => true,
         ], $overrides));
     }
 
@@ -344,5 +348,84 @@ class GeminiAnalisisServiceMultimodalTest extends TestCase
         $this->assertNull($cambio->gemini_analisis_json['persona_nueva']);
         $this->assertNull($cambio->gemini_analisis_json['persona_removida']);
         $this->assertSame('bajo', $cambio->gemini_analisis_json['riesgo']);
+    }
+
+    // ============================================
+    // Guard de fuente: respetar el toggle analizar_imagenes
+    // ============================================
+
+    public function test_no_invoca_multimodal_cuando_fuente_tiene_toggle_off_aunque_cambio_tenga_imgs(): void
+    {
+        // Caso real: cambio viejo creado antes del toggle, con imágenes en JSON.
+        // Hoy la fuente tiene analizar_imagenes=false.
+        // Debe entrar a la rama text-only (NO mandar imágenes a Gemini).
+        config(['services.gemini.api_key' => 'test-key', 'services.gemini.multimodal_enabled' => true]);
+
+        $relPath = 'img_cambios/toggle_off_test.png';
+        $absPath = storage_path('app/'.$relPath);
+        @mkdir(dirname($absPath), 0777, true);
+        file_put_contents($absPath, str_repeat('X', 256));
+        $this->tempFiles[] = $absPath;
+
+        // Fuente con toggle OFF
+        $fuente = $this->createFuente(['analizar_imagenes' => false]);
+        $cambio = $this->createCambio($fuente, [
+            'imagenes_cambio_json' => [
+                ['path' => $relPath, 'mime_type' => 'image/png'],
+            ],
+        ]);
+
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response($this->fakeGeminiResponse($this->geminiAnalisisData()), 200),
+        ]);
+
+        $service = $this->makeService();
+        $service->analizarLote(collect([$cambio]));
+
+        // Debe enviar request text-only: parts solo con text, sin inline_data
+        Http::assertSent(function ($request) {
+            $parts = $request->data()['contents'][0]['parts'] ?? [];
+
+            return count($parts) === 1 && isset($parts[0]['text']) && ! isset($parts[1]['inline_data']);
+        });
+
+        $cambio->refresh();
+        $this->assertTrue($cambio->gemini_analyzed);
+    }
+
+    public function test_invoca_multimodal_cuando_fuente_tiene_toggle_on_y_cambio_tiene_imgs(): void
+    {
+        config(['services.gemini.api_key' => 'test-key', 'services.gemini.multimodal_enabled' => true]);
+
+        $relPath = 'img_cambios/toggle_on_test.png';
+        $absPath = storage_path('app/'.$relPath);
+        @mkdir(dirname($absPath), 0777, true);
+        file_put_contents($absPath, str_repeat('Y', 256));
+        $this->tempFiles[] = $absPath;
+
+        // Fuente con toggle ON (caso AETN)
+        $fuente = $this->createFuente(['analizar_imagenes' => true]);
+        $cambio = $this->createCambio($fuente, [
+            'imagenes_cambio_json' => [
+                ['path' => $relPath, 'mime_type' => 'image/png'],
+            ],
+        ]);
+
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response($this->fakeGeminiResponse($this->geminiAnalisisData()), 200),
+        ]);
+
+        $service = $this->makeService();
+        $service->analizarLote(collect([$cambio]));
+
+        // Debe enviar request multimodal: parts con text + inline_data
+        Http::assertSent(function ($request) {
+            $parts = $request->data()['contents'][0]['parts'] ?? [];
+
+            return count($parts) >= 2 && isset($parts[1]['inline_data']);
+        });
+
+        $cambio->refresh();
+        $this->assertTrue($cambio->gemini_analyzed);
     }
 }

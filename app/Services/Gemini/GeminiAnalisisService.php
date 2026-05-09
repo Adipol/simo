@@ -29,7 +29,13 @@ class GeminiAnalisisService
         }
 
         foreach ($records as $cambio) {
-            if ($multimodalEnabled && $cambio->tieneImagenes()) {
+            // Triple condición: kill switch global + cambio con imágenes + fuente con toggle ON.
+            // Esto protege a cambios huérfanos: si la fuente apagó analizar_imagenes,
+            // los cambios viejos con imágenes en JSON van a text-only (no consumen tokens
+            // de multimodal innecesariamente).
+            $fuenteAnalizaImagenes = (bool) ($cambio->fuente?->analizar_imagenes ?? false);
+
+            if ($multimodalEnabled && $cambio->tieneImagenes() && $fuenteAnalizaImagenes) {
                 $this->procesarCambioMultimodal($cambio);
             } else {
                 $this->procesarCambio($cambio);

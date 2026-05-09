@@ -42,11 +42,15 @@ class AnalizarCambioConProMultimodalTest extends TestCase
 
     private function createFuente(): Fuente
     {
+        // Default: analizar_imagenes=true para que los tests del job que esperan
+        // rama multimodal funcionen. Tests text-only no se ven afectados (ya están
+        // creando cambios sin imágenes).
         return Fuente::create([
             'url' => 'https://gobierno.bo/ente',
             'nombre' => 'Ente Gubernamental',
             'organismo' => 'Ente Gubernamental del Estado',
             'pais' => 'BO',
+            'analizar_imagenes' => true,
         ]);
     }
 
