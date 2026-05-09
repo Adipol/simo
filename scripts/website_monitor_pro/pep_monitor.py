@@ -40,12 +40,22 @@ import psycopg2.extras
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Cargar .env de Laravel (raíz del proyecto), NO un .env del subdirectorio.
-# pep_monitor.py vive en scripts/website_monitor_pro/, el .env real está 2 niveles arriba.
-# find_dotenv() falla porque encuentra primero un .env vacío en el subdirectorio.
-_LARAVEL_ROOT = Path(__file__).resolve().parent.parent.parent
+# Cargamos DOS archivos .env en orden:
+#   1) scripts/website_monitor_pro/.env — credenciales propias del scraper
+#      (DB_USER, DB_PASSWORD, DB_NAME, CHECK_INTERVAL, etc.)
+#   2) .env de Laravel en la raíz del proyecto, con override=False — agrega
+#      variables compartidas (SSL_VERIFY_SKIP_HOSTS, GEMINI_*, LARAVEL_STORAGE_PATH)
+#      sin pisar las del scraper.
+# Sin esto, find_dotenv() sólo encontraba el primero y se perdían las vars de Laravel.
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_SCRIPT_ENV = _SCRIPT_DIR / ".env"
+_LARAVEL_ROOT = _SCRIPT_DIR.parent.parent
 _DOTENV_PATH = _LARAVEL_ROOT / ".env"
-load_dotenv(dotenv_path=_DOTENV_PATH if _DOTENV_PATH.is_file() else None)
+
+if _SCRIPT_ENV.is_file():
+    load_dotenv(dotenv_path=_SCRIPT_ENV)
+if _DOTENV_PATH.is_file():
+    load_dotenv(dotenv_path=_DOTENV_PATH, override=False)
 
 
 # ════════════════════════════════════════════════════════════════
