@@ -129,6 +129,93 @@ Solo necesario para correr tests Python localmente. En producción el scraper us
 
 ---
 
+## Runner orquestador del scraper
+
+`scripts/website_monitor_pro/runner.py` es el **orquestador** que reemplaza al antiguo daemon `simo-scraper`. Lee `config_scripts WHERE script='scraper'` en cada tick (cada 30s) y decide si lanzar el scraper según:
+
+- `habilitado` — toggle desde la UI de Configuración de Scripts
+- `intervalo_minutos` — cadencia entre ejecuciones
+- `hora_inicio` / `hora_fin` — ventana horaria
+- `dias_semana` — CSV de días ISO (lunes=1, domingo=7)
+- `timeout_minutos` — tiempo máximo antes de SIGTERM→SIGKILL
+
+> **Resultado**: los sliders de "Configuración de Scripts" en la UI **SÍ se aplican** al scraper desde que `runner.py` está activo.
+
+### Variables de entorno opcionales
+
+| Variable | Default | Descripción |
+|---|---|---|
+| `SCRAPER_DIR` | `<repo>/scripts/scraper_v2.2` | Directorio del scraper v2.2 |
+| `SCRAPER_PYTHON` | `$SCRAPER_DIR/venv/bin/python` | Ejecutable Python del venv del scraper |
+| `RUNNER_LOOP_INTERVAL` | `30` | Segundos entre ticks del loop principal |
+
+> **Nota**: `SCRAPE_INTERVAL_HOURS` en el `.env` del scraper queda ignorado — la cadencia la controla `intervalo_minutos` en `config_scripts`.
+
+### Configuración en Supervisor (VPS)
+
+Eliminar el bloque `[program:simo-scraper]` si existe y agregar este bloque a `/etc/supervisor/conf.d/simo.conf`:
+
+```ini
+[program:simo-runner]
+command=/var/www/simo/scripts/website_monitor_pro/venv/bin/python /var/www/simo/scripts/website_monitor_pro/runner.py
+directory=/var/www/simo/scripts/website_monitor_pro
+user=www-data
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+redirect_stderr=true
+stdout_logfile=/var/log/simo/runner.log
+stdout_logfile_maxbytes=10MB
+stdout_logfile_backups=5
+environment=LARAVEL_STORAGE_PATH="/var/www/simo/storage/app"
+```
+
+### Pasos de switchover
+
+```bash
+# 1. Detener el daemon anterior (si existe)
+sudo supervisorctl stop simo-scraper
+
+# 2. Editar /etc/supervisor/conf.d/simo.conf:
+#    - Comentar o eliminar el bloque [program:simo-scraper]
+#    - Agregar el bloque [program:simo-runner] de arriba
+
+# 3. Recargar supervisor
+sudo supervisorctl reread && sudo supervisorctl update
+
+# 4. Verificar que el runner está RUNNING
+sudo supervisorctl status simo-runner
+
+# 5. Seguir los logs del primer ciclo (esperar ~30s)
+sudo tail -f /var/log/simo/runner.log
+
+# 6. Validar en BD que el runner registró una fila wrapper
+sudo -u postgres psql simo -c \
+  "SELECT id, script, inicio, fin, estado, duracion_segundos FROM log_scripts WHERE script='scraper' ORDER BY id DESC LIMIT 5;"
+```
+
+### Rollback en menos de 30 segundos
+
+```bash
+# 1. Detener runner
+sudo supervisorctl stop simo-runner
+
+# 2. Restaurar bloque simo-scraper en /etc/supervisor/conf.d/simo.conf
+#    (o git checkout el archivo del VPS si usás conf en repo)
+
+# 3. Opcional: revertir runner.py al estado anterior
+git checkout HEAD~1 -- scripts/website_monitor_pro/runner.py
+
+# 4. Reactivar el daemon anterior
+sudo supervisorctl reread && sudo supervisorctl update
+sudo supervisorctl start simo-scraper
+```
+
+Total estimado: ~20-30 segundos.
+
+---
+
 ## Supervisor
 
 Ejemplo de configuración de Supervisor para los workers:
