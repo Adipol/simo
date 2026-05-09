@@ -225,24 +225,56 @@
         </div>
     </div>
 
-    {{-- Modal Análisis Gemini --}}
+    {{-- Modal Personas detectadas --}}
     @if($verAnalisisId && $resultadoAnalisis)
     <div class="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4"
         wire:click.self="$set('verAnalisisId', null)">
-        <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg">
-            <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-                <h2 class="font-semibold text-gray-800">Análisis Gemini</h2>
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col">
+            <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+                <h2 class="font-semibold text-gray-800">Personas detectadas</h2>
                 <button wire:click="$set('verAnalisisId', null)"
                     class="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 text-lg">&times;</button>
             </div>
-            <div class="px-6 py-5 space-y-3">
-                <div class="grid grid-cols-2 gap-4">
-                    <div><p class="text-xs text-gray-500">Nombre</p><p class="text-sm font-medium text-gray-800">{{ $resultadoAnalisis->gemini_nombre ?? '—' }}</p></div>
-                    <div><p class="text-xs text-gray-500">Cargo</p><p class="text-sm font-medium text-gray-800">{{ $resultadoAnalisis->gemini_cargo ?? '—' }}</p></div>
-                    <div><p class="text-xs text-gray-500">Categoría</p><p class="text-sm"><span class="simo-badge {{ $resultadoAnalisis->gemini_categoria === 'PEP' ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-600' }}">{{ $resultadoAnalisis->gemini_categoria }}</span></p></div>
-                    <div><p class="text-xs text-gray-500">Confianza</p><p class="text-sm font-medium {{ $resultadoAnalisis->gemini_confianza >= 70 ? 'text-emerald-600' : 'text-amber-600' }}">{{ $resultadoAnalisis->gemini_confianza }}%</p></div>
-                </div>
-                <div><p class="text-xs text-gray-500 mb-1">Motivo</p><p class="text-sm text-gray-700 bg-gray-50 rounded-lg p-3">{{ $resultadoAnalisis->gemini_motivo }}</p></div>
+            <div class="px-6 py-4 overflow-y-auto">
+                @if($resultadoAnalisis->personas->isEmpty())
+                    <p class="text-sm text-gray-500 text-center py-6">Sin personas detectadas</p>
+                @else
+                    <div class="space-y-3">
+                        @foreach($resultadoAnalisis->personas as $persona)
+                            <div class="{{ !$persona->threshold_passed ? 'opacity-60' : '' }} border border-gray-100 rounded-xl p-4 space-y-2">
+                                <div class="flex items-start justify-between gap-2">
+                                    <div>
+                                        <p class="text-sm font-semibold text-gray-800">{{ $persona->nombre }}</p>
+                                        @if($persona->cargo)
+                                            <p class="text-xs text-gray-500">{{ $persona->cargo }}</p>
+                                        @endif
+                                    </div>
+                                    <div class="flex items-center gap-1.5 shrink-0">
+                                        @if($persona->categoria)
+                                            <span class="simo-badge {{ $persona->categoria === 'PEP' ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-600' }}" style="font-size:9px">
+                                                {{ $persona->categoria }}
+                                            </span>
+                                        @endif
+                                        @if(!$persona->threshold_passed)
+                                            <span class="simo-badge bg-zinc-100 text-zinc-500 border-zinc-200" style="font-size:9px">Baja confianza</span>
+                                        @endif
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-3 text-xs text-gray-500">
+                                    <span class="font-medium {{ $persona->confianza >= 70 ? 'text-emerald-600' : 'text-amber-600' }}">
+                                        {{ $persona->confianza }}% confianza
+                                    </span>
+                                    @if($persona->evento)
+                                        <span>· {{ $persona->evento }}</span>
+                                    @endif
+                                </div>
+                                @if($persona->motivo)
+                                    <p class="text-xs text-gray-600 bg-gray-50 rounded-lg px-3 py-2">{{ $persona->motivo }}</p>
+                                @endif
+                            </div>
+                        @endforeach
+                    </div>
+                @endif
             </div>
         </div>
     </div>

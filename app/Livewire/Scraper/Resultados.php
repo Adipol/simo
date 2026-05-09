@@ -209,7 +209,9 @@ class Resultados extends Component
             return null;
         }
 
-        return ResultadoScraping::find($this->verAnalisisId);
+        return ResultadoScraping::with([
+            'personas' => fn ($q) => $q->orderByDesc('threshold_passed')->orderByDesc('confianza'),
+        ])->find($this->verAnalisisId);
     }
 
     /**
