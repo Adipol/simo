@@ -241,7 +241,7 @@ class DatabaseManager:
         self._ensure_connection()
         self.cursor.execute(
             """SELECT id, url, nombre, pais, organismo, nivel, tipo,
-                      selector_css, ultimo_check
+                      selector_css, ultimo_check, analizar_imagenes
                FROM fuentes WHERE activo = TRUE
                ORDER BY pais, organismo"""
         )
@@ -1375,8 +1375,13 @@ class PEPMonitor:
         else:
             # Limpiar texto desde el HTML crudo
             lineas_nuevas, metodo = limpiar_html(html_raw, fuente.get("selector_css"))
-            # Extraer imágenes del HTML crudo (antes de limpiar)
-            imgs_actual = extraer_imagenes_html(html_raw, url)
+            # Extraer imágenes SOLO si la fuente tiene analizar_imagenes=true.
+            # Si no, las fotos decorativas (retratos, logos) se ignoran y no
+            # alimentan a Gemini multimodal — evita falsos positivos y ahorra tokens.
+            if fuente.get("analizar_imagenes"):
+                imgs_actual = extraer_imagenes_html(html_raw, url)
+            else:
+                imgs_actual = []
 
         if not lineas_nuevas:
             logger.warning(f"Sin contenido extraido de: {nombre}")

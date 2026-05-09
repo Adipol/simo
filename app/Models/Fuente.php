@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
@@ -15,11 +17,12 @@ class Fuente extends Model
 
     protected $fillable = [
         'url', 'nombre', 'pais', 'organismo', 'nivel', 'tipo',
-        'activo', 'selector_css', 'ultimo_check',
+        'activo', 'selector_css', 'ultimo_check', 'analizar_imagenes',
     ];
 
     protected $casts = [
         'activo' => 'boolean',
+        'analizar_imagenes' => 'boolean',
         'ultimo_check' => 'datetime',
         'created_at' => 'datetime',
     ];

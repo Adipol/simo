@@ -285,4 +285,64 @@ class GeminiAnalisisServiceMultimodalTest extends TestCase
         $cambio->refresh();
         $this->assertTrue($cambio->gemini_analyzed);
     }
+
+    // ============================================
+    // Anti-alucinación: guards de input vacío
+    // ============================================
+
+    public function test_no_invoca_gemini_cuando_diff_y_imagenes_estan_vacios(): void
+    {
+        config(['services.gemini.api_key' => 'test-key', 'services.gemini.multimodal_enabled' => true]);
+
+        $fuente = $this->createFuente();
+        // Cambio con imágenes que apuntan a archivos inexistentes Y diff vacío.
+        // Antes del guard, esto invocaba Gemini con input vacío y el modelo alucinaba.
+        $cambio = $this->createCambio($fuente, [
+            'diff_texto' => '',
+            'imagenes_cambio_json' => [
+                ['path' => 'img_cambios/nonexistent.png', 'mime_type' => 'image/png'],
+            ],
+        ]);
+
+        Http::fake();
+
+        $service = $this->makeService();
+        $service->analizarLote(collect([$cambio]));
+
+        // CRÍTICO: ningún request HTTP debe haberse enviado a Gemini
+        Http::assertNothingSent();
+
+        $cambio->refresh();
+        $this->assertTrue($cambio->gemini_analyzed);
+        $this->assertNull($cambio->gemini_analisis_json['persona_nueva']);
+        $this->assertNull($cambio->gemini_analisis_json['persona_removida']);
+        $this->assertSame('bajo', $cambio->gemini_analisis_json['riesgo']);
+        $this->assertFalse($cambio->gemini_analisis_json['es_mae']);
+    }
+
+    public function test_no_invoca_gemini_cuando_diff_text_only_esta_vacio(): void
+    {
+        config(['services.gemini.api_key' => 'test-key', 'services.gemini.multimodal_enabled' => true]);
+
+        $fuente = $this->createFuente();
+        // Cambio sin imágenes (path text-only) y con diff vacío.
+        $cambio = $this->createCambio($fuente, [
+            'diff_texto' => '',
+            'imagenes_cambio_json' => null,
+        ]);
+
+        Http::fake();
+
+        $service = $this->makeService();
+        $service->analizarLote(collect([$cambio]));
+
+        // CRÍTICO: ningún request HTTP debe haberse enviado a Gemini
+        Http::assertNothingSent();
+
+        $cambio->refresh();
+        $this->assertTrue($cambio->gemini_analyzed);
+        $this->assertNull($cambio->gemini_analisis_json['persona_nueva']);
+        $this->assertNull($cambio->gemini_analisis_json['persona_removida']);
+        $this->assertSame('bajo', $cambio->gemini_analisis_json['riesgo']);
+    }
 }

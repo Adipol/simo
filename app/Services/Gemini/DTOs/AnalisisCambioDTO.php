@@ -19,6 +19,24 @@ final readonly class AnalisisCambioDTO
         public string $analisis,
     ) {}
 
+    /**
+     * Build a "no novelty" DTO without invoking Gemini.
+     *
+     * Use this when the cambio has nothing real to analyze (empty diff,
+     * no readable images) to prevent the model from hallucinating.
+     */
+    public static function sinNovedad(string $motivo): self
+    {
+        return new self(
+            personaRemovida: null,
+            personaNueva: null,
+            cargo: null,
+            esMae: false,
+            riesgo: 'bajo',
+            analisis: $motivo,
+        );
+    }
+
     public static function fromArray(array $data): self
     {
         $required = ['es_mae', 'riesgo', 'analisis'];

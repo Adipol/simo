@@ -293,20 +293,28 @@ PROMPT;
         $imagenLabel = $cantidadImagenes === 1 ? 'imagen' : 'imágenes';
 
         return <<<PROMPT
-Junto a este diff de texto, te adjunto {$cantidadImagenes} {$imagenLabel} que aparecieron o cambiaron en la página de {$organismo} (fuente: {$fuente}). Estas imágenes pueden contener nóminas de autoridades, organigramas, o resoluciones que el extractor de texto no capturó. Analizá AMBOS: el diff de texto Y el contenido visual de las imágenes. Si encontrás nombres en las imágenes, reportalos en `persona_nueva`/`persona_removida` igual que si vinieran del texto.
+Junto a este diff de texto, te adjunto {$cantidadImagenes} {$imagenLabel} que aparecieron o cambiaron en la página de {$organismo} (fuente: {$fuente}). Estas imágenes pueden contener nóminas de autoridades, organigramas, o resoluciones que el extractor de texto no capturó. Analizá AMBOS: el diff de texto Y el contenido visual de las imágenes.
+
+⚠️ REGLA CRÍTICA ANTI-ALUCINACIÓN — leé esto ANTES de responder:
+
+1. SOLO podés reportar un nombre en `persona_nueva` o `persona_removida` si ese nombre aparece **LITERALMENTE ESCRITO** en el diff O **LITERALMENTE ESCRITO COMO TEXTO DENTRO DE UNA IMAGEN** (ej: tabla con columnas "PUESTO / FUNCIONARIO" donde el funcionario está escrito al lado).
+2. Si las imágenes son **fotos de retrato** (caras de personas) SIN texto identificativo escrito al lado o debajo, NO podés inferir nombres. Devolvé persona_nueva=null y persona_removida=null.
+3. NUNCA fabriques, inventes, ni "completes" nombres a partir de patrones, contexto, o suposiciones. Si no podés copiar el nombre letra por letra de lo que tenés delante, NO lo reportes.
+4. Logos institucionales, banners, decoraciones gráficas → NO contienen información de personas. Devolvé null.
+5. Si dudás de si un nombre es real o inferido, devolvé null. Es preferible un falso negativo que un falso positivo.
 
 Sos un experto en gobierno corporativo y análisis de cambios en organismos públicos de Latinoamérica.
 Analizá el siguiente diff de {$organismo} (fuente: {$fuente}) para detectar cambio de autoridades.
 
 PASO 0 — FILTRO DE NOMBRES:
 Antes de cualquier análisis, revisá las líneas que empiezan con + o - Y el contenido visual de las imágenes adjuntas.
-¿Aparece algún NOMBRE PROPIO DE PERSONA HUMANA (nombre y apellido, o título + apellido)?
-- Si NO aparece ningún nombre de persona → respondé inmediatamente:
-  {"persona_removida":null,"persona_nueva":null,"cargo":null,"es_mae":false,"riesgo":"bajo","analisis":"No se detectaron nombres de personas en el diff ni en las imágenes."}
-- Si SÍ aparece al menos un nombre → continuá con los pasos siguientes.
+¿Aparece algún NOMBRE PROPIO DE PERSONA HUMANA **escrito como texto** (nombre y apellido, o título + apellido)?
+- Si NO aparece ningún nombre escrito de persona → respondé inmediatamente:
+  {"persona_removida":null,"persona_nueva":null,"cargo":null,"es_mae":false,"riesgo":"bajo","analisis":"No se detectaron nombres escritos de personas en el diff ni en las imágenes."}
+- Si SÍ aparece al menos un nombre escrito → continuá con los pasos siguientes.
 
-REGLA DE NULIDAD: persona_removida y persona_nueva DEBEN ser null salvo que identifiques
-un nombre propio de persona humana (no institución, no sigla, no documento, no cargo genérico).
+REGLA DE NULIDAD: persona_removida y persona_nueva DEBEN ser null salvo que copies textualmente
+un nombre propio de persona humana del material adjunto (no institución, no sigla, no documento, no cargo genérico, no foto sin nombre escrito).
 
 REGLA CRÍTICA: Solo reportá cambios de PERSONAS en cargos públicos.
 Si el diff solo contiene cambios de documentos, resoluciones, decretos, números de expediente,

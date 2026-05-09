@@ -42,6 +42,17 @@ class GeminiAnalisisService
         try {
             $diff = $cambio->diff_texto ?? '';
 
+            // Guard anti-alucinación: si no hay diff de texto, NO llamamos a Gemini.
+            // Sin input concreto el modelo tiende a fabricar nombres y eventos.
+            if (trim($diff) === '') {
+                $this->persistirAnalisis(
+                    $cambio,
+                    AnalisisCambioDTO::sinNovedad('Cambio sin diff de texto: no se analizó.'),
+                );
+
+                return;
+            }
+
             $fuente = $cambio->fuente;
             $fuenteNombre = $fuente?->nombre ?? '';
             $organismoNombre = $fuente?->organismo ?? '';
@@ -68,6 +79,17 @@ class GeminiAnalisisService
             $organismoNombre = $fuente?->organismo ?? '';
 
             $imagenes = $this->resolverImagenes($cambio);
+
+            // Guard anti-alucinación: sin diff Y sin imágenes válidas no hay nada que analizar.
+            // Llamar a Gemini con input vacío es la causa raíz de respuestas inventadas.
+            if (trim($diff) === '' && empty($imagenes)) {
+                $this->persistirAnalisis(
+                    $cambio,
+                    AnalisisCambioDTO::sinNovedad('Cambio sin diff ni imágenes válidas: no se analizó.'),
+                );
+
+                return;
+            }
 
             if (empty($imagenes)) {
                 // Degrade to text-only if no readable images
