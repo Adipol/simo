@@ -21,14 +21,9 @@ class ResultadoScrapingQueryService
         string $filtroIds = '',
         string $ordenar = 'fecha_encontrado',
         string $direccion = 'desc',
-        ?int $userId = null,
     ): Builder {
         $q = ResultadoScraping::with('sitio')
             ->orderBy($ordenar, $direccion);
-
-        if ($userId !== null) {
-            $q->withFeedbackFromUser($userId);
-        }
 
         // ── ID whitelist filter — takes priority, skips unrelated busqueda ────
         if ($filtroIds !== '') {

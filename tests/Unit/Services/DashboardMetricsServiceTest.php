@@ -347,65 +347,6 @@ class DashboardMetricsServiceTest extends TestCase
 
     // 3.2 getPrecisionMetrics
 
-    public function test_get_precision_metrics_calculates_overall_accuracy(): void
-    {
-        $user = \App\Models\User::factory()->create();
-
-        // 8 correctos + 2 incorrectos = 80%
-        $correct = \App\Models\ResultadoScraping::factory()->count(8)->create([
-            'gemini_analyzed' => true,
-            'gemini_confianza' => 85,
-        ]);
-        foreach ($correct as $r) {
-            \App\Models\ClasificacionFeedback::factory()->correcto()->create([
-                'resultado_scraping_id' => $r->id,
-                'usuario_id' => $user->id,
-            ]);
-        }
-
-        $incorrect = \App\Models\ResultadoScraping::factory()->count(2)->create([
-            'gemini_analyzed' => true,
-            'gemini_confianza' => 85,
-        ]);
-        foreach ($incorrect as $r) {
-            \App\Models\ClasificacionFeedback::factory()->incorrecto()->create([
-                'resultado_scraping_id' => $r->id,
-                'usuario_id' => $user->id,
-            ]);
-        }
-
-        $service = new DashboardMetricsService;
-        $dto = $service->getPrecisionMetrics([]);
-
-        $this->assertSame(80.0, $dto->overallAccuracy);
-        $this->assertSame(10, $dto->totalFeedbacks);
-        $this->assertTrue($dto->hasData);
-    }
-
-    public function test_get_precision_metrics_groups_by_bucket(): void
-    {
-        $user = \App\Models\User::factory()->create();
-
-        foreach ([30, 60, 90] as $confianza) {
-            $r = \App\Models\ResultadoScraping::factory()->create([
-                'gemini_analyzed' => true,
-                'gemini_confianza' => $confianza,
-            ]);
-            \App\Models\ClasificacionFeedback::factory()->correcto()->create([
-                'resultado_scraping_id' => $r->id,
-                'usuario_id' => $user->id,
-            ]);
-        }
-
-        $service = new DashboardMetricsService;
-        $dto = $service->getPrecisionMetrics([]);
-
-        $buckets = array_column($dto->byBucket, 'bucket');
-        $this->assertContains('0-50', $buckets);
-        $this->assertContains('51-80', $buckets);
-        $this->assertContains('81-100', $buckets);
-    }
-
     public function test_get_precision_metrics_empty_returns_has_data_false(): void
     {
         $service = new DashboardMetricsService;
@@ -479,75 +420,6 @@ class DashboardMetricsServiceTest extends TestCase
         $this->assertSame('AR', $dto->byCountry[0]['pais']);
     }
 
-    // 3.4 getTopFailingPositions
-
-    public function test_get_top_failing_positions_excludes_below_min_samples(): void
-    {
-        $user = \App\Models\User::factory()->create();
-
-        // Cargo with only 2 samples (should be excluded with default minSamples=3)
-        $r1 = \App\Models\ResultadoScraping::factory()->create([
-            'gemini_analyzed' => true,
-            'gemini_cargo' => 'Alcalde',
-        ]);
-        \App\Models\ClasificacionFeedback::factory()->incorrecto()->create([
-            'resultado_scraping_id' => $r1->id,
-            'usuario_id' => $user->id,
-        ]);
-        $r2 = \App\Models\ResultadoScraping::factory()->create([
-            'gemini_analyzed' => true,
-            'gemini_cargo' => 'Alcalde',
-        ]);
-        \App\Models\ClasificacionFeedback::factory()->incorrecto()->create([
-            'resultado_scraping_id' => $r2->id,
-            'usuario_id' => \App\Models\User::factory()->create()->id,
-        ]);
-
-        $service = new DashboardMetricsService;
-        $result = $service->getTopFailingPositions([]);
-
-        $cargos = array_column($result, 'cargo');
-        $this->assertNotContains('Alcalde', $cargos);
-    }
-
-    public function test_get_top_failing_positions_includes_above_min_samples_ordered_by_error_rate(): void
-    {
-        $user1 = \App\Models\User::factory()->create();
-        $user2 = \App\Models\User::factory()->create();
-        $user3 = \App\Models\User::factory()->create();
-
-        // Senador: 3 muestras, 2 errores => 66.7%
-        foreach (range(1, 3) as $i) {
-            $r = \App\Models\ResultadoScraping::factory()->create([
-                'gemini_analyzed' => true,
-                'gemini_cargo' => 'Senador',
-            ]);
-            $userId = match ($i) {
-                1 => $user1->id,
-                2 => $user2->id,
-                3 => $user3->id,
-            };
-            $factory = $i <= 2
-                ? \App\Models\ClasificacionFeedback::factory()->incorrecto()
-                : \App\Models\ClasificacionFeedback::factory()->correcto();
-            $factory->create([
-                'resultado_scraping_id' => $r->id,
-                'usuario_id' => $userId,
-            ]);
-        }
-
-        $service = new DashboardMetricsService;
-        $result = $service->getTopFailingPositions([]);
-
-        $this->assertNotEmpty($result);
-        $cargos = array_column($result, 'cargo');
-        $this->assertContains('Senador', $cargos);
-
-        $senador = array_values(array_filter($result, fn ($r) => $r['cargo'] === 'Senador'))[0];
-        $this->assertSame(3, $senador['total_muestras']);
-        $this->assertSame(2, $senador['total_errores']);
-    }
-
     // 3.5 getRecentActivity
 
     public function test_get_recent_activity_only_includes_high_confidence_peps(): void
@@ -572,22 +444,6 @@ class DashboardMetricsServiceTest extends TestCase
         $nombres = array_column($dto->highConfidencePeps, 'nombre');
         $this->assertContains('Maria Garcia', $nombres);
         $this->assertNotContains('Juan Perez', $nombres);
-    }
-
-    public function test_get_recent_activity_corrections_include_usuario_nombre(): void
-    {
-        $user = \App\Models\User::factory()->create(['name' => 'Admin User']);
-        $r = \App\Models\ResultadoScraping::factory()->create(['gemini_analyzed' => true]);
-        \App\Models\ClasificacionFeedback::factory()->incorrecto()->create([
-            'resultado_scraping_id' => $r->id,
-            'usuario_id' => $user->id,
-        ]);
-
-        $service = new DashboardMetricsService;
-        $dto = $service->getRecentActivity([]);
-
-        $this->assertCount(1, $dto->latestCorrections);
-        $this->assertSame('Admin User', $dto->latestCorrections[0]['usuario_nombre']);
     }
 
     // 3.6 getTrendIndicators

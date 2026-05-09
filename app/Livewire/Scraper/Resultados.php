@@ -4,20 +4,13 @@ declare(strict_types=1);
 
 namespace App\Livewire\Scraper;
 
-use App\Enums\CategoriaCorreccion;
-use App\Enums\TipoFeedback;
-use App\Models\ClasificacionFeedback;
 use App\Models\Pais;
 use App\Models\ResultadoScraping;
 use App\Services\Export\ResultadosCsvExporter;
-use App\Services\FeedbackIncorrectoService;
-use App\Services\PepConfirmacionService;
 use App\Services\ResultadoScrapingQueryService;
 use Illuminate\Contracts\View\View;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
@@ -68,30 +61,6 @@ class Resultados extends Component
     public string $ordenar = 'fecha_encontrado';
 
     public string $direccion = 'desc';
-
-    // ─── Confirmar PEP props ───────────────────────────────────────────────────
-
-    public ?int $confirmarPepModalId = null;
-
-    public string $pepNombre = '';
-
-    public string $pepCargo = '';
-
-    public string $pepEvento = '';
-
-    // ─── Feedback props ────────────────────────────────────────────────────────
-
-    public ?int $feedbackModalId = null;
-
-    public ?string $feedbackCategoriaCorregida = null;
-
-    public ?string $feedbackNombreCorregido = null;
-
-    public ?string $feedbackCargoCorregido = null;
-
-    public ?bool $feedbackIsPepCorregido = null;
-
-    public string $feedbackMotivo = '';
 
     // ─── Updating hooks ────────────────────────────────────────────────────────
 
@@ -192,144 +161,6 @@ class Resultados extends Component
         );
     }
 
-    // ─── Feedback actions ─────────────────────────────────────────────────────
-
-    public function guardarFeedbackCorrecto(int $id): void
-    {
-        $this->authorize('dar feedback clasificaciones');
-
-        $resultado = ResultadoScraping::findOrFail($id);
-
-        ClasificacionFeedback::updateOrCreate(
-            ['resultado_scraping_id' => $id, 'usuario_id' => Auth::id()],
-            [
-                'tipo' => TipoFeedback::Correcto,
-                'clasificacion_snapshot' => $resultado->toGeminiSnapshot(),
-            ]
-        );
-
-        session()->flash('message', 'Feedback guardado correctamente.');
-    }
-
-    public function abrirModalFeedbackIncorrecto(int $id): void
-    {
-        $this->authorize('dar feedback clasificaciones');
-
-        $resultado = ResultadoScraping::withFeedbackFromUser(Auth::id())->findOrFail($id);
-        $this->feedbackModalId = $id;
-
-        // Pre-fill from existing feedback if any
-        $existing = $resultado->feedback->first();
-        if ($existing) {
-            $this->feedbackCategoriaCorregida = $existing->corregido_categoria?->value;
-            $this->feedbackNombreCorregido = $existing->corregido_nombre;
-            $this->feedbackCargoCorregido = $existing->corregido_cargo;
-            $this->feedbackIsPepCorregido = $existing->corregido_is_pep;
-            $this->feedbackMotivo = $existing->motivo ?? '';
-        } else {
-            $this->reset(['feedbackCategoriaCorregida', 'feedbackNombreCorregido', 'feedbackCargoCorregido', 'feedbackIsPepCorregido', 'feedbackMotivo']);
-        }
-    }
-
-    public function guardarFeedbackIncorrecto(): void
-    {
-        $this->authorize('dar feedback clasificaciones');
-
-        $this->validate($this->rulesFeedbackIncorrecto());
-
-        $resultado = ResultadoScraping::findOrFail($this->feedbackModalId);
-
-        app(FeedbackIncorrectoService::class)->guardar(
-            resultado: $resultado,
-            usuarioId: (int) Auth::id(),
-            categoriaCorregida: (string) $this->feedbackCategoriaCorregida,
-            motivo: $this->feedbackMotivo,
-            isPepCorregido: $this->feedbackIsPepCorregido,
-            nombreCorregido: $this->feedbackNombreCorregido,
-            cargoCorregido: $this->feedbackCargoCorregido,
-        );
-
-        $this->cerrarModalFeedback();
-        session()->flash('message', 'Feedback guardado correctamente.');
-    }
-
-    public function cerrarModalFeedback(): void
-    {
-        $this->feedbackModalId = null;
-        $this->reset([
-            'feedbackCategoriaCorregida',
-            'feedbackNombreCorregido',
-            'feedbackCargoCorregido',
-            'feedbackIsPepCorregido',
-            'feedbackMotivo',
-        ]);
-        $this->resetValidation();
-    }
-
-    // ─── Confirmar PEP actions ────────────────────────────────────────────────
-
-    public function abrirConfirmarPepModal(int $id): void
-    {
-        $this->authorize('dar feedback clasificaciones');
-
-        $this->confirmarPepModalId = $id;
-        $this->pepNombre = '';
-        $this->pepCargo = '';
-        $this->pepEvento = '';
-        $this->resetValidation();
-    }
-
-    public function cerrarConfirmarPepModal(): void
-    {
-        $this->confirmarPepModalId = null;
-        $this->pepNombre = '';
-        $this->pepCargo = '';
-        $this->pepEvento = '';
-        $this->resetValidation();
-    }
-
-    public function confirmarPep(): void
-    {
-        $this->authorize('dar feedback clasificaciones');
-
-        $this->validate($this->rulesConfirmarPep());
-
-        $resultado = ResultadoScraping::findOrFail($this->confirmarPepModalId);
-
-        app(PepConfirmacionService::class)->confirmar(
-            resultado: $resultado,
-            usuarioId: (int) Auth::id(),
-            nombre: $this->pepNombre,
-            cargo: $this->pepCargo !== '' ? $this->pepCargo : null,
-            evento: $this->pepEvento !== '' ? $this->pepEvento : null,
-        );
-
-        $this->cerrarConfirmarPepModal();
-        session()->flash('message', 'PEP confirmado correctamente.');
-    }
-
-    // ─── Validation rules ─────────────────────────────────────────────────────
-
-    protected function rulesConfirmarPep(): array
-    {
-        return [
-            'pepNombre' => 'required|string|max:200',
-            'pepCargo' => 'nullable|string|max:300',
-            'pepEvento' => ['nullable', Rule::in(['designacion', 'renuncia', 'crimen'])],
-        ];
-    }
-
-    protected function rulesFeedbackIncorrecto(): array
-    {
-        return [
-            'feedbackCategoriaCorregida' => ['required', Rule::enum(CategoriaCorreccion::class)],
-            'feedbackMotivo' => 'required|string|min:10|max:1000',
-            'feedbackNombreCorregido' => 'nullable|string|max:200',
-            'feedbackCargoCorregido' => 'nullable|string|max:200',
-            'feedbackIsPepCorregido' => 'nullable|boolean',
-        ];
-    }
-
     // ─── Query builder ────────────────────────────────────────────────────────
 
     private function getQuery(): \Illuminate\Database\Eloquent\Builder
@@ -350,7 +181,6 @@ class Resultados extends Component
             filtroIds: $this->filtroIds,
             ordenar: $ordenar,
             direccion: $direccion,
-            userId: Auth::id(),
         );
     }
 
@@ -394,11 +224,10 @@ class Resultados extends Component
     public function render(): View
     {
         return view('livewire.scraper.resultados', [
-            'resultados'         => $this->resultados,
-            'paises'             => $this->paises,
-            'categorias'         => $this->categorias,
-            'resultadoAnalisis'  => $this->resultadoAnalisis,
-            'categoriasCorreccion' => CategoriaCorreccion::cases(),
+            'resultados'        => $this->resultados,
+            'paises'            => $this->paises,
+            'categorias'        => $this->categorias,
+            'resultadoAnalisis' => $this->resultadoAnalisis,
         ]);
     }
 }
