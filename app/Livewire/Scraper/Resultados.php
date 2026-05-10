@@ -186,6 +186,29 @@ class Resultados extends Component
 
     // ─── Computed ─────────────────────────────────────────────────────────────
 
+    /**
+     * Count of articles pending Gemini analysis (Design D9).
+     *
+     * Counts only:
+     *  - gemini_analyzed = false (not yet processed)
+     *  - descartado = false (not discarded)
+     *  - archivado_at IS NULL (not archived)
+     *  - secundario_de IS NULL (only primary articles)
+     *
+     * Used to show/hide the "X procesando" header badge.
+     * Memoized per request by Livewire's #[Computed] decorator.
+     */
+    #[Computed]
+    public function pendingCount(): int
+    {
+        return ResultadoScraping::query()
+            ->where('gemini_analyzed', false)
+            ->where('descartado', false)
+            ->whereNull('archivado_at')
+            ->whereNull('secundario_de')
+            ->count();
+    }
+
     #[Computed]
     public function paises(): Collection
     {
