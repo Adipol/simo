@@ -14,4 +14,9 @@ return [
         'es_mae_weight' => env('DASHBOARD_HERO_ES_MAE_W', 2),
         'aging_divisor' => env('DASHBOARD_HERO_AGING_DIVISOR', 3),
     ],
+    'source_health' => [
+        'consecutive_failures_degraded' => env('SOURCE_HEALTH_DEGRADED_THRESHOLD', 3),
+        'consecutive_failures_dead' => env('SOURCE_HEALTH_DEAD_THRESHOLD', 10),
+        'summary_cache_ttl' => env('SOURCE_HEALTH_CACHE_TTL', 60),
+    ],
 ];

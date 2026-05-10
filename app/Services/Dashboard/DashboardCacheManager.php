@@ -78,6 +78,7 @@ final class DashboardCacheManager
             self::KEY_PREFIX.'health',
             self::KEY_PREFIX.'health:latency',
             self::KEY_PREFIX.'health:quota',
+            self::KEY_PREFIX.'source-health',
         ];
     }
 }
