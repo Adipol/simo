@@ -173,7 +173,7 @@
                             </div>
                         </td>
                         <td class="text-center">
-                            <span class="text-sm font-bold {{ $r->relevance_score >= 70 ? 'text-emerald-600' : ($r->relevance_score >= 40 ? 'text-amber-500' : 'text-gray-300') }}">
+                            <span class="text-sm font-bold {{ $r->getScoreColorClass() }}">
                                 {{ $r->relevance_score }}
                             </span>
                             @if($r->found_in_title)
@@ -181,7 +181,7 @@
                             @endif
                         </td>
                         <td class="text-xs text-gray-500 whitespace-nowrap">
-                            {{ $r->fecha_encontrado->format('d/m/y H:i') }}
+                            {{ $r->fecha_encontrado?->format('d/m/y H:i') }}
                         </td>
                         <td>
                             <div class="flex items-center gap-1 flex-wrap">
