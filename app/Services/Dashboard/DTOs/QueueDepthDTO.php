@@ -6,11 +6,20 @@ namespace App\Services\Dashboard\DTOs;
 
 final readonly class QueueDepthDTO
 {
+    /** Warning threshold: queues above this combined count are flagged amber. */
+    private const WARNING_THRESHOLD = 50;
+
+    public int $total_pending;
+    public string $status;
+
     public function __construct(
         public int $gemini_pro_pending,
         public int $gemini_flash_pending,
         public int $other_pending,
-    ) {}
+    ) {
+        $this->total_pending = $gemini_pro_pending + $gemini_flash_pending + $other_pending;
+        $this->status        = $this->total_pending > self::WARNING_THRESHOLD ? 'warning' : 'ok';
+    }
 
     public static function fromArray(array $data): self
     {
