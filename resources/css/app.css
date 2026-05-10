@@ -4,6 +4,28 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Brand CSS Variables ──────────────────────────────────────────────────────
+   Purpose: gradual migration toward a design-token-driven system.
+   Current usage: new dashboard components may reference these via inline style.
+   Do NOT modify existing simo-* classes to use these vars yet (PR1.3 policy).
+   Dark mode: not implemented yet — vars will be the entry point when added.
+*/
+:root {
+    --simo-bg: #f4f4f5;
+    --simo-surface: #ffffff;
+    --simo-surface-muted: #fafafa;
+    --simo-border: #e4e4e7;
+    --simo-text-primary: #18181b;
+    --simo-text-secondary: #52525b;
+    --simo-text-muted: #a1a1aa;
+    --simo-accent: #6366f1;
+    --simo-accent-hover: #4f46e5;
+    --simo-danger: #f43f5e;
+    --simo-warning: #f59e0b;
+    --simo-success: #10b981;
+    --simo-info: #3b82f6;
+}
+
 @layer base {
     body {
         font-family: 'Inter', system-ui, sans-serif;
