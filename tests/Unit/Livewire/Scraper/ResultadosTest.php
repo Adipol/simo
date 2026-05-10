@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Livewire\Scraper;
 
 use App\Livewire\Scraper\Resultados;
+use App\Models\ResultadoPersona;
 use App\Models\ResultadoScraping;
 use App\Models\SitioWeb;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -20,17 +21,18 @@ class ResultadosTest extends TestCase
     {
         parent::setUp();
 
-        // Prevent observer from dispatching Gemini jobs during tests
+        // Prevent observer from dispatching jobs during tests
         Queue::fake();
         config(['services.gemini.enabled' => false]);
+        config(['services.dedupe.enabled' => false]);
     }
 
     private function createSitio(): SitioWeb
     {
         return SitioWeb::create([
-            'url' => 'https://example.com',
+            'url'    => 'https://example.com',
             'nombre' => 'Example',
-            'pais' => 'BO',
+            'pais'   => 'BO',
             'activo' => true,
         ]);
     }
@@ -38,33 +40,36 @@ class ResultadosTest extends TestCase
     private function createResultado(SitioWeb $sitio, array $overrides = []): ResultadoScraping
     {
         return ResultadoScraping::create(array_merge([
-            'url' => 'https://example.com/article-1',
-            'keyword' => 'test keyword',
-            'sitio_id' => $sitio->id,
-            'pais' => 'BO',
+            'url'              => 'https://example.com/article-'.uniqid(),
+            'keyword'          => 'test keyword',
+            'sitio_id'         => $sitio->id,
+            'pais'             => 'BO',
             'fecha_encontrado' => now(),
-            'relevance_score' => 50,
-            'leido' => false,
-            'relevante' => null,
-            'descartado' => false,
-            'gemini_analyzed' => false,
+            'relevance_score'  => 50,
+            'leido'            => false,
+            'relevante'        => null,
+            'descartado'       => false,
+            'gemini_analyzed'  => false,
         ], $overrides));
     }
 
-    // ─── Task 3.1: buildQuery() filter logic ───
+    // ─── Task 3.1: buildQuery() filter logic (D11 new behavior) ───
 
-    public function test_filtro_gemini_empty_returns_all_results(): void
+    /**
+     * Default filter (filtroGemini='') now shows ONLY gemini_analyzed=true articles.
+     * Unanalyzed articles are no longer shown in the default view.
+     * (Design D11: default is "processed primaries only")
+     */
+    public function test_filtro_gemini_empty_shows_only_analyzed_results(): void
     {
         $sitio = $this->createSitio();
-        $this->createResultado($sitio, ['keyword' => 'unanalyzed', 'gemini_analyzed' => false]);
-        $this->createResultado($sitio, ['keyword' => 'pep', 'gemini_analyzed' => true, 'gemini_is_pep' => true, 'gemini_categoria' => 'PEP']);
-        $this->createResultado($sitio, ['keyword' => 'not_pep', 'gemini_analyzed' => true, 'gemini_is_pep' => false]);
+        $this->createResultado($sitio, ['keyword' => 'unanalyzed-kw', 'gemini_analyzed' => false]);
+        $this->createResultado($sitio, ['keyword' => 'analyzed-kw', 'gemini_analyzed' => true, 'gemini_is_pep' => false]);
 
         Livewire::test(Resultados::class)
             ->assertSet('filtroGemini', '')
-            ->assertSee('unanalyzed')
-            ->assertSee('pep')
-            ->assertSee('not_pep');
+            ->assertSee('analyzed-kw')
+            ->assertDontSee('unanalyzed-kw');
     }
 
     public function test_filtro_gemini_pending_returns_only_unanalyzed(): void
@@ -79,27 +84,82 @@ class ResultadosTest extends TestCase
             ->assertDontSee('analyzed_kw_xyz');
     }
 
-    public function test_filtro_gemini_pep_returns_only_pep_confirmed(): void
+    /**
+     * Filter 'pep' now reads from resultado_personas (Design D8).
+     * Articles are shown if they have a PEP persona with threshold_passed=true.
+     */
+    public function test_filtro_gemini_pep_returns_only_articles_with_pep_persona(): void
     {
         $sitio = $this->createSitio();
-        $this->createResultado($sitio, ['keyword' => 'pep_item', 'gemini_analyzed' => true, 'gemini_is_pep' => true, 'gemini_categoria' => 'PEP']);
-        $this->createResultado($sitio, ['keyword' => 'opi_item', 'gemini_analyzed' => true, 'gemini_is_pep' => true, 'gemini_categoria' => 'OPI']);
+
+        $pepArticle = $this->createResultado($sitio, [
+            'keyword'         => 'pep_item',
+            'gemini_analyzed' => true,
+            'gemini_is_pep'   => true,
+        ]);
+        ResultadoPersona::create([
+            'resultado_scraping_id' => $pepArticle->id,
+            'nombre'                => 'Test PEP',
+            'categoria'             => 'PEP',
+            'confianza'             => 85,
+            'threshold_passed'      => true,
+        ]);
+
+        $opiArticle = $this->createResultado($sitio, [
+            'keyword'         => 'opi_item',
+            'gemini_analyzed' => true,
+            'gemini_is_pep'   => true,
+        ]);
+        ResultadoPersona::create([
+            'resultado_scraping_id' => $opiArticle->id,
+            'nombre'                => 'Test OPI',
+            'categoria'             => 'OPI',
+            'confianza'             => 85,
+            'threshold_passed'      => true,
+        ]);
+
         $this->createResultado($sitio, ['keyword' => 'not_pep_item', 'gemini_analyzed' => true, 'gemini_is_pep' => false]);
-        $this->createResultado($sitio, ['keyword' => 'pending_item', 'gemini_analyzed' => false]);
 
         Livewire::test(Resultados::class)
             ->set('filtroGemini', 'pep')
             ->assertSee('pep_item')
             ->assertDontSee('opi_item')
-            ->assertDontSee('not_pep_item')
-            ->assertDontSee('pending_item');
+            ->assertDontSee('not_pep_item');
     }
 
-    public function test_filtro_gemini_opi_returns_only_opi_confirmed(): void
+    /**
+     * Filter 'opi' now reads from resultado_personas (Design D8).
+     */
+    public function test_filtro_gemini_opi_returns_only_articles_with_opi_persona(): void
     {
         $sitio = $this->createSitio();
-        $this->createResultado($sitio, ['keyword' => 'opi_item', 'gemini_analyzed' => true, 'gemini_is_pep' => true, 'gemini_categoria' => 'OPI']);
-        $this->createResultado($sitio, ['keyword' => 'pep_item', 'gemini_analyzed' => true, 'gemini_is_pep' => true, 'gemini_categoria' => 'PEP']);
+
+        $opiArticle = $this->createResultado($sitio, [
+            'keyword'         => 'opi_item',
+            'gemini_analyzed' => true,
+            'gemini_is_pep'   => true,
+        ]);
+        ResultadoPersona::create([
+            'resultado_scraping_id' => $opiArticle->id,
+            'nombre'                => 'Test OPI',
+            'categoria'             => 'OPI',
+            'confianza'             => 85,
+            'threshold_passed'      => true,
+        ]);
+
+        $pepArticle = $this->createResultado($sitio, [
+            'keyword'         => 'pep_item',
+            'gemini_analyzed' => true,
+            'gemini_is_pep'   => true,
+        ]);
+        ResultadoPersona::create([
+            'resultado_scraping_id' => $pepArticle->id,
+            'nombre'                => 'Test PEP',
+            'categoria'             => 'PEP',
+            'confianza'             => 85,
+            'threshold_passed'      => true,
+        ]);
+
         $this->createResultado($sitio, ['keyword' => 'not_pep_item', 'gemini_analyzed' => true, 'gemini_is_pep' => false]);
 
         Livewire::test(Resultados::class)
@@ -109,11 +169,25 @@ class ResultadosTest extends TestCase
             ->assertDontSee('not_pep_item');
     }
 
+    /**
+     * Filter 'not_pep' shows analyzed articles with no threshold_passed personas.
+     * Articles with confirmed PEP/OPI persona should be hidden.
+     */
     public function test_filtro_gemini_not_pep_returns_only_non_pep_analyzed(): void
     {
         $sitio = $this->createSitio();
-        $this->createResultado($sitio, ['keyword' => 'zznpepitem', 'gemini_analyzed' => true, 'gemini_is_pep' => false]);
-        $this->createResultado($sitio, ['keyword' => 'zzpepconf', 'gemini_analyzed' => true, 'gemini_is_pep' => true, 'gemini_categoria' => 'PEP']);
+
+        $noPepArticle = $this->createResultado($sitio, ['keyword' => 'zznpepitem', 'gemini_analyzed' => true, 'gemini_is_pep' => false]);
+
+        $pepConfArticle = $this->createResultado($sitio, ['keyword' => 'zzpepconf', 'gemini_analyzed' => true, 'gemini_is_pep' => true]);
+        ResultadoPersona::create([
+            'resultado_scraping_id' => $pepConfArticle->id,
+            'nombre'                => 'PEP confirmed',
+            'categoria'             => 'PEP',
+            'confianza'             => 85,
+            'threshold_passed'      => true,
+        ]);
+
         $this->createResultado($sitio, ['keyword' => 'zzpending', 'gemini_analyzed' => false]);
 
         Livewire::test(Resultados::class)
@@ -137,12 +211,8 @@ class ResultadosTest extends TestCase
         $sitio = $this->createSitio();
         $resultado = $this->createResultado($sitio, [
             'gemini_analyzed' => true,
-            'gemini_is_pep' => true,
-            'gemini_categoria' => 'PEP',
-            'gemini_nombre' => 'Juan Perez',
-            'gemini_cargo' => 'Ministro',
-            'gemini_confianza' => 85,
-            'gemini_motivo' => 'Es un PEP activo',
+            'gemini_is_pep'   => true,
+            'gemini_motivo'   => 'Es un PEP activo',
         ]);
 
         $component = Livewire::test(Resultados::class)
@@ -153,7 +223,6 @@ class ResultadosTest extends TestCase
         $analisis = $component->instance()->resultadoAnalisis;
         $this->assertNotNull($analisis);
         $this->assertEquals($resultado->id, $analisis->id);
-        $this->assertEquals('Juan Perez', $analisis->gemini_nombre);
     }
 
     public function test_resultado_analisis_returns_null_when_id_points_to_nonexistent_record(): void
