@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Services\Dashboard;
 
+use App\Models\Fuente;
+use App\Models\LogFuenteRun;
 use App\Services\Dashboard\DTOs\SourceHealthDTO;
 use App\Services\Dashboard\DTOs\SourceHealthSummaryDTO;
 use Illuminate\Support\Facades\DB;
@@ -42,9 +44,7 @@ final class DashboardSourceHealthService
      */
     public function getPerSourceStatus(int $fuenteId): SourceHealthDTO
     {
-        $fuente = DB::table('fuentes')
-            ->where('id', $fuenteId)
-            ->first();
+        $fuente = Fuente::find($fuenteId);
 
         if ($fuente === null) {
             throw new \InvalidArgumentException("Fuente {$fuenteId} not found");
@@ -52,7 +52,7 @@ final class DashboardSourceHealthService
 
         $deadThreshold = (int) config('dashboard.source_health.consecutive_failures_dead', 10);
 
-        $runs = DB::table('log_fuente_runs')
+        $runs = LogFuenteRun::query()
             ->where('fuente_id', $fuenteId)
             ->orderBy('started_at', 'desc')
             ->limit($deadThreshold + 1)
@@ -103,10 +103,9 @@ final class DashboardSourceHealthService
         $deadThreshold = (int) config('dashboard.source_health.consecutive_failures_dead', 10);
 
         // Get all active fuentes
-        $fuentes = DB::table('fuentes')
+        $fuentes = Fuente::query()
             ->where('activo', true)
-            ->select('id', 'nombre')
-            ->get();
+            ->get(['id', 'nombre']);
 
         $total = $fuentes->count();
 
@@ -183,13 +182,19 @@ final class DashboardSourceHealthService
     /**
      * PostgreSQL: single query using ROW_NUMBER() to get top-N per fuente.
      *
+     * Uses dynamic IN (?, ?, ?, ...) placeholders instead of ANY(?) because PDO
+     * cannot bind a PHP array to a single placeholder — it would attempt array-to-string
+     * conversion and crash. The dynamic placeholder approach is safe: $placeholders
+     * only contains literal '?' characters, all values pass through bindings.
+     *
      * @param  array<int>  $fuenteIds
      * @return array<int, array<object>>
      */
     private function fetchRecentRunsPostgres(array $fuenteIds, int $limit): array
     {
-        $rows = DB::select(
-            <<<'SQL'
+        $placeholders = implode(',', array_fill(0, count($fuenteIds), '?'));
+
+        $sql = <<<SQL
             SELECT fuente_id, estado, started_at
             FROM (
                 SELECT
@@ -198,13 +203,15 @@ final class DashboardSourceHealthService
                     started_at,
                     ROW_NUMBER() OVER (PARTITION BY fuente_id ORDER BY started_at DESC) AS rn
                 FROM log_fuente_runs
-                WHERE fuente_id = ANY(?)
+                WHERE fuente_id IN ({$placeholders})
             ) ranked
             WHERE rn <= ?
             ORDER BY fuente_id, started_at DESC
-            SQL,
-            [$fuenteIds, $limit]
-        );
+            SQL;
+
+        $bindings = array_merge($fuenteIds, [$limit]);
+
+        $rows = DB::select($sql, $bindings);
 
         return $this->groupRunsByFuente($rows);
     }
@@ -219,12 +226,11 @@ final class DashboardSourceHealthService
     private function fetchRecentRunsSqlite(array $fuenteIds, int $limit): array
     {
         // Fetch all rows ordered per fuente (SQLite doesn't support LATERAL or ANY())
-        $rows = DB::table('log_fuente_runs')
+        $rows = LogFuenteRun::query()
             ->whereIn('fuente_id', $fuenteIds)
             ->orderBy('fuente_id')
             ->orderBy('started_at', 'desc')
-            ->select('fuente_id', 'estado', 'started_at')
-            ->get();
+            ->get(['fuente_id', 'estado', 'started_at']);
 
         // Group and take top-N per fuente in PHP
         $grouped = [];
