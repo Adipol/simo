@@ -4,7 +4,7 @@
     <div class="flex items-center gap-3 mb-1">
         <h1 class="text-sm font-semibold text-gray-700">Resultados</h1>
         @if($this->pendingCount > 0)
-            <span class="simo-badge bg-amber-50 text-amber-600 border-amber-200" style="font-size:9px">
+            <span class="simo-badge bg-amber-50 text-amber-600 border-amber-200 text-[9px]">
                 {{ $this->pendingCount }} procesando
             </span>
         @endif
@@ -115,34 +115,31 @@
                                     <div class="flex items-center gap-1.5 flex-wrap">
                                         <span class="text-xs font-semibold text-indigo-600">{{ $r->keyword }}</span>
                                         @if($r->relevante)
-                                            <span class="simo-badge bg-emerald-50 text-emerald-600" style="font-size:9px">relevante</span>
+                                            <span class="simo-badge bg-emerald-50 text-emerald-600 text-[9px]">relevante</span>
                                         @endif
                                         @if($r->descartado)
-                                            <span class="simo-badge bg-zinc-100 text-zinc-500 border-zinc-200" style="font-size:9px">descartado</span>
+                                            <span class="simo-badge bg-zinc-100 text-zinc-500 border-zinc-200 text-[9px]">descartado</span>
                                         @endif
                                         @if($r->archivado_at)
-                                            <span class="simo-badge bg-sky-50 text-sky-600 border-sky-100" style="font-size:9px">archivado</span>
+                                            <span class="simo-badge bg-sky-50 text-sky-600 border-sky-100 text-[9px]">archivado</span>
                                         @endif
                                         {{-- Gemini analysis badge --}}
                                         @if(!$r->gemini_analyzed)
-                                            <span class="simo-badge bg-zinc-100 text-zinc-500 border-zinc-200" style="font-size:9px">Pendiente</span>
+                                            <span class="simo-badge bg-zinc-100 text-zinc-500 border-zinc-200 text-[9px]">Pendiente</span>
                                         @elseif($r->gemini_is_pep)
-                                            <span class="simo-badge {{ $r->gemini_categoria === 'PEP' ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-600' }}" style="font-size:9px">
-                                                {{ $r->gemini_categoria }}
-                                            </span>
+                                            <x-simo-badge-categoria :categoria="$r->gemini_categoria" />
                                             @if($r->gemini_nombre)
                                                 <span class="text-[10px] text-gray-600">{{ Str::limit($r->gemini_nombre, 30) }}</span>
                                             @endif
                                         @else
-                                            <span class="simo-badge bg-zinc-100 text-zinc-400" style="font-size:9px">No relevante</span>
+                                            <span class="simo-badge bg-zinc-100 text-zinc-400 text-[9px]">No relevante</span>
                                         @endif
 
                                         {{-- Cluster badge: +N medios (Design D10) --}}
                                         @if(($r->secondaries_count ?? 0) > 0)
                                             <span x-data="{ open: false }"
                                                   @click="open = !open"
-                                                  class="simo-badge bg-violet-50 text-violet-600 border-violet-100 cursor-pointer"
-                                                  style="font-size:9px"
+                                                  class="simo-badge bg-violet-50 text-violet-600 border-violet-100 cursor-pointer text-[9px]"
                                                   title="Este artículo agrupa {{ $r->secondaries_count }} fuente(s) similares">
                                                 +{{ $r->secondaries_count }} medios
                                             </span>
@@ -165,15 +162,11 @@
                                 @if($r->pais)
                                     <span class="text-[10px] text-gray-400">{{ $r->pais }}</span>
                                 @endif
-                                @if($r->categoria)
-                                    <span class="simo-badge {{ $r->categoria === 'PEP' ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-600' }}" style="font-size:9px">
-                                        {{ $r->categoria }}
-                                    </span>
-                                @endif
+                                <x-simo-badge-categoria :categoria="$r->categoria" />
                             </div>
                         </td>
                         <td class="text-center">
-                            <span class="text-sm font-bold {{ $r->relevance_score >= 70 ? 'text-emerald-600' : ($r->relevance_score >= 40 ? 'text-amber-500' : 'text-gray-300') }}">
+                            <span class="text-sm font-bold {{ $r->getScoreColorClass() }}">
                                 {{ $r->relevance_score }}
                             </span>
                             @if($r->found_in_title)
@@ -181,7 +174,7 @@
                             @endif
                         </td>
                         <td class="text-xs text-gray-500 whitespace-nowrap">
-                            {{ $r->fecha_encontrado->format('d/m/y H:i') }}
+                            {{ $r->fecha_encontrado?->format('d/m/y H:i') }}
                         </td>
                         <td>
                             <div class="flex items-center gap-1 flex-wrap">
@@ -271,18 +264,14 @@
                                         @endif
                                     </div>
                                     <div class="flex items-center gap-1.5 shrink-0">
-                                        @if($persona->categoria)
-                                            <span class="simo-badge {{ $persona->categoria === 'PEP' ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-600' }}" style="font-size:9px">
-                                                {{ $persona->categoria }}
-                                            </span>
-                                        @endif
+                                        <x-simo-badge-categoria :categoria="$persona->categoria" />
                                         @if(!$persona->threshold_passed)
-                                            <span class="simo-badge bg-zinc-100 text-zinc-500 border-zinc-200" style="font-size:9px">Baja confianza</span>
+                                            <span class="simo-badge bg-zinc-100 text-zinc-500 border-zinc-200 text-[9px]">Baja confianza</span>
                                         @endif
                                     </div>
                                 </div>
                                 <div class="flex items-center gap-3 text-xs text-gray-500">
-                                    <span class="font-medium {{ $persona->confianza >= 70 ? 'text-emerald-600' : 'text-amber-600' }}">
+                                    <span class="font-medium {{ $persona->getConfianzaColorClass() }}">
                                         {{ $persona->confianza }}% confianza
                                     </span>
                                     @if($persona->evento)

@@ -111,4 +111,31 @@ class ResultadoScraping extends Model
     {
         $query->whereNotNull('secundario_de');
     }
+
+    // =========================================================================
+    // Presentation helpers
+    // =========================================================================
+
+    /**
+     * Returns the Tailwind color class for the relevance score badge.
+     * Thresholds: >= 70 → emerald, >= 40 → amber, < 40 (or null) → gray.
+     */
+    public function getScoreColorClass(): string
+    {
+        $score = $this->relevance_score;
+
+        if ($score === null) {
+            return 'text-gray-300';
+        }
+
+        if ($score >= 70) {
+            return 'text-emerald-600';
+        }
+
+        if ($score >= 40) {
+            return 'text-amber-500';
+        }
+
+        return 'text-gray-300';
+    }
 }
