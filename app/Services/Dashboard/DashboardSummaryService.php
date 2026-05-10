@@ -78,21 +78,21 @@ final class DashboardSummaryService
         $w = config('dashboard.hero_formula');
 
         $riesgoAltoW = (int) ($w['riesgo_alto_weight'] ?? 3);
-        $esMaeW      = (int) ($w['es_mae_weight'] ?? 2);
-        $agingDiv    = max(1, (int) ($w['aging_divisor'] ?? 3));
+        $esMaeW = (int) ($w['es_mae_weight'] ?? 2);
+        $agingDiv = max(1, (int) ($w['aging_divisor'] ?? 3));
 
         $isPgsql = DB::getDriverName() === 'pgsql';
 
         // Build driver-specific score expression
         if ($isPgsql) {
-            $riesgoExpr  = "CASE WHEN gemini_analisis_json->>'riesgo' = 'alto' THEN {$riesgoAltoW} ELSE 0 END";
-            $esMaeExpr   = "CASE WHEN (gemini_analisis_json->>'es_mae')::boolean = true THEN {$esMaeW} ELSE 0 END";
-            $agingExpr   = "EXTRACT(DAY FROM NOW() - fecha) / {$agingDiv}";
+            $riesgoExpr = "CASE WHEN gemini_analisis_json->>'riesgo' = 'alto' THEN {$riesgoAltoW} ELSE 0 END";
+            $esMaeExpr = "CASE WHEN (gemini_analisis_json->>'es_mae')::boolean = true THEN {$esMaeW} ELSE 0 END";
+            $agingExpr = "EXTRACT(DAY FROM NOW() - fecha) / {$agingDiv}";
         } else {
             // SQLite-compatible: JSON via json_extract, days via JULIANDAY
-            $riesgoExpr  = "CASE WHEN json_extract(gemini_analisis_json, '$.riesgo') = 'alto' THEN {$riesgoAltoW} ELSE 0 END";
-            $esMaeExpr   = "CASE WHEN json_extract(gemini_analisis_json, '$.es_mae') = 1 THEN {$esMaeW} ELSE 0 END";
-            $agingExpr   = "CAST((JULIANDAY('now') - JULIANDAY(fecha)) AS INTEGER) / {$agingDiv}";
+            $riesgoExpr = "CASE WHEN json_extract(gemini_analisis_json, '$.riesgo') = 'alto' THEN {$riesgoAltoW} ELSE 0 END";
+            $esMaeExpr = "CASE WHEN json_extract(gemini_analisis_json, '$.es_mae') = 1 THEN {$esMaeW} ELSE 0 END";
+            $agingExpr = "CAST((JULIANDAY('now') - JULIANDAY(fecha)) AS INTEGER) / {$agingDiv}";
         }
 
         $scoreRaw = "({$riesgoExpr} + {$esMaeExpr} + {$agingExpr})";
@@ -101,11 +101,11 @@ final class DashboardSummaryService
             ->with('fuente')
             ->selectRaw("cambios.*, {$scoreRaw} AS score")
             ->where('revisado', false)
-            ->where(function ($q) use ($isPgsql): void {
+            ->where(function (\Illuminate\Database\Eloquent\Builder $q) use ($isPgsql): void {
                 // conPersona semantics (mirrors Cambio::scopeConPersona)
-                $q->where(function ($gemini) use ($isPgsql): void {
+                $q->where(function (\Illuminate\Database\Eloquent\Builder $gemini) use ($isPgsql): void {
                     $gemini->where('gemini_analyzed', true)
-                        ->where(function ($p) use ($isPgsql): void {
+                        ->where(function (\Illuminate\Database\Eloquent\Builder $p) use ($isPgsql): void {
                             if ($isPgsql) {
                                 $p->whereRaw("gemini_analisis_json->>'persona_nueva' IS NOT NULL")
                                     ->orWhereRaw("gemini_analisis_json->>'persona_removida' IS NOT NULL");
@@ -114,13 +114,13 @@ final class DashboardSummaryService
                                     ->orWhereRaw("json_extract(gemini_analisis_json, '$.persona_removida') IS NOT NULL");
                             }
                         });
-                })->orWhere(function ($fallback): void {
+                })->orWhere(function (\Illuminate\Database\Eloquent\Builder $fallback): void {
                     $fallback->where('gemini_analyzed', false)
                         ->whereNotNull('posibles_peps')
                         ->where('posibles_peps', '!=', '');
                 });
             })
-            ->orderByRaw("score DESC, fecha DESC, id DESC")
+            ->orderByRaw('score DESC, fecha DESC, id DESC')
             ->limit(1)
             ->first();
 
@@ -128,7 +128,7 @@ final class DashboardSummaryService
             return null;
         }
 
-        $fuente  = $row->fuente;
+        $fuente = $row->fuente;
         $analisis = is_array($row->gemini_analisis_json) ? $row->gemini_analisis_json : [];
 
         return new HeroCardDTO(
@@ -138,7 +138,7 @@ final class DashboardSummaryService
             es_mae: (bool) ($analisis['es_mae'] ?? false),
             dias_pendiente: (int) abs(now()->diffInDays($row->fecha)),
             score: (float) ($row->score ?? 0.0),
-            accion_url: url('/pep/cambios') . '?id=' . $row->id,
+            accion_url: url('/pep/cambios').'?id='.$row->id,
             fecha: new \DateTimeImmutable($row->fecha->toDateTimeString()),
         );
     }
@@ -150,12 +150,12 @@ final class DashboardSummaryService
     private function triageStrip(): TriageStripDTO
     {
         $buckets = [
-            'alto'  => $this->riesgoFilter('alto'),
+            'alto' => $this->riesgoFilter('alto'),
             'medio' => $this->riesgoFilter('medio'),
-            'bajo'  => $this->riesgoFilter('bajo'),
+            'bajo' => $this->riesgoFilter('bajo'),
         ];
 
-        $counts     = [];
+        $counts = [];
         $sparklines = [];
 
         foreach ($buckets as $name => $applyFilter) {
@@ -166,9 +166,9 @@ final class DashboardSummaryService
 
             $dayRows = (clone $base)
                 ->where('fecha', '>=', now()->subDays(7))
-                ->selectRaw($this->dateTruncDay('fecha') . ' AS day, COUNT(*) AS cnt')
+                ->selectRaw($this->dateTruncDay('fecha').' AS day, COUNT(*) AS cnt')
                 ->groupByRaw($this->dateTruncDay('fecha'))
-                ->orderByRaw($this->dateTruncDay('fecha') . ' ASC')
+                ->orderByRaw($this->dateTruncDay('fecha').' ASC')
                 ->get()
                 ->keyBy('day');
 
@@ -180,9 +180,9 @@ final class DashboardSummaryService
 
         $sinLeerRows = ResultadoScraping::where('leido', false)
             ->where('fecha_encontrado', '>=', now()->subDays(7))
-            ->selectRaw($this->dateTruncDay('fecha_encontrado') . ' AS day, COUNT(*) AS cnt')
+            ->selectRaw($this->dateTruncDay('fecha_encontrado').' AS day, COUNT(*) AS cnt')
             ->groupByRaw($this->dateTruncDay('fecha_encontrado'))
-            ->orderByRaw($this->dateTruncDay('fecha_encontrado') . ' ASC')
+            ->orderByRaw($this->dateTruncDay('fecha_encontrado').' ASC')
             ->get()
             ->keyBy('day');
 
@@ -208,7 +208,7 @@ final class DashboardSummaryService
     {
         $isPgsql = DB::getDriverName() === 'pgsql';
 
-        return function ($q) use ($nivel, $isPgsql): void {
+        return function (\Illuminate\Database\Eloquent\Builder $q) use ($nivel, $isPgsql): void {
             $q->where('gemini_analyzed', true);
             if ($isPgsql) {
                 $q->whereRaw("gemini_analisis_json->>'riesgo' = ?", [$nivel]);
@@ -280,7 +280,7 @@ final class DashboardSummaryService
     private function recentDiscoveries(): RecentDiscoveriesDTO
     {
         $minConfianza = (int) round((float) config('dashboard.discovery_min_confidence', 0.8) * 100);
-        $since24h     = now()->subHours(24);
+        $since24h = now()->subHours(24);
 
         // Top 5 high-confidence PEPs from ResultadoScraping
         $pepRows = ResultadoScraping::where('gemini_analyzed', true)
@@ -291,7 +291,7 @@ final class DashboardSummaryService
             ->limit(5)
             ->get();
 
-        $topPeps = $pepRows->map(fn ($r) => new PepHighConfidence(
+        $topPeps = $pepRows->map(fn (ResultadoScraping $r) => new PepHighConfidence(
             id: $r->id,
             nombre: (string) ($r->gemini_nombre ?? 'Desconocido'),
             cargo: $r->gemini_cargo,
@@ -303,7 +303,7 @@ final class DashboardSummaryService
 
         // Top 5 risk cambios from last 24h (alto OR medio)
         $cambioRows = Cambio::with('fuente')
-            ->where(function ($q): void {
+            ->where(function (\Illuminate\Database\Eloquent\Builder $q): void {
                 $q->where($this->riesgoFilter('alto'))
                     ->orWhere($this->riesgoFilter('medio'));
             })
@@ -312,7 +312,7 @@ final class DashboardSummaryService
             ->limit(5)
             ->get();
 
-        $topCambios = $cambioRows->map(fn ($c) => new CambioSummary(
+        $topCambios = $cambioRows->map(fn (Cambio $c) => new CambioSummary(
             id: $c->id,
             fuente_nombre: $c->fuente?->nombre ?? 'Desconocida',
             riesgo: (string) ($c->gemini_analisis_json['riesgo'] ?? 'desconocido'),

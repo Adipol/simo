@@ -46,7 +46,7 @@ final readonly class TriageStripDTO
     {
         if (count($data) !== 7) {
             throw new \InvalidArgumentException(
-                "Sparkline '{$name}' must have exactly 7 elements, got " . count($data) . '.'
+                "Sparkline '{$name}' must have exactly 7 elements, got ".count($data).'.'
             );
         }
     }
