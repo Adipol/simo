@@ -30,6 +30,7 @@ class ResultadosModalTest extends TestCase
 
         Queue::fake();
         config(['services.gemini.enabled' => false]);
+        config(['services.dedupe.enabled' => false]);
     }
 
     private function createSitio(): SitioWeb
@@ -223,7 +224,11 @@ class ResultadosModalTest extends TestCase
             'gemini_analyzed'  => false,
         ]);
 
+        // Design D11: unanalyzed articles are hidden in the default view.
+        // To see unanalyzed articles, use filtroGemini='pending'.
+        // "Ver análisis" button must not appear for unanalyzed articles in pending view.
         Livewire::test(Resultados::class)
+            ->set('filtroGemini', 'pending')
             ->assertSee('unanalyzed keyword')
             ->assertDontSee('Ver análisis');
     }

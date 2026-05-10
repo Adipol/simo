@@ -23,6 +23,7 @@ class ResultadosArchivadoTest extends TestCase
         parent::setUp();
         Queue::fake();
         config(['services.gemini.enabled' => false]);
+        config(['services.dedupe.enabled' => false]);
         $this->seed(RolesPermisosSeeder::class);
     }
 
@@ -89,8 +90,9 @@ class ResultadosArchivadoTest extends TestCase
     public function test_filtro_archivado_default_oculta_archivados(): void
     {
         $admin = $this->createAdmin();
-        $visible = $this->createResultado(['archivado_at' => null, 'keyword' => 'keyword-visible-default']);
-        $archivado = $this->createResultado(['archivado_at' => now(), 'keyword' => 'keyword-archivado-default']);
+        // gemini_analyzed=true so articles appear in the default view (D11)
+        $visible = $this->createResultado(['archivado_at' => null, 'keyword' => 'keyword-visible-default', 'gemini_analyzed' => true]);
+        $archivado = $this->createResultado(['archivado_at' => now(), 'keyword' => 'keyword-archivado-default', 'gemini_analyzed' => true]);
 
         Livewire::actingAs($admin)
             ->test(Resultados::class)
@@ -102,8 +104,9 @@ class ResultadosArchivadoTest extends TestCase
     public function test_filtro_archivado_1_muestra_solo_archivados(): void
     {
         $admin = $this->createAdmin();
-        $visible = $this->createResultado(['archivado_at' => null, 'keyword' => 'keyword-activo']);
-        $archivado = $this->createResultado(['archivado_at' => now(), 'keyword' => 'keyword-archivado']);
+        // gemini_analyzed=true so the archivado filter='1' shows the archived article
+        $visible = $this->createResultado(['archivado_at' => null, 'keyword' => 'keyword-activo', 'gemini_analyzed' => true]);
+        $archivado = $this->createResultado(['archivado_at' => now(), 'keyword' => 'keyword-archivado', 'gemini_analyzed' => true]);
 
         Livewire::actingAs($admin)
             ->test(Resultados::class)
