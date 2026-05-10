@@ -9,6 +9,7 @@ use App\Services\Dashboard\DTOs\LatencyDTO;
 use App\Services\Dashboard\DTOs\PipelineHealthDTO;
 use App\Services\Dashboard\DTOs\QueueDepthDTO;
 use App\Services\Dashboard\DTOs\ScraperStatusDTO;
+use App\Services\Dashboard\DTOs\SourceHealthSummaryDTO;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -50,12 +51,18 @@ class HealthStripTest extends TestCase
         );
     }
 
+    private function makeSourceHealth(): SourceHealthSummaryDTO
+    {
+        return SourceHealthSummaryDTO::unavailable();
+    }
+
     // ─── All users see pill labels ────────────────────────────────────────────
 
     public function test_health_strip_shows_scraper_label(): void
     {
         $html = view('components.dashboard.health-strip', [
             'health' => $this->makeHealth(false),
+            'sourceHealth' => $this->makeSourceHealth(),
         ])->render();
 
         $this->assertStringContainsString('Scraper', $html);
@@ -65,6 +72,7 @@ class HealthStripTest extends TestCase
     {
         $html = view('components.dashboard.health-strip', [
             'health' => $this->makeHealth(false),
+            'sourceHealth' => $this->makeSourceHealth(),
         ])->render();
 
         $this->assertStringContainsString('PEP Monitor', $html);
@@ -74,6 +82,7 @@ class HealthStripTest extends TestCase
     {
         $html = view('components.dashboard.health-strip', [
             'health' => $this->makeHealth(false),
+            'sourceHealth' => $this->makeSourceHealth(),
         ])->render();
 
         $this->assertStringContainsString('Cola Gemini', $html);
@@ -85,6 +94,7 @@ class HealthStripTest extends TestCase
     {
         $html = view('components.dashboard.health-strip', [
             'health' => $this->makeHealth(false),
+            'sourceHealth' => $this->makeSourceHealth(),
         ])->render();
 
         // The detail section must not be in the DOM at all
@@ -99,6 +109,7 @@ class HealthStripTest extends TestCase
     {
         $html = view('components.dashboard.health-strip', [
             'health' => $this->makeHealth(true),
+            'sourceHealth' => $this->makeSourceHealth(),
         ])->render();
 
         $this->assertStringContainsString('queue-depth-detail', $html);
@@ -110,8 +121,22 @@ class HealthStripTest extends TestCase
     {
         $html = view('components.dashboard.health-strip', [
             'health' => $this->makeHealth(false),
+            'sourceHealth' => $this->makeSourceHealth(),
         ])->render();
 
         $this->assertStringContainsString('Recolectando', $html);
+    }
+
+    // ─── Fuentes pill shows in health strip ───────────────────────────────────
+
+    public function test_fuentes_pill_shows_sin_fuentes_activas_when_unavailable(): void
+    {
+        $html = view('components.dashboard.health-strip', [
+            'health' => $this->makeHealth(false),
+            'sourceHealth' => $this->makeSourceHealth(),
+        ])->render();
+
+        $this->assertStringContainsString('Sin fuentes activas', $html);
+        $this->assertStringContainsString('Fuentes', $html);
     }
 }

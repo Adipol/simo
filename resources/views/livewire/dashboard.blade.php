@@ -12,7 +12,7 @@
     {{-- Polls every 15s — health cache TTL is 15s --}}
     <div wire:poll.15s>
         @island('health')
-            <x-dashboard.health-strip :health="$this->health" />
+            <x-dashboard.health-strip :health="$this->health" :sourceHealth="$this->sourceHealth" />
         @endisland
     </div>
 

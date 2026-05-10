@@ -35,4 +35,17 @@ final readonly class ScraperStatusDTO
             status: 'no_data',
         );
     }
+
+    /**
+     * Returns a human-readable elapsed time since the last run, e.g. "01:30 ago".
+     * Returns null when last_run is not set.
+     */
+    public function ageFormatted(): ?string
+    {
+        if ($this->last_run === null) {
+            return null;
+        }
+
+        return $this->last_run->diff(new \DateTimeImmutable)->format('%H:%I').' ago';
+    }
 }
