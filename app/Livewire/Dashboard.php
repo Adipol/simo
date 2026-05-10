@@ -4,19 +4,20 @@ declare(strict_types=1);
 
 namespace App\Livewire;
 
-use App\Models\Cambio;
-use App\Models\Fuente;
-use App\Models\LogScript;
-use App\Models\ResultadoScraping;
-use App\Models\SitioWeb;
-use App\Services\Dashboard\DashboardMetricsService;
-use App\Services\Dashboard\DTOs\GeographicMetricsDTO;
+use App\Models\User;
+use App\Services\Dashboard\DashboardHealthService;
+use App\Services\Dashboard\DashboardSummaryService;
+use App\Services\Dashboard\DTOs\DashboardSummaryDTO;
+use App\Services\Dashboard\DTOs\PipelineHealthDTO;
+use App\Services\Dashboard\DTOs\VolumeMetricsDTO;
 use App\Services\Dashboard\DTOs\PrecisionMetricsDTO;
+use App\Services\Dashboard\DTOs\GeographicMetricsDTO;
 use App\Services\Dashboard\DTOs\RecentActivityDTO;
 use App\Services\Dashboard\DTOs\TrendIndicatorsDTO;
-use App\Services\Dashboard\DTOs\VolumeMetricsDTO;
+use App\Services\Dashboard\DashboardMetricsService;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\Url;
 use Livewire\Component;
 
 #[Layout('layouts.app', ['title' => 'Dashboard'])]
@@ -26,11 +27,32 @@ class Dashboard extends Component
 
     public bool $mostrarEstadisticas = false;
 
+    #[Url]
     public ?string $filtroDateRange = null;
 
+    #[Url]
     public ?string $filtroPais = null;
 
+    #[Url]
     public ?string $filtroCategoria = null;
+
+    // ─── Injected services ────────────────────────────────────────────────
+
+    private DashboardSummaryService $summaryService;
+
+    private DashboardHealthService $healthService;
+
+    private DashboardMetricsService $metricsService;
+
+    public function boot(
+        DashboardSummaryService $summaryService,
+        DashboardHealthService $healthService,
+        DashboardMetricsService $metricsService,
+    ): void {
+        $this->summaryService = $summaryService;
+        $this->healthService  = $healthService;
+        $this->metricsService = $metricsService;
+    }
 
     // ─── Toggle method ────────────────────────────────────────────────────
 
@@ -41,7 +63,42 @@ class Dashboard extends Component
         $this->mostrarEstadisticas = ! $this->mostrarEstadisticas;
     }
 
-    // ─── Computed: lazy loaded metrics ───────────────────────────────────
+    // ─── marcarRevisado action ────────────────────────────────────────────
+
+    /**
+     * Mark a cambio as reviewed, bust the summary cache, and refresh
+     * the action island so the hero card updates immediately.
+     *
+     * Domain update is delegated to DashboardSummaryService::marcarRevisado()
+     * which also handles the cache bust internally.
+     */
+    public function marcarRevisado(int $cambioId): void
+    {
+        $this->authorize('marcar revisado pep');
+
+        $this->summaryService->marcarRevisado($cambioId);
+    }
+
+    // ─── Computed: dashboard summary (action + triage + discovery) ────────
+
+    #[Computed(cache: true)]
+    public function summary(): DashboardSummaryDTO
+    {
+        return $this->summaryService->getSnapshot();
+    }
+
+    // ─── Computed: pipeline health ────────────────────────────────────────
+
+    #[Computed(cache: true)]
+    public function health(): PipelineHealthDTO
+    {
+        /** @var ?User $user */
+        $user = auth()->user();
+
+        return $this->healthService->getHealth($user instanceof User ? $user : null);
+    }
+
+    // ─── Computed: lazy loaded metrics (stats section) ───────────────────
 
     #[Computed]
     public function volumeMetrics(): VolumeMetricsDTO
@@ -50,7 +107,7 @@ class Dashboard extends Component
             return VolumeMetricsDTO::empty();
         }
 
-        return app(DashboardMetricsService::class)->getVolumeMetrics($this->buildFilters());
+        return $this->metricsService->getVolumeMetrics($this->buildFilters());
     }
 
     #[Computed]
@@ -60,7 +117,7 @@ class Dashboard extends Component
             return PrecisionMetricsDTO::empty();
         }
 
-        return app(DashboardMetricsService::class)->getPrecisionMetrics($this->buildFilters());
+        return $this->metricsService->getPrecisionMetrics($this->buildFilters());
     }
 
     #[Computed]
@@ -70,7 +127,7 @@ class Dashboard extends Component
             return GeographicMetricsDTO::empty();
         }
 
-        return app(DashboardMetricsService::class)->getGeographicMetrics($this->buildFilters());
+        return $this->metricsService->getGeographicMetrics($this->buildFilters());
     }
 
     #[Computed]
@@ -80,7 +137,7 @@ class Dashboard extends Component
             return RecentActivityDTO::empty();
         }
 
-        return app(DashboardMetricsService::class)->getRecentActivity($this->buildFilters());
+        return $this->metricsService->getRecentActivity($this->buildFilters());
     }
 
     #[Computed]
@@ -90,7 +147,7 @@ class Dashboard extends Component
             return TrendIndicatorsDTO::empty();
         }
 
-        return app(DashboardMetricsService::class)->getTrendIndicators($this->buildFilters());
+        return $this->metricsService->getTrendIndicators($this->buildFilters());
     }
 
     #[Computed]
@@ -100,7 +157,56 @@ class Dashboard extends Component
             return [];
         }
 
-        return app(DashboardMetricsService::class)->getTopFailingPositions($this->buildFilters());
+        return $this->metricsService->getTopFailingPositions($this->buildFilters());
+    }
+
+    /**
+     * Derives the heatmap counts from geographic metrics.
+     * ISO country code → PEP detection count, ready for <x-dashboard.latam-heatmap>.
+     *
+     * @return array<string, int>
+     */
+    #[Computed]
+    public function heatmapCounts(): array
+    {
+        if (! $this->mostrarEstadisticas) {
+            return [];
+        }
+
+        return collect($this->geographicMetrics->byCountry)
+            ->pluck('peps_count', 'pais')
+            ->map(fn ($v): int => (int) $v)
+            ->all();
+    }
+
+    /**
+     * Pre-format the recent activity data for Blade rendering.
+     * DashboardMetricsService returns raw arrays with Carbon fecha instances;
+     * we format dates here so Blade templates require no date-parsing logic.
+     *
+     * @return array{highConfidencePeps: array<int, array<string, mixed>>, latestCorrections: array<int, array<string, mixed>>}
+     */
+    #[Computed]
+    public function formattedRecentActivity(): array
+    {
+        $activity = $this->recentActivity;
+
+        $peps = array_map(function (array $pep): array {
+            $pep['fecha_formateada'] = \Carbon\Carbon::parse($pep['fecha'])->format('d/m H:i');
+
+            return $pep;
+        }, $activity->highConfidencePeps);
+
+        $corrections = array_map(function (array $correction): array {
+            $correction['fecha_formateada'] = \Carbon\Carbon::parse($correction['fecha'])->format('d/m H:i');
+
+            return $correction;
+        }, $activity->latestCorrections);
+
+        return [
+            'highConfidencePeps'  => $peps,
+            'latestCorrections'   => $corrections,
+        ];
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────
@@ -118,33 +224,6 @@ class Dashboard extends Component
 
     public function render(): \Illuminate\Contracts\View\View
     {
-        $scraperLog = LogScript::ultimaEjecucion('scraper');
-        $pepLog = LogScript::ultimaEjecucion('pep_monitor');
-
-        return view('livewire.dashboard', [
-            'totalResultados' => ResultadoScraping::count(),
-            'resultadosHoy' => ResultadoScraping::whereDate('fecha_encontrado', today())->count(),
-            'resultadosHoyPorCat' => ResultadoScraping::whereDate('fecha_encontrado', today())
-                ->selectRaw('categoria, COUNT(*) as total')
-                ->groupBy('categoria')
-                ->orderByRaw("CASE WHEN categoria = 'PEP' THEN 1 WHEN categoria = 'OPI' THEN 2 ELSE 3 END, categoria")
-                ->pluck('total', 'categoria'),
-            'resultadosSinLeer' => ResultadoScraping::where('leido', false)->count(),
-            'totalFuentes' => Fuente::where('activo', true)->count(),
-            'cambiosSinRevisar' => Cambio::where('revisado', false)->conPersona()->count(),
-            'totalSitios' => SitioWeb::where('activo', true)->count(),
-            'ultimosResultados' => ResultadoScraping::with('sitio')
-                ->orderBy('fecha_encontrado', 'desc')
-                ->limit(5)
-                ->get(),
-            'ultimosCambios' => Cambio::with('fuente')
-                ->orderBy('fecha', 'desc')
-                ->limit(5)
-                ->get(),
-            'scraperEjecutando' => LogScript::estaEjecutando('scraper'),
-            'pepEjecutando' => LogScript::estaEjecutando('pep_monitor'),
-            'scraperLog' => $scraperLog,
-            'pepLog' => $pepLog,
-        ]);
+        return view('livewire.dashboard');
     }
 }
