@@ -12,6 +12,7 @@ use App\Exceptions\Gemini\GeminiInvalidResponseException;
 use App\Exceptions\Gemini\GeminiPayloadTooLargeException;
 use App\Exceptions\Gemini\GeminiRateLimitException;
 use App\Exceptions\Gemini\GeminiServerException;
+use App\Services\Gemini\DTOs\GeminiResponseDTO;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -161,6 +162,139 @@ class GeminiService
         }
 
         return $parsed;
+    }
+
+    /**
+     * Send a prompt and return both parsed content and raw usageMetadata.
+     *
+     * Unlike send(), this method returns a GeminiResponseDTO that includes
+     * token counts from usageMetadata for instrumentation purposes.
+     *
+     * @throws GeminiApiKeyMissingException
+     * @throws GeminiRateLimitException
+     * @throws GeminiBadRequestException
+     * @throws GeminiServerException
+     * @throws GeminiInvalidResponseException
+     */
+    public function sendWithMetadata(string $prompt, string $model): GeminiResponseDTO
+    {
+        if (empty($this->apiKey)) {
+            throw new GeminiApiKeyMissingException('Gemini API key is not configured. Set GEMINI_API_KEY in your .env file.');
+        }
+
+        $url = "{$this->baseUrl}{$model}:generateContent?key={$this->apiKey}";
+
+        $response = Http::timeout($this->timeout)
+            ->when(app()->environment('local'), fn ($http) => $http->withoutVerifying())
+            ->post($url, $this->buildRequestBody($prompt));
+
+        if ($response->failed()) {
+            $this->handleError($response->status(), $response->body());
+        }
+
+        $responseData = $response->json();
+
+        if (! is_array($responseData)) {
+            Log::channel('gemini')->error('Gemini returned non-JSON response', [
+                'model' => $model,
+                'raw_response' => $response->body(),
+            ]);
+
+            throw new GeminiInvalidResponseException(
+                'Gemini returned non-JSON response body.'
+            );
+        }
+
+        $text = $this->extractText($responseData);
+
+        $parsed = json_decode($this->cleanMarkdownJson($text), true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            Log::channel('gemini')->error('Gemini returned invalid JSON', [
+                'model' => $model,
+                'raw_response' => $text,
+                'json_error' => json_last_error_msg(),
+            ]);
+
+            throw new GeminiInvalidResponseException(
+                'Gemini returned invalid JSON: '.json_last_error_msg()
+            );
+        }
+
+        return GeminiResponseDTO::fromArray($responseData, $parsed);
+    }
+
+    /**
+     * Send a multimodal prompt and return both parsed content and raw usageMetadata.
+     *
+     * @param  array<int,array{path:string,mime_type:string}>  $imagenes
+     *
+     * @throws GeminiApiKeyMissingException
+     * @throws GeminiPayloadTooLargeException
+     * @throws GeminiRateLimitException
+     * @throws GeminiBadRequestException
+     * @throws GeminiServerException
+     * @throws GeminiInvalidResponseException
+     */
+    public function sendMultimodalWithMetadata(string $prompt, array $imagenes, string $model): GeminiResponseDTO
+    {
+        if (empty($this->apiKey)) {
+            throw new GeminiApiKeyMissingException('Gemini API key is not configured. Set GEMINI_API_KEY in your .env file.');
+        }
+
+        $maxBytes = (int) config('services.gemini.multimodal_max_payload_bytes', 100 * 1024 * 1024);
+        $totalSize = 0;
+
+        foreach ($imagenes as $img) {
+            $totalSize += filesize($img['path']);
+        }
+
+        if ($totalSize > $maxBytes) {
+            throw new GeminiPayloadTooLargeException($totalSize, $maxBytes);
+        }
+
+        $url = "{$this->baseUrl}{$model}:generateContent?key={$this->apiKey}";
+
+        $response = Http::timeout($this->timeout)
+            ->when(app()->environment('local'), fn ($http) => $http->withoutVerifying())
+            ->post($url, $this->buildRequestBodyMultimodal($prompt, $imagenes));
+
+        if ($response->failed()) {
+            $this->handleError($response->status(), $response->body());
+        }
+
+        $responseData = $response->json();
+
+        if (! is_array($responseData)) {
+            Log::channel('gemini')->error('Gemini returned non-JSON response (multimodal)', [
+                'model'       => $model,
+                'image_count' => count($imagenes),
+                'raw_response' => $response->body(),
+            ]);
+
+            throw new GeminiInvalidResponseException(
+                'Gemini returned non-JSON response body.'
+            );
+        }
+
+        $text = $this->extractText($responseData);
+
+        $parsed = json_decode($this->cleanMarkdownJson($text), true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            Log::channel('gemini')->error('Gemini returned invalid JSON (multimodal)', [
+                'model'       => $model,
+                'image_count' => count($imagenes),
+                'raw_response' => $text,
+                'json_error'  => json_last_error_msg(),
+            ]);
+
+            throw new GeminiInvalidResponseException(
+                'Gemini returned invalid JSON: '.json_last_error_msg()
+            );
+        }
+
+        return GeminiResponseDTO::fromArray($responseData, $parsed);
     }
 
     /**

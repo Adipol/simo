@@ -20,15 +20,17 @@ class Cambio extends Model
     protected $fillable = [
         'fuente_id', 'fecha', 'hash_anterior', 'hash_nuevo',
         'lineas_quitadas', 'lineas_nuevas', 'diff_texto',
-        'posibles_peps', 'revisado',
-        'gemini_analyzed', 'gemini_analisis_json',
+        'posibles_peps', 'revisado', 'revisado_at',
+        'gemini_analyzed', 'gemini_analyzed_at', 'gemini_analisis_json',
         'imagenes_cambio_json',
     ];
 
     protected $casts = [
-        'fecha' => 'datetime',
-        'revisado' => 'boolean',
-        'gemini_analyzed' => 'boolean',
+        'fecha'              => 'datetime',
+        'revisado'           => 'boolean',
+        'revisado_at'        => 'datetime',
+        'gemini_analyzed'    => 'boolean',
+        'gemini_analyzed_at' => 'datetime',
         'gemini_analisis_json' => 'array',
         'imagenes_cambio_json' => 'array',
     ];
