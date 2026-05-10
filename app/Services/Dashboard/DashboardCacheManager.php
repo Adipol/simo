@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Cache;
 
 final class DashboardCacheManager
 {
-    private const KEY_PREFIX = 'dashboard:';
+    public const KEY_PREFIX = 'dashboard:';
 
     /**
      * Retrieve a value from cache or compute it via the callback.
@@ -30,13 +30,11 @@ final class DashboardCacheManager
 
     /**
      * Remove all cache keys that start with the dashboard prefix.
+     * Uses the registered known-keys list since the default cache stores
+     * (array/file/database) do not support pattern-based deletion.
      */
     public function forgetAll(): void
     {
-        $store = Cache::getStore();
-
-        // If the store supports tags, use them; otherwise flush all dashboard keys by prefix.
-        // For Array/file/database stores that don't support tags, we track known keys.
         foreach ($this->knownDashboardKeys() as $key) {
             Cache::forget($key);
         }
@@ -44,7 +42,8 @@ final class DashboardCacheManager
 
     /**
      * Build a per-user scoped key (used when cached payload differs by user).
-     * For PR1.1 Phase 1 this is declared but not used in practice.
+     * For PR1.1 the payload is single + canSeeDetails flag resolved post-cache,
+     * so this method is available but not called yet.
      */
     public function keyForUser(string $base, ?int $userId): string
     {
@@ -64,15 +63,15 @@ final class DashboardCacheManager
     private function knownDashboardKeys(): array
     {
         return [
-            'dashboard:summary:hero',
-            'dashboard:summary:triage',
-            'dashboard:summary:backlog',
-            'dashboard:summary:ultima',
-            'dashboard:summary:recent',
-            'dashboard:summary:spark',
-            'dashboard:health',
-            'dashboard:health:latency',
-            'dashboard:health:quota',
+            self::KEY_PREFIX . 'summary:hero',
+            self::KEY_PREFIX . 'summary:triage',
+            self::KEY_PREFIX . 'summary:backlog',
+            self::KEY_PREFIX . 'summary:ultima',
+            self::KEY_PREFIX . 'summary:recent',
+            self::KEY_PREFIX . 'summary:spark',
+            self::KEY_PREFIX . 'health',
+            self::KEY_PREFIX . 'health:latency',
+            self::KEY_PREFIX . 'health:quota',
         ];
     }
 }
