@@ -23,24 +23,25 @@ class ResultadoScraping extends Model
         'url', 'keyword', 'sitio_id', 'pais', 'categoria', 'titulo', 'contexto',
         'fecha_encontrado', 'relevance_score', 'found_in_title',
         'leido', 'relevante', 'descartado', 'archivado_at', 'notas',
-        'gemini_analyzed', 'gemini_is_pep', 'gemini_error_motivo',
+        'gemini_analyzed', 'gemini_analyzed_at', 'gemini_is_pep', 'gemini_error_motivo',
         'gemini_nombre', 'gemini_nombre_normalizado', 'gemini_cargo',
         'gemini_categoria', 'gemini_entidad_tipo', 'gemini_confianza', 'gemini_motivo',
         'secundario_de',
     ];
 
     protected $casts = [
-        'found_in_title' => 'boolean',
-        'leido' => 'boolean',
-        'relevante' => 'boolean',
-        'descartado' => 'boolean',
-        'archivado_at' => 'datetime',
-        'fecha_encontrado' => 'datetime',
-        'relevance_score' => 'integer',
-        'gemini_analyzed' => 'boolean',
-        'gemini_is_pep' => 'boolean',
-        'gemini_confianza' => 'integer',
-        'secundario_de' => 'integer',
+        'found_in_title'     => 'boolean',
+        'leido'              => 'boolean',
+        'relevante'          => 'boolean',
+        'descartado'         => 'boolean',
+        'archivado_at'       => 'datetime',
+        'fecha_encontrado'   => 'datetime',
+        'relevance_score'    => 'integer',
+        'gemini_analyzed'    => 'boolean',
+        'gemini_analyzed_at' => 'datetime',
+        'gemini_is_pep'      => 'boolean',
+        'gemini_confianza'   => 'integer',
+        'secundario_de'      => 'integer',
     ];
 
     public function sitio(): BelongsTo

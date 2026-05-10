@@ -8,7 +8,9 @@ use App\Exceptions\Gemini\GeminiBadRequestException;
 use App\Exceptions\Gemini\GeminiInvalidResponseException;
 use App\Exceptions\Gemini\GeminiPayloadTooLargeException;
 use App\Models\Cambio;
+use App\Models\GeminiUsageLog;
 use App\Services\Gemini\DTOs\AnalisisCambioDTO;
+use App\Services\Gemini\DTOs\GeminiResponseDTO;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 
@@ -29,6 +31,12 @@ class GeminiAnalisisService
         }
 
         foreach ($records as $cambio) {
+            // Idempotency guard: skip already-analyzed cambios.
+            // gemini_analyzed_at IS NOT NULL is the canonical "done" signal.
+            if ($cambio->gemini_analyzed_at !== null) {
+                continue;
+            }
+
             // Triple condición: kill switch global + cambio con imágenes + fuente con toggle ON.
             // Esto protege a cambios huérfanos: si la fuente apagó analizar_imagenes,
             // los cambios viejos con imágenes en JSON van a text-only (no consumen tokens
@@ -54,6 +62,7 @@ class GeminiAnalisisService
                 $this->persistirAnalisis(
                     $cambio,
                     AnalisisCambioDTO::sinNovedad('Cambio sin diff de texto: no se analizó.'),
+                    null,
                 );
 
                 return;
@@ -65,11 +74,13 @@ class GeminiAnalisisService
 
             $prompt = $this->builder->analisisCambio($diff, $fuenteNombre, $organismoNombre);
 
-            $response = $this->gemini->send($prompt, config('services.gemini.pro_model'));
+            $model = config('services.gemini.pro_model');
 
-            $dto = AnalisisCambioDTO::fromArray($response);
+            $geminiResponse = $this->gemini->sendWithMetadata($prompt, $model);
 
-            $this->persistirAnalisis($cambio, $dto);
+            $dto = AnalisisCambioDTO::fromArray($geminiResponse->content);
+
+            $this->persistirAnalisis($cambio, $dto, $geminiResponse, $model, 'analisis_cambio');
         } catch (GeminiInvalidResponseException|GeminiBadRequestException $e) {
             $this->marcarFallido($cambio, $e);
         }
@@ -92,6 +103,7 @@ class GeminiAnalisisService
                 $this->persistirAnalisis(
                     $cambio,
                     AnalisisCambioDTO::sinNovedad('Cambio sin diff ni imágenes válidas: no se analizó.'),
+                    null,
                 );
 
                 return;
@@ -121,11 +133,11 @@ class GeminiAnalisisService
                 'image_count' => count($imagenes),
             ]);
 
-            $response = $this->gemini->sendMultimodal($prompt, $imagenes, $visionModel);
+            $geminiResponse = $this->gemini->sendMultimodalWithMetadata($prompt, $imagenes, $visionModel);
 
-            $dto = AnalisisCambioDTO::fromArray($response);
+            $dto = AnalisisCambioDTO::fromArray($geminiResponse->content);
 
-            $this->persistirAnalisis($cambio, $dto);
+            $this->persistirAnalisis($cambio, $dto, $geminiResponse, $visionModel, 'analisis_multimodal');
 
             Log::channel('gemini')->info('procesarCambioMultimodal completado', [
                 'cambio_id' => $cambio->id,
@@ -150,7 +162,7 @@ class GeminiAnalisisService
         $resolved = [];
 
         foreach ($entries as $entry) {
-            $absPath = storage_path('app/' . $entry['path']);
+            $absPath = storage_path('app/'.$entry['path']);
 
             if (! is_readable($absPath)) {
                 Log::channel('gemini')->warning('resolverImagenes: image not readable, skipping', [
@@ -170,10 +182,18 @@ class GeminiAnalisisService
         return $resolved;
     }
 
-    private function persistirAnalisis(Cambio $cambio, AnalisisCambioDTO $dto): void
-    {
+    private function persistirAnalisis(
+        Cambio $cambio,
+        AnalisisCambioDTO $dto,
+        ?GeminiResponseDTO $geminiResponse,
+        string $model = '',
+        string $requestType = 'analisis_cambio',
+    ): void {
+        $now = now();
+
         $cambio->update([
             'gemini_analyzed' => true,
+            'gemini_analyzed_at' => $now,
             'gemini_analisis_json' => [
                 'persona_removida' => $dto->personaRemovida,
                 'persona_nueva' => $dto->personaNueva,
@@ -184,6 +204,34 @@ class GeminiAnalisisService
                 'personas_detectadas' => $dto->personasDetectadas,
             ],
         ]);
+
+        // Write usage log if we have a real Gemini response (not a no-op guard path).
+        if ($geminiResponse !== null) {
+            if (! $geminiResponse->hasUsageMetadata()) {
+                Log::channel('gemini')->warning('AnalisisCambio: usageMetadata ausente en respuesta Gemini', [
+                    'cambio_id' => $cambio->id,
+                    'request_type' => $requestType,
+                ]);
+            }
+
+            // The usage_log insert must NEVER break the analysis result.
+            try {
+                GeminiUsageLog::create([
+                    'model' => $model,
+                    'prompt_tokens' => $geminiResponse->promptTokens(),
+                    'completion_tokens' => $geminiResponse->completionTokens(),
+                    'total_tokens' => $geminiResponse->totalTokens(),
+                    'request_type' => $requestType,
+                    'cambio_id' => $cambio->id,
+                    'resultado_scraping_id' => null,
+                ]);
+            } catch (\Throwable $e) {
+                Log::channel('gemini')->error('AnalisisCambio: error al insertar gemini_usage_log (análisis guardado)', [
+                    'cambio_id' => $cambio->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
 
         Log::channel('gemini')->info('AnalisisCambio completado', [
             'cambio_id' => $cambio->id,
