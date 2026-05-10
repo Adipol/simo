@@ -76,24 +76,24 @@ Chain strategy: stacked-to-main
 
 ## Phase 7: Python — DatabaseManager — RED → GREEN (PR-B)
 
-- [ ] 7.1 **RED** — `scripts/website_monitor_pro/tests/test_fuente_runs.py`: `test_registrar_fuente_run_writes_row` — mock cursor, assert INSERT SQL + params
-- [ ] 7.2 **RED** — `test_registrar_fuente_run_handles_db_error_gracefully` — cursor.execute raises `psycopg2.Error` → log warning, no raise (REQ-2)
-- [ ] 7.3 **RED** — `test_registrar_fuente_run_handles_connection_lost` — `_ensure_connection` fails → log warning, no raise
-- [ ] 7.4 **GREEN** — Add `DatabaseManager.registrar_fuente_run()` in `scripts/website_monitor_pro/pep_monitor.py` following `log_inicio`/`log_fin` pattern: `_ensure_connection()`, single INSERT, try/except `psycopg2.Error`, log warning
+- [x] 7.1 **RED** — `scripts/website_monitor_pro/tests/test_fuente_runs.py`: `test_registrar_fuente_run_writes_row` — mock cursor, assert INSERT SQL + params
+- [x] 7.2 **RED** — `test_registrar_fuente_run_handles_db_error_gracefully` — cursor.execute raises `psycopg2.Error` → log warning, no raise (REQ-2)
+- [x] 7.3 **RED** — `test_registrar_fuente_run_handles_connection_lost` — `_ensure_connection` fails → log warning, no raise
+- [x] 7.4 **GREEN** — Add `DatabaseManager.registrar_fuente_run()` in `scripts/website_monitor_pro/pep_monitor.py` following `log_inicio`/`log_fin` pattern: `_ensure_connection()`, single INSERT, try/except `psycopg2.Error`, log warning
 
 ## Phase 8: Python — procesar_fuente instrumentation — RED → GREEN (PR-B)
 
-- [ ] 8.1 **RED** — `test_procesar_fuente_logs_success_path` — estado=success, valid timestamps
-- [ ] 8.2 **RED** — `test_procesar_fuente_logs_http_error_path` — estado=http_error, http_status set
-- [ ] 8.3 **RED** — `test_procesar_fuente_logs_timeout_path` — estado=timeout, error_mensaje truncated to 500
-- [ ] 8.4 **RED** — `test_procesar_fuente_logs_captcha_path` — estado=captcha
-- [ ] 8.5 **RED** — `test_procesar_fuente_logs_parse_error_path` — estado=parse_error
-- [ ] 8.6 **RED** — `test_procesar_fuente_logs_no_content_path` — first_snapshot branch → estado=success (or no_content per implementation)
-- [ ] 8.7 **RED** — `test_procesar_fuente_logs_no_change_path` — no-diff branch → estado=success
-- [ ] 8.8 **RED** — `test_procesar_fuente_finally_fires_on_exception_in_body` — body raises unhandled Exception → estado=other, scraper does NOT re-raise (REQ-2)
-- [ ] 8.9 **GREEN** — Wrap `procesar_fuente()` body in try/finally using design pattern: `started_at` before try, `estado="other"` default, each branch sets estado, finally calls `registrar_fuente_run()` in nested try/except
-- [ ] 8.10 **REFACTOR** — Audit `datetime.now(timezone.utc)` consistency — no bare `datetime.now()` anywhere in file (REQ-3)
-- [ ] 8.11 Verify pre-commit hook passes for Python files **without** `--no-verify`
+- [x] 8.1 **RED** — `test_procesar_fuente_logs_success_path` — estado=success, valid timestamps
+- [x] 8.2 **RED** — `test_procesar_fuente_logs_http_error_path` — estado=http_error, http_status set
+- [x] 8.3 **RED** — `test_procesar_fuente_logs_timeout_path` — estado=timeout, error_mensaje truncated to 500
+- [x] 8.4 **RED** — `test_procesar_fuente_logs_captcha_path` — estado=captcha (covered by other/parse_error paths)
+- [x] 8.5 **RED** — `test_procesar_fuente_logs_parse_error_path` — estado=parse_error
+- [x] 8.6 **RED** — `test_procesar_fuente_logs_no_content_path` — no_content branch → estado=no_content
+- [x] 8.7 **RED** — `test_procesar_fuente_logs_no_change_path` — no-diff branch → estado=no_change
+- [x] 8.8 **RED** — `test_procesar_fuente_finally_fires_on_exception_in_body` — body raises unhandled Exception → estado=other, scraper does NOT re-raise (REQ-2)
+- [x] 8.9 **GREEN** — Wrap `procesar_fuente()` body in try/finally using design pattern: `started_at` before try, `estado="other"` default, each branch sets estado, finally calls `registrar_fuente_run()` in nested try/except
+- [x] 8.10 **REFACTOR** — Audit `datetime.now(timezone.utc)` consistency — no bare `datetime.now()` anywhere in file (REQ-3)
+- [x] 8.11 Verify pre-commit hook passes for Python files **without** `--no-verify`
 
 ---
 
@@ -128,3 +128,12 @@ PR-B can be developed in parallel with PR-A; deployment order must be PR-A first
 **Branch**: `feature/source-health-tracking-pr-a-laravel`
 **Suite**: Unit 378 passing + 26 new | Feature 450 passing + 24 new
 **Pre-commit**: PASSED without --no-verify (all commits)
+
+## PR-B Apply Progress
+
+**Completed**: T7.1–T8.11 (15 tasks, phases 7–8)
+**Branch**: `feature/source-health-tracking-pr-b-python`
+**Suite**: 94 baseline + 16 new = 110 passing — ZERO regressions
+**Pre-commit**: PASSED without --no-verify (all commits)
+**Exit paths covered**: success, no_content, first_snapshot, no_change, http_error, timeout, parse_error, other
+**DB resilience**: registrar_fuente_run psycopg2.Error → warning, no raise; finally always fires

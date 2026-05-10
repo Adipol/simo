@@ -24,7 +24,7 @@ import socket
 import difflib
 import unicodedata
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from logging.handlers import RotatingFileHandler
 
@@ -76,6 +76,14 @@ class Config:
     CHECK_INTERVAL: int = int(os.getenv("CHECK_INTERVAL", "3600"))
     REQUEST_TIMEOUT: int = int(os.getenv("REQUEST_TIMEOUT", "20"))
     MAX_RETRIES: int = int(os.getenv("MAX_RETRIES", "3"))
+
+    # Timeouts específicos — configurables por operadores con sitios lentos
+    DB_CONNECT_TIMEOUT: int = int(os.getenv("DB_CONNECT_TIMEOUT", "10"))
+    IMG_HEAD_TIMEOUT: int = int(os.getenv("IMG_HEAD_TIMEOUT", "15"))
+    IMG_GET_TIMEOUT: int = int(os.getenv("IMG_GET_TIMEOUT", "30"))
+    PDF_TIMEOUT: int = int(os.getenv("PDF_TIMEOUT", "30"))
+    PLAYWRIGHT_GOTO_TIMEOUT: int = int(os.getenv("PLAYWRIGHT_GOTO_TIMEOUT", "45000"))
+    PLAYWRIGHT_WAIT_TIMEOUT: int = int(os.getenv("PLAYWRIGHT_WAIT_TIMEOUT", "4000"))
 
     # Reconexion backoff sin internet: 30 → 60 → 120 → 300s
     RECONNECT_DELAYS: list = field(default_factory=lambda: [30, 60, 120, 300])
@@ -173,7 +181,7 @@ class DatabaseManager:
                 user=config.DB_USER,
                 password=config.DB_PASSWORD,
                 dbname=config.DB_NAME,
-                connect_timeout=10,
+                connect_timeout=config.DB_CONNECT_TIMEOUT,
             )
             self.connection.autocommit = True
             self.cursor = self.connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -424,6 +432,46 @@ class DatabaseManager:
             logger.info("Conexion a BD cerrada")
 
     # ── Log de ejecuciones ───────────────────────────────────────
+    # ── Fuente runs ──────────────────────────────────────────────
+    def registrar_fuente_run(
+        self,
+        fuente_id: int,
+        started_at: datetime,
+        finished_at: datetime,
+        estado: str,
+        http_status: Optional[int],
+        cambios_detectados: int,
+        error_mensaje: Optional[str],
+        duracion_segundos: float,
+    ) -> None:
+        """
+        Inserta una fila en log_fuente_runs para registrar el resultado
+        de procesar una fuente.
+
+        Nunca propaga excepciones: un fallo de BD no debe romper el scraper.
+        """
+        try:
+            self._ensure_connection()
+            self.cursor.execute(
+                """INSERT INTO log_fuente_runs
+                   (fuente_id, started_at, finished_at, estado,
+                    http_status, cambios_detectados, error_mensaje,
+                    duracion_segundos)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                (
+                    fuente_id,
+                    started_at,
+                    finished_at,
+                    estado,
+                    http_status,
+                    cambios_detectados,
+                    error_mensaje[:500] if error_mensaje else None,
+                    duracion_segundos,
+                ),
+            )
+        except psycopg2.Error as e:
+            logger.warning(f"No se pudo registrar fuente run para fuente_id={fuente_id}: {e}")
+
     def log_inicio(self) -> Optional[int]:
         """Registra inicio de ejecucion en log_scripts. Devuelve el ID del registro."""
         self._ensure_connection()
@@ -588,7 +636,7 @@ def limpiar_pdf(url: str, session: requests.Session) -> tuple[list[str], str]:
         return [], "error_dependencia"
 
     try:
-        resp = session.get(url, timeout=30, verify=verify_para_url(url))
+        resp = session.get(url, timeout=config.PDF_TIMEOUT, verify=verify_para_url(url))
         resp.raise_for_status()
         lineas = []
         with pdfplumber.open(io.BytesIO(resp.content)) as pdf:
@@ -621,8 +669,8 @@ def obtener_html_js(url: str) -> tuple[str, str]:
             page.set_extra_http_headers(
                 {"User-Agent": "Mozilla/5.0 (compatible; PEPMonitor/2.0)"}
             )
-            page.goto(url, wait_until="domcontentloaded", timeout=45000)
-            page.wait_for_timeout(4000)
+            page.goto(url, wait_until="domcontentloaded", timeout=config.PLAYWRIGHT_GOTO_TIMEOUT)
+            page.wait_for_timeout(config.PLAYWRIGHT_WAIT_TIMEOUT)
             html = page.content()
             browser.close()
         return html, "js_playwright"
@@ -1060,7 +1108,7 @@ def comparar_imagenes_cascada(
 
         # ── HEAD request ───────────────────────────────────────────
         try:
-            head_resp = session.head(src_abs, timeout=15, allow_redirects=True, verify=verify_para_url(src_abs))
+            head_resp = session.head(src_abs, timeout=config.IMG_HEAD_TIMEOUT, allow_redirects=True, verify=verify_para_url(src_abs))
             head_headers = head_resp.headers
         except requests.exceptions.RequestException as e:
             logger.warning(f"HEAD fallido para {src_abs}: {e} — saltando imagen")
@@ -1113,7 +1161,7 @@ def comparar_imagenes_cascada(
         if debe_descargar:
             # ── GET y SHA-256 ─────────────────────────────────────
             try:
-                get_resp = session.get(src_abs, timeout=30, verify=verify_para_url(src_abs))
+                get_resp = session.get(src_abs, timeout=config.IMG_GET_TIMEOUT, verify=verify_para_url(src_abs))
                 image_bytes = get_resp.content
             except requests.exceptions.RequestException as e:
                 logger.warning(f"GET fallido para {src_abs}: {e} — saltando imagen")
@@ -1321,7 +1369,7 @@ class PEPMonitor:
 
         if tipo == "js":
             html, metodo_js = obtener_html_js(url)
-            return html, f"js_playwright"
+            return html, "js_playwright"
 
         try:
             resp = self.http.get(url, timeout=config.REQUEST_TIMEOUT, verify=verify_para_url(url))
@@ -1351,207 +1399,263 @@ class PEPMonitor:
         4. Cascada de imágenes para detectar cambios visuales
         5. Si hay cambio (texto o imagen): guardar diff, imágenes, alertar
         6. Actualizar snapshot + snapshot_imagenes
+        7. Registrar resultado en log_fuente_runs (siempre, vía finally)
         """
         url = fuente["url"]
         fuente_id = fuente["id"]
         nombre = fuente.get("nombre") or fuente.get("organismo") or url
         logger.info(f"Verificando: {nombre}")
 
-        # ── 8.4a: Obtener HTML crudo ───────────────────────────────
-        try:
-            html_raw, metodo_raw = self._obtener_html_raw(fuente)
-        except requests.ConnectionError:
-            logger.warning(f"Sin conexion al verificar: {nombre}")
-            return
+        # Variables de tracking — el finally las usa sin importar qué ocurra
+        started_at = datetime.now(timezone.utc)
+        estado = "other"          # default defensivo
+        http_status: Optional[int] = None
+        cambios_detectados = 0
+        error_mensaje: Optional[str] = None
 
-        # Para PDFs o errores sin HTML, fallback al flujo original de líneas
-        if not html_raw:
-            if fuente.get("tipo") == "pdf" or url.lower().endswith(".pdf"):
-                lineas_nuevas, metodo = limpiar_pdf(url, self.http)
-                html_raw = ""
+        try:
+            # ── Obtener HTML crudo ─────────────────────────────────
+            try:
+                html_raw, metodo_raw = self._obtener_html_raw(fuente)
+            except requests.exceptions.Timeout as e:
+                estado = "timeout"
+                error_mensaje = str(e)
+                return
+            except requests.exceptions.HTTPError as e:
+                estado = "http_error"
+                if e.response is not None:
+                    http_status = e.response.status_code
+                error_mensaje = str(e)
+                return
+            except requests.ConnectionError:
+                logger.warning(f"Sin conexion al verificar: {nombre}")
+                estado = "timeout"
+                error_mensaje = "ConnectionError"
+                return
+
+            # Para PDFs o errores sin HTML, fallback al flujo original de líneas
+            if not html_raw:
+                if fuente.get("tipo") == "pdf" or url.lower().endswith(".pdf"):
+                    lineas_nuevas, metodo = limpiar_pdf(url, self.http)
+                    html_raw = ""
+                else:
+                    logger.warning(f"Sin contenido extraido de: {nombre}")
+                    self.db.update_ultimo_check(fuente_id)
+                    estado = "no_content"
+                    return
+                imgs_actual: list[dict] = []
             else:
+                # Limpiar texto desde el HTML crudo
+                try:
+                    lineas_nuevas, metodo = limpiar_html(html_raw, fuente.get("selector_css"))
+                except Exception as e:
+                    estado = "parse_error"
+                    error_mensaje = str(e)
+                    return
+                # Extraer imágenes SOLO si la fuente tiene analizar_imagenes=true.
+                # Si no, las fotos decorativas (retratos, logos) se ignoran y no
+                # alimentan a Gemini multimodal — evita falsos positivos y ahorra tokens.
+                if fuente.get("analizar_imagenes"):
+                    imgs_actual = extraer_imagenes_html(html_raw, url)
+                else:
+                    imgs_actual = []
+
+            if not lineas_nuevas:
                 logger.warning(f"Sin contenido extraido de: {nombre}")
                 self.db.update_ultimo_check(fuente_id)
+                estado = "no_content"
                 return
-            imgs_actual: list[dict] = []
-        else:
-            # Limpiar texto desde el HTML crudo
-            lineas_nuevas, metodo = limpiar_html(html_raw, fuente.get("selector_css"))
-            # Extraer imágenes SOLO si la fuente tiene analizar_imagenes=true.
-            # Si no, las fotos decorativas (retratos, logos) se ignoran y no
-            # alimentan a Gemini multimodal — evita falsos positivos y ahorra tokens.
-            if fuente.get("analizar_imagenes"):
-                imgs_actual = extraer_imagenes_html(html_raw, url)
-            else:
-                imgs_actual = []
 
-        if not lineas_nuevas:
-            logger.warning(f"Sin contenido extraido de: {nombre}")
-            self.db.update_ultimo_check(fuente_id)
-            return
+            # ── Texto: hash y snapshot anterior ───────────────────
+            texto_nuevo = "\n".join(lineas_nuevas)
+            hash_nuevo = hashlib.sha256(texto_nuevo.encode("utf-8")).hexdigest()
+            snapshot_anterior = self.db.get_ultimo_snapshot(fuente_id)
 
-        # ── Texto: hash y snapshot anterior ───────────────────────
-        texto_nuevo = "\n".join(lineas_nuevas)
-        hash_nuevo = hashlib.sha256(texto_nuevo.encode("utf-8")).hexdigest()
-        snapshot_anterior = self.db.get_ultimo_snapshot(fuente_id)
-
-        if snapshot_anterior is None:
-            # Primera vez — guardar estado inicial sin alertar
-            self.db.guardar_snapshot(fuente_id, hash_nuevo, texto_nuevo, metodo)
-            logger.info(
-                f"[INICIO] Estado inicial guardado: {nombre} "
-                f"({len(lineas_nuevas)} lineas, metodo: {metodo})"
-            )
-            self.db.update_ultimo_check(fuente_id)
-            return
-
-        # ── 8.4a: Cascada de imágenes ──────────────────────────────
-        max_image_bytes = int(
-            os.getenv("GEMINI_MULTIMODAL_MAX_IMAGE_BYTES", str(5 * 1024 * 1024))
-        )
-        imgs_anterior = self._cargar_imgs_anterior(fuente_id)
-        imgs_a_analizar: list[dict] = []
-        imgs_metadata: list[dict] = []
-
-        if imgs_actual and html_raw:
-            try:
-                imgs_a_analizar, imgs_metadata = comparar_imagenes_cascada(
-                    imgs_actual, imgs_anterior, self.http, max_image_bytes
-                )
-            except Exception as e:
-                logger.error(f"Error en cascada de imágenes para {nombre}: {e}")
-                imgs_a_analizar = []
-                imgs_metadata = []
-
-        # ── Determinar si hay cambio real ──────────────────────────
-        texto_cambio = snapshot_anterior["hash"] != hash_nuevo
-        hay_diff_texto = False
-        diff: dict = {}
-
-        if texto_cambio:
-            lineas_anteriores = snapshot_anterior["texto"].split("\n")
-            diff = calcular_diff(lineas_anteriores, lineas_nuevas)
-            hay_diff_texto = bool(diff.get("quitadas") or diff.get("nuevas"))
-
-        hay_cambio_imagen = bool(imgs_a_analizar)
-
-        # Si no hay ningún cambio real → skip
-        if not hay_diff_texto and not hay_cambio_imagen:
-            if texto_cambio:
-                logger.debug(f"[OK] Reordenamiento sin contenido nuevo: {nombre}")
-            else:
-                logger.debug(f"[OK] Sin cambios: {nombre}")
-            # Actualizar snapshot si el hash cambió
-            if texto_cambio:
+            if snapshot_anterior is None:
+                # Primera vez — guardar estado inicial sin alertar
                 self.db.guardar_snapshot(fuente_id, hash_nuevo, texto_nuevo, metodo)
-            # Actualizar metadata de imágenes (ultima_vez_visto) si hubo imágenes
-            if imgs_metadata:
-                snapshot_row = self.db.get_ultimo_snapshot(fuente_id)
-                snap_id = None
-                if snapshot_row:
-                    self.db._ensure_connection()
-                    self.db.cursor.execute(
-                        "SELECT id FROM snapshots WHERE fuente_id = %s ORDER BY fecha DESC LIMIT 1",
-                        (fuente_id,),
+                logger.info(
+                    f"[INICIO] Estado inicial guardado: {nombre} "
+                    f"({len(lineas_nuevas)} lineas, metodo: {metodo})"
+                )
+                self.db.update_ultimo_check(fuente_id)
+                estado = "first_snapshot"
+                return
+
+            # ── Cascada de imágenes ────────────────────────────────
+            max_image_bytes = int(
+                os.getenv("GEMINI_MULTIMODAL_MAX_IMAGE_BYTES", str(5 * 1024 * 1024))
+            )
+            imgs_anterior = self._cargar_imgs_anterior(fuente_id)
+            imgs_a_analizar: list[dict] = []
+            imgs_metadata: list[dict] = []
+
+            if imgs_actual and html_raw:
+                try:
+                    imgs_a_analizar, imgs_metadata = comparar_imagenes_cascada(
+                        imgs_actual, imgs_anterior, self.http, max_image_bytes
                     )
-                    snap_row = self.db.cursor.fetchone()
-                    snap_id = snap_row["id"] if snap_row else None
-                if snap_id:
+                except Exception as e:
+                    logger.error(f"Error en cascada de imágenes para {nombre}: {e}")
+                    imgs_a_analizar = []
+                    imgs_metadata = []
+
+            # ── Determinar si hay cambio real ──────────────────────
+            texto_cambio = snapshot_anterior["hash"] != hash_nuevo
+            hay_diff_texto = False
+            diff: dict = {}
+
+            if texto_cambio:
+                lineas_anteriores = snapshot_anterior["texto"].split("\n")
+                diff = calcular_diff(lineas_anteriores, lineas_nuevas)
+                hay_diff_texto = bool(diff.get("quitadas") or diff.get("nuevas"))
+
+            hay_cambio_imagen = bool(imgs_a_analizar)
+
+            # Si no hay ningún cambio real → skip
+            if not hay_diff_texto and not hay_cambio_imagen:
+                if texto_cambio:
+                    logger.debug(f"[OK] Reordenamiento sin contenido nuevo: {nombre}")
+                else:
+                    logger.debug(f"[OK] Sin cambios: {nombre}")
+                # Actualizar snapshot si el hash cambió
+                if texto_cambio:
+                    self.db.guardar_snapshot(fuente_id, hash_nuevo, texto_nuevo, metodo)
+                # Actualizar metadata de imágenes (ultima_vez_visto) si hubo imágenes
+                if imgs_metadata:
+                    snapshot_row = self.db.get_ultimo_snapshot(fuente_id)
+                    snap_id = None
+                    if snapshot_row:
+                        self.db._ensure_connection()
+                        self.db.cursor.execute(
+                            "SELECT id FROM snapshots WHERE fuente_id = %s ORDER BY fecha DESC LIMIT 1",
+                            (fuente_id,),
+                        )
+                        snap_row = self.db.cursor.fetchone()
+                        snap_id = snap_row["id"] if snap_row else None
+                    if snap_id:
+                        registrar_snapshot_imagenes(
+                            self.db.cursor, snap_id, fuente_id, imgs_metadata
+                        )
+                self.db.update_ultimo_check(fuente_id)
+                estado = "no_change"
+                return
+
+            # ── Hay cambio real: insertar en cambios ───────────────
+            if not diff:
+                # Cambio solo de imagen, sin diff de texto
+                diff = {"quitadas": [], "nuevas": [], "diff_texto": "", "posibles_peps": ""}
+
+            cambio_id = self.db.guardar_cambio(
+                fuente_id=fuente_id,
+                hash_anterior=snapshot_anterior["hash"],
+                hash_nuevo=hash_nuevo,
+                lineas_quitadas=len(diff.get("quitadas", [])),
+                lineas_nuevas=len(diff.get("nuevas", [])),
+                diff_texto=diff.get("diff_texto", ""),
+                posibles_peps=diff.get("posibles_peps", ""),
+                # imagenes: None por ahora — se actualiza después del guardado a disco
+            )
+
+            if cambio_id is None:
+                logger.error(f"Fallo al insertar cambio para {nombre}")
+                self.db.update_ultimo_check(fuente_id)
+                return
+
+            # ── Guardar imágenes a disco ────────────────────────────
+            entries_imagenes: list[dict] = []
+            for idx, img in enumerate(imgs_a_analizar):
+                try:
+                    path_relativo = guardar_imagen_local(
+                        img["bytes"], cambio_id, idx, img.get("mime_type")
+                    )
+                    entries_imagenes.append({
+                        "path": path_relativo,
+                        "src_original": img["src_absoluto"],
+                        "sha256": img["sha256"],
+                        "mime_type": img.get("mime_type"),
+                    })
+                except ImagenStorageError as e:
+                    logger.error(f"No se pudo guardar imagen idx={idx} para cambio #{cambio_id}: {e}")
+                    # Continuar con las demás imágenes
+
+            # ── Actualizar imagenes_cambio_json si hay entries ──────
+            if entries_imagenes:
+                try:
+                    self.db.actualizar_imagenes_cambio(cambio_id, entries_imagenes)
+                    logger.info(
+                        f"[CAMBIO #{cambio_id}] {len(entries_imagenes)} imagen(es) guardadas"
+                    )
+                except Exception as e:
+                    logger.error(f"Error actualizando imagenes_cambio_json para #{cambio_id}: {e}")
+
+            # ── Mostrar alerta ─────────────────────────────────────
+            if hay_diff_texto:
+                mostrar_alerta(fuente, diff, cambio_id)
+                logger.warning(
+                    f"[CAMBIO #{cambio_id}] {nombre}: "
+                    f"+{len(diff.get('nuevas', []))} nuevas, "
+                    f"-{len(diff.get('quitadas', []))} eliminadas"
+                    + (f", {len(entries_imagenes)} img" if entries_imagenes else "")
+                )
+            elif hay_cambio_imagen:
+                logger.warning(
+                    f"[CAMBIO #{cambio_id}] {nombre}: "
+                    f"solo imágenes ({len(entries_imagenes)} nueva(s))"
+                )
+
+            # ── Registrar snapshot_imagenes ─────────────────────────
+            # Actualizar snapshot de texto
+            self.db.guardar_snapshot(fuente_id, hash_nuevo, texto_nuevo, metodo)
+
+            # Obtener el ID del snapshot recién creado
+            try:
+                self.db._ensure_connection()
+                self.db.cursor.execute(
+                    "SELECT id FROM snapshots WHERE fuente_id = %s ORDER BY fecha DESC LIMIT 1",
+                    (fuente_id,),
+                )
+                snap_row = self.db.cursor.fetchone()
+                snap_id = snap_row["id"] if snap_row else None
+            except Exception as e:
+                logger.error(f"No se pudo obtener snapshot_id para fuente {fuente_id}: {e}")
+                snap_id = None
+
+            if snap_id and imgs_metadata:
+                try:
                     registrar_snapshot_imagenes(
                         self.db.cursor, snap_id, fuente_id, imgs_metadata
                     )
+                except Exception as e:
+                    logger.error(f"Error registrando snapshot_imagenes para #{cambio_id}: {e}")
+
             self.db.update_ultimo_check(fuente_id)
-            return
+            cambios_detectados = len(diff.get("nuevas", [])) + len(diff.get("quitadas", []))
+            estado = "success"
 
-        # ── Hay cambio real: insertar en cambios ───────────────────
-        if not diff:
-            # Cambio solo de imagen, sin diff de texto
-            diff = {"quitadas": [], "nuevas": [], "diff_texto": "", "posibles_peps": ""}
-
-        cambio_id = self.db.guardar_cambio(
-            fuente_id=fuente_id,
-            hash_anterior=snapshot_anterior["hash"],
-            hash_nuevo=hash_nuevo,
-            lineas_quitadas=len(diff.get("quitadas", [])),
-            lineas_nuevas=len(diff.get("nuevas", [])),
-            diff_texto=diff.get("diff_texto", ""),
-            posibles_peps=diff.get("posibles_peps", ""),
-            # imagenes: None por ahora — se actualiza después del guardado a disco
-        )
-
-        if cambio_id is None:
-            logger.error(f"Fallo al insertar cambio para {nombre}")
-            self.db.update_ultimo_check(fuente_id)
-            return
-
-        # ── 8.4b: Guardar imágenes a disco ─────────────────────────
-        entries_imagenes: list[dict] = []
-        for idx, img in enumerate(imgs_a_analizar):
-            try:
-                path_relativo = guardar_imagen_local(
-                    img["bytes"], cambio_id, idx, img.get("mime_type")
-                )
-                entries_imagenes.append({
-                    "path": path_relativo,
-                    "src_original": img["src_absoluto"],
-                    "sha256": img["sha256"],
-                    "mime_type": img.get("mime_type"),
-                })
-            except ImagenStorageError as e:
-                logger.error(f"No se pudo guardar imagen idx={idx} para cambio #{cambio_id}: {e}")
-                # Continuar con las demás imágenes
-
-        # ── Actualizar imagenes_cambio_json si hay entries ─────────
-        if entries_imagenes:
-            try:
-                self.db.actualizar_imagenes_cambio(cambio_id, entries_imagenes)
-                logger.info(
-                    f"[CAMBIO #{cambio_id}] {len(entries_imagenes)} imagen(es) guardadas"
-                )
-            except Exception as e:
-                logger.error(f"Error actualizando imagenes_cambio_json para #{cambio_id}: {e}")
-
-        # ── Mostrar alerta ─────────────────────────────────────────
-        if hay_diff_texto:
-            mostrar_alerta(fuente, diff, cambio_id)
-            logger.warning(
-                f"[CAMBIO #{cambio_id}] {nombre}: "
-                f"+{len(diff.get('nuevas', []))} nuevas, "
-                f"-{len(diff.get('quitadas', []))} eliminadas"
-                + (f", {len(entries_imagenes)} img" if entries_imagenes else "")
-            )
-        elif hay_cambio_imagen:
-            logger.warning(
-                f"[CAMBIO #{cambio_id}] {nombre}: "
-                f"solo imágenes ({len(entries_imagenes)} nueva(s))"
-            )
-
-        # ── 8.4c: Registrar snapshot_imagenes ──────────────────────
-        # Actualizar snapshot de texto
-        self.db.guardar_snapshot(fuente_id, hash_nuevo, texto_nuevo, metodo)
-
-        # Obtener el ID del snapshot recién creado
-        try:
-            self.db._ensure_connection()
-            self.db.cursor.execute(
-                "SELECT id FROM snapshots WHERE fuente_id = %s ORDER BY fecha DESC LIMIT 1",
-                (fuente_id,),
-            )
-            snap_row = self.db.cursor.fetchone()
-            snap_id = snap_row["id"] if snap_row else None
         except Exception as e:
-            logger.error(f"No se pudo obtener snapshot_id para fuente {fuente_id}: {e}")
-            snap_id = None
+            # Catch-all defensivo — preserva estado="other" y loguea
+            error_mensaje = str(e)
+            logger.error(f"Error inesperado procesando fuente {nombre}: {e}")
 
-        if snap_id and imgs_metadata:
+        finally:
+            finished_at = datetime.now(timezone.utc)
+            duracion = (finished_at - started_at).total_seconds()
+            # El INSERT de métrica está en su propio try/except —
+            # un fallo de BD NUNCA debe romper el pipeline de scraping.
             try:
-                registrar_snapshot_imagenes(
-                    self.db.cursor, snap_id, fuente_id, imgs_metadata
+                self.db.registrar_fuente_run(
+                    fuente_id=fuente_id,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    estado=estado,
+                    http_status=http_status,
+                    cambios_detectados=cambios_detectados,
+                    error_mensaje=error_mensaje,
+                    duracion_segundos=duracion,
                 )
-            except Exception as e:
-                logger.error(f"Error registrando snapshot_imagenes para #{cambio_id}: {e}")
-
-        self.db.update_ultimo_check(fuente_id)
+            except psycopg2.Error as e:
+                logger.warning(f"Failed to log fuente run for {fuente_id}: {e}")
 
     def check_all(self) -> None:
         """Procesa todas las fuentes activas. Registra inicio/fin en log_scripts."""
@@ -1726,24 +1830,28 @@ class Exportador:
     ) -> str:
         """Exporta el historial de cambios a un CSV."""
         self.db._ensure_connection()
-        where = "WHERE 1=1"
-        params = []
+        conditions: list[str] = []
+        params: list = []
         if fuente_id:
-            where += " AND c.fuente_id = %s"
+            conditions.append("c.fuente_id = %s")
             params.append(fuente_id)
         if pais:
-            where += " AND f.pais = %s"
+            conditions.append("f.pais = %s")
             params.append(pais)
 
-        self.db.cursor.execute(
-            f"""SELECT c.id, c.fecha, f.nombre, f.organismo, f.pais, f.url,
-                       c.lineas_nuevas, c.lineas_quitadas, c.posibles_peps
-                FROM cambios c
-                JOIN fuentes f ON f.id = c.fuente_id
-                {where}
-                ORDER BY c.fecha DESC""",
-            params,
+        where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+        # Construir la SQL con placeholder seguro — ningún elemento de
+        # where_clause proviene de input externo; todos son strings literales.
+        sql = (
+            "SELECT c.id, c.fecha, f.nombre, f.organismo, f.pais, f.url,"
+            " c.lineas_nuevas, c.lineas_quitadas, c.posibles_peps"
+            " FROM cambios c"
+            " JOIN fuentes f ON f.id = c.fuente_id"
+            + (" " + where_clause if where_clause else "")
+            + " ORDER BY c.fecha DESC"
         )
+        self.db.cursor.execute(sql, params)
         datos = self.db.cursor.fetchall()
 
         fecha_str = datetime.now().strftime("%Y%m%d_%H%M%S")
