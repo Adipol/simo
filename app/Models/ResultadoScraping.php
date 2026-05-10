@@ -56,27 +56,6 @@ class ResultadoScraping extends Model
         return $this->hasMany(ResultadoPersona::class, 'resultado_scraping_id');
     }
 
-    public function feedback(): HasMany
-    {
-        return $this->hasMany(ClasificacionFeedback::class, 'resultado_scraping_id');
-    }
-
-    public function toGeminiSnapshot(): array
-    {
-        return [
-            'is_pep' => $this->gemini_is_pep,
-            'categoria' => $this->gemini_categoria,
-            'confianza' => $this->gemini_confianza,
-            'nombre' => $this->gemini_nombre,
-            'cargo' => $this->gemini_cargo,
-        ];
-    }
-
-    public function scopeWithFeedbackFromUser(Builder $query, int $userId): void
-    {
-        $query->with(['feedback' => fn ($q) => $q->where('usuario_id', $userId)]);
-    }
-
     public function scopeArchivado(Builder $query): void
     {
         $query->whereNotNull('archivado_at');
