@@ -73,4 +73,78 @@ final readonly class SourceHealthSummaryDTO
             last_aggregation_at: new \DateTimeImmutable,
         );
     }
+
+    /**
+     * Derived pill status for the health-strip component.
+     *
+     * Possible values: 'error' | 'warning' | 'ok' | 'no_data'
+     * - 'error'   = any muertas
+     * - 'warning' = any degradadas (no muertas)
+     * - 'ok'      = all ok or mixed ok+sin_info (positive signal)
+     * - 'no_data' = unavailable OR all sin_info (warmup)
+     */
+    public function pillStatus(): string
+    {
+        if (! $this->available) {
+            return 'no_data';
+        }
+
+        if ($this->muertas > 0) {
+            return 'error';
+        }
+
+        if ($this->degradadas > 0) {
+            return 'warning';
+        }
+
+        if ($this->ok === 0 && $this->sin_info > 0) {
+            return 'no_data';
+        }
+
+        return 'ok';
+    }
+
+    /**
+     * Derived pill display text for the health-strip component.
+     *
+     * Returns null when the pill should use its own "collecting" sub-template.
+     */
+    public function pillText(): ?string
+    {
+        if (! $this->available) {
+            return null; // template uses "Sin fuentes activas" sub-render
+        }
+
+        if ($this->ok === 0 && $this->sin_info > 0 && $this->degradadas === 0 && $this->muertas === 0) {
+            return null; // template uses "Recolectando datos…" sub-render
+        }
+
+        $parts = [];
+
+        if ($this->ok > 0) {
+            $parts[] = $this->ok.' ok';
+        }
+
+        if ($this->degradadas > 0) {
+            $parts[] = $this->degradadas.' degradada'.($this->degradadas > 1 ? 's' : '');
+        }
+
+        if ($this->muertas > 0) {
+            $parts[] = $this->muertas.' muerta'.($this->muertas > 1 ? 's' : '');
+        }
+
+        if ($this->sin_info > 0) {
+            $parts[] = $this->sin_info.' sin datos';
+        }
+
+        return implode(' / ', $parts);
+    }
+
+    /**
+     * Warmup state: active fuentes exist but none have run data yet.
+     */
+    public function isWarmup(): bool
+    {
+        return $this->available && $this->ok === 0 && $this->degradadas === 0 && $this->muertas === 0 && $this->sin_info > 0;
+    }
 }

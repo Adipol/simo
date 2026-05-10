@@ -7,12 +7,14 @@ namespace App\Livewire;
 use App\Models\User;
 use App\Services\Dashboard\DashboardHealthService;
 use App\Services\Dashboard\DashboardMetricsService;
+use App\Services\Dashboard\DashboardSourceHealthService;
 use App\Services\Dashboard\DashboardSummaryService;
 use App\Services\Dashboard\DTOs\DashboardSummaryDTO;
 use App\Services\Dashboard\DTOs\GeographicMetricsDTO;
 use App\Services\Dashboard\DTOs\PipelineHealthDTO;
 use App\Services\Dashboard\DTOs\PrecisionMetricsDTO;
 use App\Services\Dashboard\DTOs\RecentActivityDTO;
+use App\Services\Dashboard\DTOs\SourceHealthSummaryDTO;
 use App\Services\Dashboard\DTOs\TrendIndicatorsDTO;
 use App\Services\Dashboard\DTOs\VolumeMetricsDTO;
 use Livewire\Attributes\Computed;
@@ -44,14 +46,18 @@ class Dashboard extends Component
 
     private DashboardMetricsService $metricsService;
 
+    private DashboardSourceHealthService $sourceHealthService;
+
     public function boot(
         DashboardSummaryService $summaryService,
         DashboardHealthService $healthService,
         DashboardMetricsService $metricsService,
+        DashboardSourceHealthService $sourceHealthService,
     ): void {
         $this->summaryService = $summaryService;
         $this->healthService = $healthService;
         $this->metricsService = $metricsService;
+        $this->sourceHealthService = $sourceHealthService;
     }
 
     // ─── Toggle method ────────────────────────────────────────────────────
@@ -96,6 +102,14 @@ class Dashboard extends Component
         $user = auth()->user();
 
         return $this->healthService->getHealth($user instanceof User ? $user : null);
+    }
+
+    // ─── Computed: source health summary ─────────────────────────────────────
+
+    #[Computed(cache: true)]
+    public function sourceHealth(): SourceHealthSummaryDTO
+    {
+        return $this->sourceHealthService->getSummary();
     }
 
     // ─── Computed: lazy loaded metrics (stats section) ───────────────────
