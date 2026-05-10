@@ -49,6 +49,17 @@ final class DashboardSummaryService
         $this->cache->forget(self::CACHE_KEY);
     }
 
+    /**
+     * Mark a cambio as reviewed and bust the summary cache so the
+     * next snapshot reflects the change immediately.
+     */
+    public function marcarRevisado(int $cambioId): void
+    {
+        Cambio::findOrFail($cambioId)->update(['revisado' => true]);
+
+        $this->bust();
+    }
+
     // =========================================================================
     // Private computation methods
     // =========================================================================

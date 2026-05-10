@@ -33,74 +33,74 @@ Chain strategy: stacked-to-main
 
 All are pure classes — no DB, no framework deps. RED first, GREEN second.
 
-- [ ] T1 RED `tests/Unit/Services/Dashboard/HeroCardDTOTest.php` — `fromArray()` happy path; missing required field throws `\InvalidArgumentException`
-- [ ] T2 GREEN `app/Services/Dashboard/DTOs/HeroCardDTO.php` — typed readonly class, static `fromArray()`
-- [ ] T3 RED `tests/Unit/Services/Dashboard/TriageStripDTOTest.php` — 4 risk buckets + sparkline array shape
-- [ ] T4 GREEN `app/Services/Dashboard/DTOs/TriageStripDTO.php`
-- [ ] T5 RED `tests/Unit/Services/Dashboard/BacklogAgeDTOTest.php` — threshold + count fields
-- [ ] T6 GREEN `app/Services/Dashboard/DTOs/BacklogAgeDTO.php`
-- [ ] T7 RED `tests/Unit/Services/Dashboard/RecentDiscoveriesDTOTest.php` — `CambioSummary` sub-DTO + max-5 contract
-- [ ] T8 GREEN `app/Services/Dashboard/DTOs/RecentDiscoveriesDTO.php` + `CambioSummary.php`
-- [ ] T9 RED `tests/Unit/Services/Dashboard/DashboardSummaryDTOTest.php` — composite assembly from child DTOs
-- [ ] T10 GREEN `app/Services/Dashboard/DTOs/DashboardSummaryDTO.php`
-- [ ] T11 RED `tests/Unit/Services/Dashboard/HealthDTOsTest.php` — `PipelineHealthDTO`, `ScraperStatusDTO`, `QueueDepthDTO`, `LatencyDTO` (`available:false` stub), `GeminiQuotaDTO` (`available:false` stub)
-- [ ] T12 GREEN `app/Services/Dashboard/DTOs/{PipelineHealthDTO,ScraperStatusDTO,QueueDepthDTO,LatencyDTO,GeminiQuotaDTO}.php`
-- [ ] T13 RED `tests/Unit/Services/Dashboard/HeatmapPaletteTest.php` — table-driven: 0→grey, quintile boundaries, 10 ISO countries
-- [ ] T14 GREEN `app/Services/Dashboard/HeatmapPalette.php`
+- [x] T1 RED `tests/Unit/Services/Dashboard/HeroCardDTOTest.php` — `fromArray()` happy path; missing required field throws `\InvalidArgumentException`
+- [x] T2 GREEN `app/Services/Dashboard/DTOs/HeroCardDTO.php` — typed readonly class, static `fromArray()`
+- [x] T3 RED `tests/Unit/Services/Dashboard/TriageStripDTOTest.php` — 4 risk buckets + sparkline array shape
+- [x] T4 GREEN `app/Services/Dashboard/DTOs/TriageStripDTO.php`
+- [x] T5 RED `tests/Unit/Services/Dashboard/BacklogAgeDTOTest.php` — threshold + count fields
+- [x] T6 GREEN `app/Services/Dashboard/DTOs/BacklogAgeDTO.php`
+- [x] T7 RED `tests/Unit/Services/Dashboard/RecentDiscoveriesDTOTest.php` — `CambioSummary` sub-DTO + max-5 contract
+- [x] T8 GREEN `app/Services/Dashboard/DTOs/RecentDiscoveriesDTO.php` + `CambioSummary.php`
+- [x] T9 RED `tests/Unit/Services/Dashboard/DashboardSummaryDTOTest.php` — composite assembly from child DTOs
+- [x] T10 GREEN `app/Services/Dashboard/DTOs/DashboardSummaryDTO.php`
+- [x] T11 RED `tests/Unit/Services/Dashboard/HealthDTOsTest.php` — `PipelineHealthDTO`, `ScraperStatusDTO`, `QueueDepthDTO`, `LatencyDTO` (`available:false` stub), `GeminiQuotaDTO` (`available:false` stub)
+- [x] T12 GREEN `app/Services/Dashboard/DTOs/{PipelineHealthDTO,ScraperStatusDTO,QueueDepthDTO,LatencyDTO,GeminiQuotaDTO}.php`
+- [x] T13 RED `tests/Unit/Services/Dashboard/HeatmapPaletteTest.php` — table-driven: 0→grey, quintile boundaries, 10 ISO countries
+- [x] T14 GREEN `app/Services/Dashboard/HeatmapPalette.php`
 
 ## Phase 2 — Config + Cache Manager (PR1 · Block B)
 
-- [ ] T15 GREEN `config/dashboard.php` — `hero_formula` weights, `backlog_aging_days`, `summary_cache_ttl`, `health_cache_ttl`; no RED needed (config values covered by service tests)
-- [ ] T16 RED `tests/Unit/Services/Dashboard/DashboardCacheManagerTest.php` — get/set per key, bust by event (hero/triage/backlog/ultima keys forgotten)
-- [ ] T17 GREEN `app/Services/Dashboard/DashboardCacheManager.php` — wraps `Cache::remember` per metric key; `bust(string ...$keys)` public method; `bustSummaryOnRevisado()` convenience
+- [x] T15 GREEN `config/dashboard.php` — `hero_formula` weights, `backlog_aging_days`, `summary_cache_ttl`, `health_cache_ttl`; no RED needed (config values covered by service tests)
+- [x] T16 RED `tests/Unit/Services/Dashboard/DashboardCacheManagerTest.php` — get/set per key, bust by event (hero/triage/backlog/ultima keys forgotten)
+- [x] T17 GREEN `app/Services/Dashboard/DashboardCacheManager.php` — wraps `Cache::remember` per metric key; `bust(string ...$keys)` public method; `bustSummaryOnRevisado()` convenience
 
 ## Phase 3 — DashboardSummaryService (PR1 · Block C)
 
-- [ ] T18 RED `tests/Feature/Services/Dashboard/DashboardSummaryServiceTest.php` scenario: `getSnapshot()` returns full DTO — hero card, triage, backlog, recentDiscoveries
-- [ ] T19 RED same file scenario: empty DB → heroCard=null, triage all zeros, sparklines=[0,0,0,0,0,0,0], "Todo al día" path
-- [ ] T20 RED same file scenario: hero scoring formula — riesgo_alto×3, es_mae×2, días_pendiente÷3; tie broken by id DESC
-- [ ] T21 RED same file scenario: cache hit — second `getSnapshot()` adds 0 extra queries (use `DB::enableQueryLog()`)
-- [ ] T22 RED same file scenario: cache bust on `CambioRevisado` dispatched → hero/triage/backlog/ultima keys evicted
-- [ ] T23 GREEN `app/Services/Dashboard/DashboardSummaryService.php` — `getSnapshot()`, per-metric cache keys via `DashboardCacheManager`, SQL hero scoring with JSONB `gemini_analisis_json->>'riesgo'`, ORDER BY score DESC, fecha DESC, id DESC LIMIT 1
-- [ ] T24 REFACTOR extract sparkline 7-day computation into private `computeSparkline()` if shared with triage
+- [x] T18 RED `tests/Feature/Services/Dashboard/DashboardSummaryServiceTest.php` scenario: `getSnapshot()` returns full DTO — hero card, triage, backlog, recentDiscoveries
+- [x] T19 RED same file scenario: empty DB → heroCard=null, triage all zeros, sparklines=[0,0,0,0,0,0,0], "Todo al día" path
+- [x] T20 RED same file scenario: hero scoring formula — riesgo_alto×3, es_mae×2, días_pendiente÷3; tie broken by id DESC
+- [x] T21 RED same file scenario: cache hit — second `getSnapshot()` adds 0 extra queries (use `DB::enableQueryLog()`)
+- [x] T22 RED same file scenario: cache bust on `CambioRevisado` dispatched → hero/triage/backlog/ultima keys evicted
+- [x] T23 GREEN `app/Services/Dashboard/DashboardSummaryService.php` — `getSnapshot()`, per-metric cache keys via `DashboardCacheManager`, SQL hero scoring with JSONB `gemini_analisis_json->>'riesgo'`, ORDER BY score DESC, fecha DESC, id DESC LIMIT 1
+- [x] T24 REFACTOR extract sparkline 7-day computation into private `computeSparkline()` if shared with triage
 
 ## Phase 4 — DashboardHealthService (PR1 · Block D)
 
-- [ ] T25 RED `tests/Feature/Services/Dashboard/DashboardHealthServiceTest.php` scenario: `getHealth()` → `latency->available=false`, `geminiQuota->available=false` (PR1 stubs)
-- [ ] T26 RED same file scenario: scraper + pep_monitor status via `LogScript::ultimaEjecucion()` (45min→ok, no entry→sin_registros, 8h→warning)
-- [ ] T27 RED same file scenario: queue depth from `jobs` table grouped by queue name (3+5+2 → correct counts; empty → all zeros, available=true)
-- [ ] T28 RED same file scenario: `canSeeDetails=false` for operator; `canSeeDetails=true` for admin/supervisor; defaults false when unauthenticated
-- [ ] T29 GREEN `app/Services/Dashboard/DashboardHealthService.php` — `getHealth(?User $user)`, single cache key `dashboard:health` (15s) for scraper+queue; `canSeeDetails` resolved AFTER cache fetch from `Auth::user()->hasAnyRole()`
+- [x] T25 RED `tests/Feature/Services/Dashboard/DashboardHealthServiceTest.php` scenario: `getHealth()` → `latency->available=false`, `geminiQuota->available=false` (PR1 stubs)
+- [x] T26 RED same file scenario: scraper + pep_monitor status via `LogScript::ultimaEjecucion()` (45min→ok, no entry→sin_registros, 8h→warning)
+- [x] T27 RED same file scenario: queue depth from `jobs` table grouped by queue name (3+5+2 → correct counts; empty → all zeros, available=true)
+- [x] T28 RED same file scenario: `canSeeDetails=false` for operator; `canSeeDetails=true` for admin/supervisor; defaults false when unauthenticated
+- [x] T29 GREEN `app/Services/Dashboard/DashboardHealthService.php` — `getHealth(?User $user)`, single cache key `dashboard:health` (15s) for scraper+queue; `canSeeDetails` resolved AFTER cache fetch from `Auth::user()->hasAnyRole()`
 
 ## Phase 5 — Livewire Dashboard Refactor (PR1 · Block E)
 
-- [ ] T30 RED `tests/Feature/Livewire/DashboardTest.php` scenario: render() produces 0 direct Eloquent queries (DB::listen)
-- [ ] T31 RED same file scenario: `filtroDateRange`, `filtroPais`, `filtroCategoria` with `#[Url]` persist in URL on reload
-- [ ] T32 RED same file scenario: cold-cache wire:poll cycle executes ≤ 15 queries total
-- [ ] T33 RED same file scenario: `marcarRevisado` action dispatches bust; cache keys evicted
-- [ ] T34 GREEN `app/Livewire/Dashboard.php` — inject `DashboardSummaryService` + `DashboardHealthService` via constructor; add `#[Url]` to 3 filter props; `#[Computed]` for `summary()` and `health()`; remove all inline Eloquent calls
-- [ ] T35 GREEN add `#[Url]` to `filtroDateRange`, `filtroPais`, `filtroCategoria`; verify `resetPage()` on filter change
-- [ ] T36 GREEN `resources/views/livewire/dashboard.blade.php` — slim orchestrator with `@island('action')` wire:poll.30s, `@island('health')` wire:poll.15s, `@island('discovery')` wire:poll.60s
-- [ ] T37 REFACTOR ensure no logic in `render()`; all derived data via `#[Computed]`
+- [x] T30 RED `tests/Feature/Livewire/DashboardTest.php` scenario: render() produces 0 direct Eloquent queries (DB::listen)
+- [x] T31 RED same file scenario: `filtroDateRange`, `filtroPais`, `filtroCategoria` with `#[Url]` persist in URL on reload
+- [x] T32 RED same file scenario: cold-cache wire:poll cycle executes ≤ 15 queries total
+- [x] T33 RED same file scenario: `marcarRevisado` action dispatches bust; cache keys evicted
+- [x] T34 GREEN `app/Livewire/Dashboard.php` — inject `DashboardSummaryService` + `DashboardHealthService` via constructor; add `#[Url]` to 3 filter props; `#[Computed]` for `summary()` and `health()`; remove all inline Eloquent calls
+- [x] T35 GREEN add `#[Url]` to `filtroDateRange`, `filtroPais`, `filtroCategoria`; verify `resetPage()` on filter change
+- [x] T36 GREEN `resources/views/livewire/dashboard.blade.php` — slim orchestrator with `@island('action')` wire:poll.30s, `@island('health')` wire:poll.15s, `@island('discovery')` wire:poll.60s
+- [x] T37 REFACTOR ensure no logic in `render()`; all derived data via `#[Computed]`
 
 ## Phase 6 — Blade Sub-components (PR1 · Block F)
 
-- [ ] T38 RED `tests/Feature/View/Dashboard/ActionLayerTest.php` — hero card renders with risk badge + "Revisar ahora" link; null hero → "Todo al día ✓" empty state
-- [ ] T39 RED `tests/Feature/View/Dashboard/HealthStripTest.php` — colored pills for all users; numeric detail absent from DOM for non-admin (assertDontSee)
-- [ ] T40 RED `tests/Feature/View/Dashboard/DiscoveryLayerTest.php` — avatars + confidence color + risk badges; empty → teaching message
-- [ ] T41 RED `tests/Feature/View/Dashboard/SparklineTest.php` — SVG rendered with exactly 7 polyline points; all-zero → flat line (no error)
-- [ ] T42 RED `tests/Feature/View/Dashboard/LatamHeatmapTest.php` — 10 ISO country paths present; AR count=12 → dark fill; CO=0 → grey fill; all-zero → grey overlay
-- [ ] T43 GREEN `resources/views/components/dashboard/action-layer.blade.php` + `hero-card.blade.php` + `triage-strip.blade.php`/`triage-card.blade.php`
-- [ ] T44 GREEN `resources/views/components/dashboard/health-strip.blade.php` + `health-pill.blade.php`; `@if($health->canSeeDetails)` guards (NOT `class="hidden"`)
-- [ ] T45 GREEN `resources/views/components/dashboard/discovery-layer.blade.php` + `recent-pep-card.blade.php` + `recent-cambio-card.blade.php`
-- [ ] T46 GREEN `resources/views/components/simo-sparkline.blade.php` — pure inline SVG, 84×26 viewBox, polyline with computed points, ZERO JS
-- [ ] T47 GREEN `resources/views/components/dashboard/latam-heatmap.blade.php` — 10 ISO inline SVG paths, `<title>` hover, 5 quintile buckets via `HeatmapPalette::colorFor()`
-- [ ] T48 GREEN `resources/views/components/dashboard/analytics-section.blade.php` — `@can('ver dashboard estadisticas')` guard; Alpine `x-data/x-show` toggle
-- [ ] T49 REFACTOR extract shared sub-components surfaced during T43–T48
+- [x] T38 RED `tests/Feature/View/Dashboard/ActionLayerTest.php` — hero card renders with risk badge + "Revisar ahora" link; null hero → "Todo al día ✓" empty state
+- [x] T39 RED `tests/Feature/View/Dashboard/HealthStripTest.php` — colored pills for all users; numeric detail absent from DOM for non-admin (assertDontSee)
+- [x] T40 RED `tests/Feature/View/Dashboard/DiscoveryLayerTest.php` — avatars + confidence color + risk badges; empty → teaching message
+- [x] T41 RED `tests/Feature/View/Dashboard/SparklineTest.php` — SVG rendered with exactly 7 polyline points; all-zero → flat line (no error)
+- [x] T42 RED `tests/Feature/View/Dashboard/LatamHeatmapTest.php` — 10 ISO country paths present; AR count=12 → dark fill; CO=0 → grey fill; all-zero → grey overlay
+- [x] T43 GREEN `resources/views/components/dashboard/action-layer.blade.php` + `hero-card.blade.php` + `triage-strip.blade.php`/`triage-card.blade.php`
+- [x] T44 GREEN `resources/views/components/dashboard/health-strip.blade.php` + `health-pill.blade.php`; `@if($health->canSeeDetails)` guards (NOT `class="hidden"`)
+- [x] T45 GREEN `resources/views/components/dashboard/discovery-layer.blade.php` + `recent-pep-card.blade.php` + `recent-cambio-card.blade.php`
+- [x] T46 GREEN `resources/views/components/simo-sparkline.blade.php` — pure inline SVG, 84×26 viewBox, polyline with computed points, ZERO JS
+- [x] T47 GREEN `resources/views/components/dashboard/latam-heatmap.blade.php` — 10 ISO inline SVG paths, `<title>` hover, 5 quintile buckets via `HeatmapPalette::colorFor()`
+- [x] T48 GREEN `resources/views/components/dashboard/analytics-section.blade.php` — `@can('ver dashboard estadisticas')` guard; Alpine `x-data/x-show` toggle
+- [x] T49 REFACTOR extract shared sub-components surfaced during T43–T48
 
 ## Phase 7 — CSS Variables (PR1 · Block G)
 
-- [ ] T50 GREEN `resources/css/app.css` — add `:root { --simo-bg; --simo-surface; --simo-surface-muted; --simo-border; --simo-text-primary; --simo-text-secondary; --simo-text-muted; --simo-accent; --simo-danger; --simo-warning; --simo-success; }`; NO dark: block; NO existing class migration
+- [x] T50 GREEN `resources/css/app.css` — add `:root { --simo-bg; --simo-surface; --simo-surface-muted; --simo-border; --simo-text-primary; --simo-text-secondary; --simo-text-muted; --simo-accent; --simo-danger; --simo-warning; --simo-success; }`; NO dark: block; NO existing class migration
 
 ## Phase 8 — Permission + Integration Tests (PR1 · Blocks H+I)
 

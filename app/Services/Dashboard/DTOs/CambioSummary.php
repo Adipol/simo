@@ -28,4 +28,25 @@ final readonly class CambioSummary
             fecha: new \DateTimeImmutable((string) $data['fecha']),
         );
     }
+
+    /**
+     * Return the Tailwind badge class string for this cambio's riesgo level.
+     */
+    public function riskBadgeClass(): string
+    {
+        return match($this->riesgo) {
+            'alto'  => 'bg-rose-50 text-rose-600',
+            'medio' => 'bg-amber-50 text-amber-600',
+            'bajo'  => 'bg-emerald-50 text-emerald-600',
+            default => 'bg-zinc-100 text-zinc-500',
+        };
+    }
+
+    /**
+     * Return a human-readable relative time string (e.g. "hace 2 horas").
+     */
+    public function diffForHumans(): string
+    {
+        return \Carbon\Carbon::instance($this->fecha)->diffForHumans();
+    }
 }
