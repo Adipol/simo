@@ -163,9 +163,10 @@ class DedupeArticulosServiceTest extends TestCase
 
     public function test_procesar_is_noop_when_article_not_found(): void
     {
+        $this->expectNotToPerformAssertions();
+
         // Should not throw, just silently do nothing
         $this->service->procesar(999_999);
-        $this->assertTrue(true); // reached without exception
     }
 
     // ─── Excludes already-secondary articles from candidate pool ─────────────
