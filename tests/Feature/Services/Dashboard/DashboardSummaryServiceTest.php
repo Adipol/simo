@@ -229,7 +229,7 @@ class DashboardSummaryServiceTest extends TestCase
             'fuente_id'            => $fuente->id,
             'revisado'             => false,
             'gemini_analyzed'      => true,
-            'gemini_analisis_json' => ['riesgo' => 'alto'],
+            'gemini_analisis_json' => ['riesgo' => 'alto', 'persona_nueva' => 'Test Person'],
         ]);
 
         // 1 pending medio
@@ -237,7 +237,7 @@ class DashboardSummaryServiceTest extends TestCase
             'fuente_id'            => $fuente->id,
             'revisado'             => false,
             'gemini_analyzed'      => true,
-            'gemini_analisis_json' => ['riesgo' => 'medio'],
+            'gemini_analisis_json' => ['riesgo' => 'medio', 'persona_nueva' => 'Test Person'],
         ]);
 
         // 3 pending bajo
@@ -245,7 +245,7 @@ class DashboardSummaryServiceTest extends TestCase
             'fuente_id'            => $fuente->id,
             'revisado'             => false,
             'gemini_analyzed'      => true,
-            'gemini_analisis_json' => ['riesgo' => 'bajo'],
+            'gemini_analisis_json' => ['riesgo' => 'bajo', 'persona_nueva' => 'Test Person'],
         ]);
 
         // 1 revisado — must NOT be counted
@@ -253,7 +253,7 @@ class DashboardSummaryServiceTest extends TestCase
             'fuente_id'            => $fuente->id,
             'revisado'             => true,
             'gemini_analyzed'      => true,
-            'gemini_analisis_json' => ['riesgo' => 'alto'],
+            'gemini_analisis_json' => ['riesgo' => 'alto', 'persona_nueva' => 'Test Person'],
         ]);
 
         $snapshot = $this->service->getSnapshot();
@@ -285,7 +285,7 @@ class DashboardSummaryServiceTest extends TestCase
             'revisado'             => false,
             'fecha'                => now()->subDays(1),
             'gemini_analyzed'      => true,
-            'gemini_analisis_json' => ['riesgo' => 'alto'],
+            'gemini_analisis_json' => ['riesgo' => 'alto', 'persona_nueva' => 'Test Person'],
         ]);
 
         // Create 1 "alto" cambio older than 7 days — must NOT appear in sparkline
@@ -294,7 +294,7 @@ class DashboardSummaryServiceTest extends TestCase
             'revisado'             => false,
             'fecha'                => now()->subDays(10),
             'gemini_analyzed'      => true,
-            'gemini_analisis_json' => ['riesgo' => 'alto'],
+            'gemini_analisis_json' => ['riesgo' => 'alto', 'persona_nueva' => 'Test Person'],
         ]);
 
         $snapshot = $this->service->getSnapshot();
