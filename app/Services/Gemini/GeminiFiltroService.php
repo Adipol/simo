@@ -6,9 +6,11 @@ namespace App\Services\Gemini;
 
 use App\Exceptions\Gemini\GeminiBadRequestException;
 use App\Exceptions\Gemini\GeminiInvalidResponseException;
+use App\Models\GeminiUsageLog;
 use App\Models\ResultadoPersona;
 use App\Models\ResultadoScraping;
 use App\Services\Gemini\DTOs\FiltroResultadoDTO;
+use App\Services\Gemini\DTOs\GeminiResponseDTO;
 use App\Services\Normalization\NombreNormalizador;
 use App\Services\Normalization\NombreNormalizadorInterface;
 use Illuminate\Support\Collection;
@@ -27,6 +29,11 @@ class GeminiFiltroService
     public function analizarLote(Collection $records): void
     {
         foreach ($records as $record) {
+            // Idempotency guard: skip already-analyzed records.
+            if ($record->gemini_analyzed_at !== null) {
+                continue;
+            }
+
             $this->procesarRegistro($record);
         }
     }
@@ -35,9 +42,10 @@ class GeminiFiltroService
     {
         if (! $this->preFiltro->shouldAnalyzeWithGemini($record)) {
             $record->update([
-                'gemini_analyzed' => true,
-                'gemini_is_pep' => false,
-                'gemini_motivo' => '[PRE-FILTRO] Sin mención de cargo público en el texto.',
+                'gemini_analyzed'    => true,
+                'gemini_analyzed_at' => now(),
+                'gemini_is_pep'      => false,
+                'gemini_motivo'      => '[PRE-FILTRO] Sin mención de cargo público en el texto.',
             ]);
 
             return;
@@ -50,18 +58,24 @@ class GeminiFiltroService
                 $record->categoria ?? '',
             );
 
-            $response = $this->gemini->send($prompt, config('services.gemini.flash_model'));
+            $model = config('services.gemini.flash_model');
 
-            $dto = FiltroResultadoDTO::fromArray($response);
+            $geminiResponse = $this->gemini->sendWithMetadata($prompt, $model);
 
-            $this->persistirResultado($record, $dto);
+            $dto = FiltroResultadoDTO::fromArray($geminiResponse->content);
+
+            $this->persistirResultado($record, $dto, $geminiResponse, $model);
         } catch (GeminiInvalidResponseException|GeminiBadRequestException $e) {
             $this->marcarFallido($record, $e, $e->getMessage());
         }
     }
 
-    private function persistirResultado(ResultadoScraping $record, FiltroResultadoDTO $dto): void
-    {
+    private function persistirResultado(
+        ResultadoScraping $record,
+        FiltroResultadoDTO $dto,
+        ?GeminiResponseDTO $geminiResponse = null,
+        string $model = '',
+    ): void {
         $minConfianza = (int) config('services.gemini.min_confianza_pep', 70);
         $anyPepPassed = false;
 
@@ -74,7 +88,7 @@ class GeminiFiltroService
             } else {
                 Log::channel('gemini')->warning('Persona descartada por threshold', [
                     'record_id' => $record->id,
-                    'nombre' => $persona->nombre,
+                    'nombre'    => $persona->nombre,
                     'confianza' => $persona->confianza,
                     'threshold' => $minConfianza,
                 ]);
@@ -84,29 +98,57 @@ class GeminiFiltroService
 
             ResultadoPersona::create([
                 'resultado_scraping_id' => $record->id,
-                'nombre' => $persona->nombre,
-                'nombre_normalizado' => $normalizado,
-                'cargo' => $persona->cargo,
-                'categoria' => $persona->categoria,
-                'entidad_tipo' => $persona->entidadTipo,
-                'confianza' => $persona->confianza,
-                'evento' => $persona->evento,
-                'motivo' => $persona->motivo,
-                'threshold_passed' => $thresholdPassed,
+                'nombre'                => $persona->nombre,
+                'nombre_normalizado'    => $normalizado,
+                'cargo'                 => $persona->cargo,
+                'categoria'             => $persona->categoria,
+                'entidad_tipo'          => $persona->entidadTipo,
+                'confianza'             => $persona->confianza,
+                'evento'                => $persona->evento,
+                'motivo'                => $persona->motivo,
+                'threshold_passed'      => $thresholdPassed,
             ]);
         }
 
-        // Update the parent record
+        // Update the parent record with timestamp
         $record->update([
-            'gemini_analyzed' => true,
-            'gemini_is_pep' => $anyPepPassed,
-            'gemini_motivo' => $dto->motivoGeneral,
+            'gemini_analyzed'    => true,
+            'gemini_analyzed_at' => now(),
+            'gemini_is_pep'      => $anyPepPassed,
+            'gemini_motivo'      => $dto->motivoGeneral,
         ]);
 
+        // Write usage log
+        if ($geminiResponse !== null) {
+            if (! $geminiResponse->hasUsageMetadata()) {
+                Log::channel('gemini')->warning('FiltroPEP: usageMetadata ausente en respuesta Gemini', [
+                    'record_id' => $record->id,
+                ]);
+            }
+
+            // Must NEVER break the analysis result
+            try {
+                GeminiUsageLog::create([
+                    'model'                 => $model,
+                    'prompt_tokens'         => $geminiResponse->promptTokens(),
+                    'completion_tokens'     => $geminiResponse->completionTokens(),
+                    'total_tokens'          => $geminiResponse->totalTokens(),
+                    'request_type'          => 'filtro',
+                    'cambio_id'             => null,
+                    'resultado_scraping_id' => $record->id,
+                ]);
+            } catch (\Throwable $e) {
+                Log::channel('gemini')->error('FiltroPEP: error al insertar gemini_usage_log (análisis guardado)', [
+                    'record_id' => $record->id,
+                    'error'     => $e->getMessage(),
+                ]);
+            }
+        }
+
         Log::channel('gemini')->info('FiltroPEP completado', [
-            'record_id' => $record->id,
+            'record_id'           => $record->id,
             'personas_detectadas' => count($dto->personas),
-            'pep_passed' => $anyPepPassed,
+            'pep_passed'          => $anyPepPassed,
         ]);
     }
 
