@@ -209,7 +209,7 @@ LIMIT 1
 | `(leido)` | resultados_scraping | Triage unread count — verify in pending idx migration | Verify |
 | `(revisado, gemini_analyzed, fecha)` partial WHERE revisado=false | cambios | Hero hot path | **NEW PR1** (partial, small) |
 | `(gemini_analyzed_at)` | cambios | Latency window scan | **NEW PR2** |
-| `(created_at)` | log_gemini_usage | Daily quota aggregate | **NEW PR2** (table created with idx) |
+| `(created_at)` | gemini_usage_log | Daily quota aggregate | **NEW PR2** (table created with idx) |
 | `(queue)` | jobs | Likely already by Laravel default | Verify, add if missing |
 
 **PR1 migration**: `2026_05_10_*_add_dashboard_indexes_to_cambios.php` — adds the two cambios indexes. Reversible. No data change.
@@ -268,7 +268,7 @@ Blade conditionally renders detail:
 | 2 | `add_gemini_analyzed_at_to_resultados_scraping_table` | same |
 | 3 | ~~`change_fecha_to_timestamp`~~ | **CANCELLED** — already timestamp |
 | 4 | `add_revisado_at_to_cambios_table` | nullable timestamp; backfill `UPDATE cambios SET revisado_at=fecha WHERE revisado=true` (one-time, in same migration) |
-| 5 | `create_log_gemini_usage_table` | per spec; index on `created_at`, FKs nullable to cambios + resultados_scraping |
+| 5 | `create_gemini_usage_log_table` | per spec; index on `created_at`, FKs nullable to cambios + resultados_scraping |
 
 **Rollback**: each migration `down()` drops the column/table; safe (no destructive change to existing data).
 

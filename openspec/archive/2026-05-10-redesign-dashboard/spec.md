@@ -278,11 +278,11 @@ In PR1, the service MUST return a `LatencyDTO` with `available = false` because 
 
 #### REQ-4: Gemini Quota Stub (PR1)
 
-In PR1, the service MUST return a `GeminiQuotaDTO` with `available = false` because `log_gemini_usage` table does not yet exist.
+In PR1, the service MUST return a `GeminiQuotaDTO` with `available = false` because `gemini_usage_log` table does not yet exist.
 
 ##### Scenario: PR1 quota stub
 
-- GIVEN the service is running in PR1 (no `log_gemini_usage` table)
+- GIVEN the service is running in PR1 (no `gemini_usage_log` table)
 - WHEN `getHealth()` is called
 - THEN `geminiQuota.available = false` and `geminiQuota.dailyTokens = null`
 
@@ -527,7 +527,7 @@ The `app.css` file MUST define CSS custom properties (`--simo-primary`, `--simo-
 
 ### Purpose
 
-Persist token usage and timestamps from Gemini API responses into `log_gemini_usage` table to enable daily quota visibility and cost tracking.
+Persist token usage and timestamps from Gemini API responses into `gemini_usage_log` table to enable daily quota visibility and cost tracking.
 
 ### Stakeholders
 
@@ -539,7 +539,7 @@ Persist token usage and timestamps from Gemini API responses into `log_gemini_us
 
 **Inputs**: Gemini API response `usageMetadata` object + calling context
 
-**New table** `log_gemini_usage`:
+**New table** `gemini_usage_log`:
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -563,19 +563,19 @@ Persist token usage and timestamps from Gemini API responses into `log_gemini_us
 
 #### REQ-1: Log Row Per Successful API Call
 
-The `GeminiService` MUST insert one row into `log_gemini_usage` for every API call that receives a successful response (HTTP 200 with valid structure).
+The `GeminiService` MUST insert one row into `gemini_usage_log` for every API call that receives a successful response (HTTP 200 with valid structure).
 
 ##### Scenario: Successful filtro call
 
 - GIVEN `GeminiFiltroService::filtrar()` completes successfully with `usageMetadata` present
 - WHEN the method returns
-- THEN exactly one `log_gemini_usage` row exists with `request_type = 'filtro'` and correct token counts
+- THEN exactly one `gemini_usage_log` row exists with `request_type = 'filtro'` and correct token counts
 
 ##### Scenario: Successful analysis call
 
 - GIVEN `GeminiAnalisisService::analizar()` completes for a `Cambio` with `id = 42`
 - WHEN the method returns
-- THEN one `log_gemini_usage` row exists with `cambio_id = 42`, `request_type = 'analisis_cambio'`
+- THEN one `gemini_usage_log` row exists with `cambio_id = 42`, `request_type = 'analisis_cambio'`
 
 ---
 
@@ -599,41 +599,41 @@ The `GeminiService` MUST insert one row into `log_gemini_usage` for every API ca
 
 #### REQ-3: No Log Row on API Failure
 
-If the Gemini API call throws an exception or returns a non-200 response, the service MUST NOT insert a `log_gemini_usage` row and MUST NOT set `gemini_analyzed_at`.
+If the Gemini API call throws an exception or returns a non-200 response, the service MUST NOT insert a `gemini_usage_log` row and MUST NOT set `gemini_analyzed_at`.
 
 ##### Scenario: API call throws exception
 
 - GIVEN `GeminiService::send()` throws `GeminiApiException`
 - WHEN `GeminiFiltroService::filtrar()` propagates the exception
-- THEN no `log_gemini_usage` row is inserted
+- THEN no `gemini_usage_log` row is inserted
 - AND `resultados_scraping.gemini_analyzed_at` remains `null`
 
 ---
 
 #### REQ-4: Missing usageMetadata — Graceful Degradation
 
-If the API response lacks `usageMetadata`, the service MUST log a warning via Laravel's `Log::warning()` and MUST still insert a `log_gemini_usage` row with `prompt_tokens = null`, `completion_tokens = null`, `total_tokens = null`.
+If the API response lacks `usageMetadata`, the service MUST log a warning via Laravel's `Log::warning()` and MUST still insert a `gemini_usage_log` row with `prompt_tokens = null`, `completion_tokens = null`, `total_tokens = null`.
 
 ##### Scenario: Response without usageMetadata
 
 - GIVEN `GeminiService::send()` returns a response with no `usageMetadata` key
 - WHEN the service processes the response
 - THEN a warning is logged
-- AND one `log_gemini_usage` row is inserted with all token fields `null`
+- AND one `gemini_usage_log` row is inserted with all token fields `null`
 - AND `gemini_analyzed_at` IS set (analysis result was valid)
 
 ---
 
 #### REQ-5: Idempotency — No Double Logging
 
-If the same Gemini response is processed twice (e.g., job retry after successful DB write but failed acknowledgment), the system SHOULD NOT insert a duplicate `log_gemini_usage` row. SHOULD use `gemini_analyzed_at IS NOT NULL` as guard before calling Gemini.
+If the same Gemini response is processed twice (e.g., job retry after successful DB write but failed acknowledgment), the system SHOULD NOT insert a duplicate `gemini_usage_log` row. SHOULD use `gemini_analyzed_at IS NOT NULL` as guard before calling Gemini.
 
 ##### Scenario: Job retry after successful first run
 
 - GIVEN `cambios.gemini_analyzed_at` is already set (first run succeeded)
 - WHEN the job is retried
 - THEN the service SHOULD skip the Gemini call entirely
-- AND no additional `log_gemini_usage` row is inserted
+- AND no additional `gemini_usage_log` row is inserted
 
 ---
 
@@ -653,7 +653,7 @@ After migration, all existing `cambios` and `resultados_scraping` rows MUST have
 
 - Cost calculation in USD (available when `DashboardHealthService` implements PR2 logic)
 - User-level usage tracking (no `user_id` FK in table initially)
-- `log_gemini_usage` table in PR1 (migration is PR2)
+- `gemini_usage_log` table in PR1 (migration is PR2)
 
 ### Edge cases
 
