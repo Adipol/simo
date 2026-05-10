@@ -134,4 +134,71 @@ class ResultadoScrapingTest extends TestCase
         $this->assertSame($directCount, $scopeCount, 'onlySecondaries() scope must match whereNotNull(secundario_de) count');
         $this->assertSame(2, $scopeCount, 'Only 2 secondary articles should be returned');
     }
+
+    // =========================================================================
+    // Cleanup 1 — RED tests: getScoreColorClass() accessor
+    // =========================================================================
+
+    /**
+     * Cleanup 1 — score >= 70 returns emerald class.
+     */
+    public function test_get_score_color_class_returns_emerald_when_score_is_70_or_above(): void
+    {
+        $r = new ResultadoScraping(['relevance_score' => 70]);
+        $this->assertSame('text-emerald-600', $r->getScoreColorClass());
+    }
+
+    /**
+     * Cleanup 1 — score >= 70 (well above boundary) returns emerald class.
+     */
+    public function test_get_score_color_class_returns_emerald_when_score_is_above_70(): void
+    {
+        $r = new ResultadoScraping(['relevance_score' => 95]);
+        $this->assertSame('text-emerald-600', $r->getScoreColorClass());
+    }
+
+    /**
+     * Cleanup 1 — score = 40 (amber boundary) returns amber class.
+     */
+    public function test_get_score_color_class_returns_amber_when_score_is_40(): void
+    {
+        $r = new ResultadoScraping(['relevance_score' => 40]);
+        $this->assertSame('text-amber-500', $r->getScoreColorClass());
+    }
+
+    /**
+     * Cleanup 1 — score in [40, 69] returns amber class.
+     */
+    public function test_get_score_color_class_returns_amber_when_score_is_between_40_and_69(): void
+    {
+        $r = new ResultadoScraping(['relevance_score' => 55]);
+        $this->assertSame('text-amber-500', $r->getScoreColorClass());
+    }
+
+    /**
+     * Cleanup 1 — score = 39 (just below amber threshold) returns gray class.
+     */
+    public function test_get_score_color_class_returns_gray_when_score_is_39(): void
+    {
+        $r = new ResultadoScraping(['relevance_score' => 39]);
+        $this->assertSame('text-gray-300', $r->getScoreColorClass());
+    }
+
+    /**
+     * Cleanup 1 — score = 0 returns gray class.
+     */
+    public function test_get_score_color_class_returns_gray_when_score_is_zero(): void
+    {
+        $r = new ResultadoScraping(['relevance_score' => 0]);
+        $this->assertSame('text-gray-300', $r->getScoreColorClass());
+    }
+
+    /**
+     * Cleanup 1 — null relevance_score returns gray class (safe default).
+     */
+    public function test_get_score_color_class_returns_gray_when_score_is_null(): void
+    {
+        $r = new ResultadoScraping(['relevance_score' => null]);
+        $this->assertSame('text-gray-300', $r->getScoreColorClass());
+    }
 }
