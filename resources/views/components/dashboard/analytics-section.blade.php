@@ -83,7 +83,7 @@
                     <span class="text-2xl font-bold text-indigo-600">{{ number_format($volumeMetrics->totalPeps) }}</span>
                     <div class="mt-1 h-6">
                         <x-simo-sparkline
-                            :data="collect($volumeMetrics->monthlyTrend)->pluck('peps')->takeLast(7)->values()->all()"
+                            :data="collect($volumeMetrics->monthlyTrend)->pluck('peps')->take(-7)->values()->all()"
                             color="indigo"
                         />
                     </div>
@@ -99,7 +99,7 @@
                     <span class="text-2xl font-bold text-amber-500">{{ number_format($volumeMetrics->totalOpis) }}</span>
                     <div class="mt-1 h-6">
                         <x-simo-sparkline
-                            :data="collect($volumeMetrics->monthlyTrend)->pluck('opis')->takeLast(7)->values()->all()"
+                            :data="collect($volumeMetrics->monthlyTrend)->pluck('opis')->take(-7)->values()->all()"
                             color="amber"
                         />
                     </div>
