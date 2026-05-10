@@ -23,6 +23,7 @@ class ResultadoScrapingQueryService
         string $direccion = 'desc',
     ): Builder {
         $q = ResultadoScraping::with('sitio')
+            ->withCount(['secondaries as secondaries_count'])
             ->orderBy($ordenar, $direccion);
 
         // ── ID whitelist filter — takes priority, skips unrelated busqueda ────
@@ -79,14 +80,42 @@ class ResultadoScrapingQueryService
             $q->archivado();
         }
 
+        // ── Gemini / persona filters (Design D8 + D11) ───────────────────────
+        //
+        // Default (filtroGemini = ''):
+        //   - Show only analyzed articles (gemini_analyzed = true)
+        //   - Show only primary articles (secundario_de IS NULL)
+        //   This is the standard browse view.
+        //
+        // 'pending': debug mode — show unanalyzed articles regardless of cluster status
+        //
+        // 'pep' / 'opi': use whereHas on resultado_personas (NOT gemini_categoria legacy column)
+        //
+        // 'not_pep': articles with no threshold_passed personas (no confirmed classification)
+
         if ($filtroGemini === 'pending') {
             $q->where('gemini_analyzed', false);
         } elseif ($filtroGemini === 'pep') {
-            $q->where('gemini_analyzed', true)->where('gemini_is_pep', true)->where('gemini_categoria', 'PEP');
+            $q->where('gemini_analyzed', true)
+              ->whereNull('secundario_de')
+              ->whereHas('personas', fn (Builder $p): Builder => $p
+                  ->where('categoria', 'PEP')
+                  ->where('threshold_passed', true));
         } elseif ($filtroGemini === 'opi') {
-            $q->where('gemini_analyzed', true)->where('gemini_is_pep', true)->where('gemini_categoria', 'OPI');
+            $q->where('gemini_analyzed', true)
+              ->whereNull('secundario_de')
+              ->whereHas('personas', fn (Builder $p): Builder => $p
+                  ->where('categoria', 'OPI')
+                  ->where('threshold_passed', true));
         } elseif ($filtroGemini === 'not_pep') {
-            $q->where('gemini_analyzed', true)->where('gemini_is_pep', false);
+            $q->where('gemini_analyzed', true)
+              ->whereNull('secundario_de')
+              ->whereDoesntHave('personas', fn (Builder $p): Builder => $p
+                  ->where('threshold_passed', true));
+        } else {
+            // Default: only processed primary articles
+            $q->where('gemini_analyzed', true)
+              ->whereNull('secundario_de');
         }
 
         return $q;

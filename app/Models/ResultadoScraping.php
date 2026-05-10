@@ -26,6 +26,7 @@ class ResultadoScraping extends Model
         'gemini_analyzed', 'gemini_is_pep', 'gemini_error_motivo',
         'gemini_nombre', 'gemini_nombre_normalizado', 'gemini_cargo',
         'gemini_categoria', 'gemini_entidad_tipo', 'gemini_confianza', 'gemini_motivo',
+        'secundario_de',
     ];
 
     protected $casts = [
@@ -39,6 +40,7 @@ class ResultadoScraping extends Model
         'gemini_analyzed' => 'boolean',
         'gemini_is_pep' => 'boolean',
         'gemini_confianza' => 'integer',
+        'secundario_de' => 'integer',
     ];
 
     public function sitio(): BelongsTo
@@ -56,6 +58,28 @@ class ResultadoScraping extends Model
         return $this->hasMany(ResultadoPersona::class, 'resultado_scraping_id');
     }
 
+    /**
+     * The primary article this article is a duplicate of.
+     * Returns null when secundario_de IS NULL (this article is itself a primary).
+     */
+    public function primary(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'secundario_de');
+    }
+
+    /**
+     * Secondary (duplicate) articles clustered under this primary.
+     * Design D3: self-referential FK cluster model.
+     */
+    public function secondaries(): HasMany
+    {
+        return $this->hasMany(self::class, 'secundario_de');
+    }
+
+    // =========================================================================
+    // Scopes
+    // =========================================================================
+
     public function scopeArchivado(Builder $query): void
     {
         $query->whereNotNull('archivado_at');
@@ -64,5 +88,27 @@ class ResultadoScraping extends Model
     public function scopeNoArchivado(Builder $query): void
     {
         $query->whereNull('archivado_at');
+    }
+
+    /**
+     * Filter to only primary articles (not duplicates).
+     * Excludes articles that have been marked as secondary (secundario_de IS NOT NULL).
+     */
+    public function scopeOnlyPrimaries(Builder $query): void
+    {
+        $query->whereNull('secundario_de');
+    }
+
+    /**
+     * Filter to only secondary (duplicate) articles.
+     * Includes articles that have been linked to a primary (secundario_de IS NOT NULL).
+     *
+     * NOTE: Named scopeOnlySecondaries (not scopeSecondaries) to avoid collision with
+     * the secondaries() HasMany relation — PHP would resolve the static call ambiguously.
+     * Usage: ResultadoScraping::onlySecondaries()->count()
+     */
+    public function scopeOnlySecondaries(Builder $query): void
+    {
+        $query->whereNotNull('secundario_de');
     }
 }

@@ -1,5 +1,15 @@
 <div class="space-y-4">
 
+    {{-- Header: title + pending badge --}}
+    <div class="flex items-center gap-3 mb-1">
+        <h1 class="text-sm font-semibold text-gray-700">Resultados</h1>
+        @if($this->pendingCount > 0)
+            <span class="simo-badge bg-amber-50 text-amber-600 border-amber-200" style="font-size:9px">
+                {{ $this->pendingCount }} procesando
+            </span>
+        @endif
+    </div>
+
     {{-- Toolbar --}}
     <div class="flex items-center justify-between">
         <div class="flex items-center gap-2 flex-wrap">
@@ -125,6 +135,17 @@
                                             @endif
                                         @else
                                             <span class="simo-badge bg-zinc-100 text-zinc-400" style="font-size:9px">No relevante</span>
+                                        @endif
+
+                                        {{-- Cluster badge: +N medios (Design D10) --}}
+                                        @if(($r->secondaries_count ?? 0) > 0)
+                                            <span x-data="{ open: false }"
+                                                  @click="open = !open"
+                                                  class="simo-badge bg-violet-50 text-violet-600 border-violet-100 cursor-pointer"
+                                                  style="font-size:9px"
+                                                  title="Este artículo agrupa {{ $r->secondaries_count }} fuente(s) similares">
+                                                +{{ $r->secondaries_count }} medios
+                                            </span>
                                         @endif
 
                                     </div>

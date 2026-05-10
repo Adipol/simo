@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Livewire\Scraper;
 
 use App\Livewire\Scraper\Resultados;
+use App\Models\ResultadoPersona;
 use App\Models\ResultadoScraping;
 use App\Models\SitioWeb;
 use App\Models\User;
@@ -30,6 +31,7 @@ class ResultadosFiltroIdsTest extends TestCase
         parent::setUp();
         Queue::fake();
         config(['services.gemini.enabled' => false]);
+        config(['services.dedupe.enabled' => false]);
 
         $this->sitio = SitioWeb::create([
             'url'    => 'https://eldeber.com.bo',
@@ -74,11 +76,12 @@ class ResultadosFiltroIdsTest extends TestCase
         $user = $this->crearUser();
 
         // Create 5 resultados with known distinct keywords for visibility
-        $r1 = $this->crearResultado(['titulo' => 'Articulo Uno']);
-        $r2 = $this->crearResultado(['titulo' => 'Articulo Dos']);
-        $r3 = $this->crearResultado(['titulo' => 'Articulo Tres']);
-        $r4 = $this->crearResultado(['titulo' => 'Articulo Cuatro']);
-        $r5 = $this->crearResultado(['titulo' => 'Articulo Cinco']);
+        // gemini_analyzed=true so they appear in the default view (Design D11)
+        $r1 = $this->crearResultado(['titulo' => 'Articulo Uno', 'gemini_analyzed' => true]);
+        $r2 = $this->crearResultado(['titulo' => 'Articulo Dos', 'gemini_analyzed' => true]);
+        $r3 = $this->crearResultado(['titulo' => 'Articulo Tres', 'gemini_analyzed' => true]);
+        $r4 = $this->crearResultado(['titulo' => 'Articulo Cuatro', 'gemini_analyzed' => true]);
+        $r5 = $this->crearResultado(['titulo' => 'Articulo Cinco', 'gemini_analyzed' => true]);
 
         // Set filtroIds to IDs 2 and 4 from the actual DB IDs
         $ids = implode(',', [$r2->id, $r4->id]);
@@ -124,15 +127,21 @@ class ResultadosFiltroIdsTest extends TestCase
             'titulo'           => 'Articulo PEP Match',
             'gemini_analyzed'  => true,
             'gemini_is_pep'    => true,
-            'gemini_categoria' => 'PEP',
+        ]);
+        // Add PEP persona so the new whereHas filter picks it up
+        ResultadoPersona::create([
+            'resultado_scraping_id' => $rPep->id,
+            'nombre'                => 'Test PEP Person',
+            'categoria'             => 'PEP',
+            'confianza'             => 85,
+            'threshold_passed'      => true,
         ]);
 
-        // Non-PEP resultado — same IDs range but filtered out by filtroGemini
+        // Non-PEP resultado — same IDs range but filtered out by filtroGemini=pep
         $rNoPep = $this->crearResultado([
             'titulo'           => 'Articulo No PEP',
             'gemini_analyzed'  => true,
             'gemini_is_pep'    => false,
-            'gemini_categoria' => null,
         ]);
 
         // Third resultado entirely outside the IDs filter
@@ -140,7 +149,6 @@ class ResultadosFiltroIdsTest extends TestCase
             'titulo'           => 'Articulo Outside',
             'gemini_analyzed'  => true,
             'gemini_is_pep'    => true,
-            'gemini_categoria' => 'PEP',
         ]);
 
         // Filter: IDs = rPep + rNoPep, gemini = pep → only rPep survives
@@ -163,8 +171,9 @@ class ResultadosFiltroIdsTest extends TestCase
     {
         $user = $this->crearUser();
 
-        $r1 = $this->crearResultado(['titulo' => 'Articulo Valido']);
-        $r2 = $this->crearResultado(['titulo' => 'Articulo Dos Valido']);
+        // gemini_analyzed=true so articles appear in the default view
+        $r1 = $this->crearResultado(['titulo' => 'Articulo Valido', 'gemini_analyzed' => true]);
+        $r2 = $this->crearResultado(['titulo' => 'Articulo Dos Valido', 'gemini_analyzed' => true]);
 
         // Mix valid IDs with garbage — should use valid IDs, ignore garbage
         $ids = "{$r1->id},abc,{$r2->id},;;,99999999";
