@@ -235,6 +235,87 @@ class CambiosFiltroPersonaTest extends TestCase
         $component->assertSet('paginators', ['page' => 1]);
     }
 
+    public function test_default_filter_excludes_analyzed_no_persona_even_when_scraper_marked_posibles_peps(): void
+    {
+        // CASO REAL DEL BUG: scraper detectó "posibles_peps" pero Gemini
+        // dictaminó que NO es persona (es una sección/categoría).
+        // Gemini debe ganar: el cambio NO entra al filtro por defecto.
+        $analizadoSinPersonaConPosibles = $this->makeCambio([
+            'gemini_analyzed' => true,
+            'gemini_analisis_json' => [
+                'persona_nueva' => null,
+                'persona_removida' => null,
+                'riesgo' => 'bajo',
+                'es_mae' => false,
+                'analisis' => 'Es una categoría institucional, no una persona.',
+            ],
+            'posibles_peps' => 'Proveedores de Software',
+        ]);
+
+        Livewire::actingAs($this->user)
+            ->test(Cambios::class)
+            ->assertViewHas('cambios', function ($cambios) use ($analizadoSinPersonaConPosibles) {
+                return ! $cambios->pluck('id')->contains($analizadoSinPersonaConPosibles->id);
+            });
+    }
+
+    public function test_default_filter_includes_pending_cambio_when_scraper_found_posibles_peps(): void
+    {
+        // Mientras Gemini no analizó, posibles_peps actúa como fallback.
+        $pendingConPosibles = $this->makeCambio([
+            'gemini_analyzed' => false,
+            'gemini_analisis_json' => null,
+            'posibles_peps' => 'Juan Pérez',
+        ]);
+
+        Livewire::actingAs($this->user)
+            ->test(Cambios::class)
+            ->assertViewHas('cambios', function ($cambios) use ($pendingConPosibles) {
+                return $cambios->pluck('id')->contains($pendingConPosibles->id);
+            });
+    }
+
+    public function test_default_filter_excludes_pending_cambio_without_scraper_signal(): void
+    {
+        // Pending sin señal del scraper: limbo total, no aparece en el default.
+        $pendingSinSenal = $this->makeCambio([
+            'gemini_analyzed' => false,
+            'gemini_analisis_json' => null,
+            'posibles_peps' => null,
+        ]);
+
+        Livewire::actingAs($this->user)
+            ->test(Cambios::class)
+            ->assertViewHas('cambios', function ($cambios) use ($pendingSinSenal) {
+                return ! $cambios->pluck('id')->contains($pendingSinSenal->id);
+            });
+    }
+
+    public function test_filtro_sin_persona_includes_analyzed_no_persona_even_with_posibles_peps(): void
+    {
+        // Mismo caso real: si Gemini dijo "no es persona", el filtro
+        // "sin persona" SÍ debe incluirlo, aunque el scraper haya marcado
+        // posibles_peps. Gemini manda.
+        $analizadoSinPersonaConPosibles = $this->makeCambio([
+            'gemini_analyzed' => true,
+            'gemini_analisis_json' => [
+                'persona_nueva' => null,
+                'persona_removida' => null,
+                'riesgo' => 'bajo',
+                'es_mae' => false,
+                'analisis' => 'Categoría institucional.',
+            ],
+            'posibles_peps' => 'Proveedores de Software',
+        ]);
+
+        Livewire::actingAs($this->user)
+            ->test(Cambios::class)
+            ->set('filtroConPersona', 'no')
+            ->assertViewHas('cambios', function ($cambios) use ($analizadoSinPersonaConPosibles) {
+                return $cambios->pluck('id')->contains($analizadoSinPersonaConPosibles->id);
+            });
+    }
+
     public function test_muted_card_style_applied_for_no_person_low_risk_records(): void
     {
         // Registro analizado SIN personas → debe tener opacity-60 (esMuted = true)

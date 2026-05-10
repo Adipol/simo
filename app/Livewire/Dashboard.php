@@ -131,7 +131,7 @@ class Dashboard extends Component
                 ->pluck('total', 'categoria'),
             'resultadosSinLeer' => ResultadoScraping::where('leido', false)->count(),
             'totalFuentes' => Fuente::where('activo', true)->count(),
-            'cambiosSinRevisar' => Cambio::where('revisado', false)->count(),
+            'cambiosSinRevisar' => Cambio::where('revisado', false)->conPersona()->count(),
             'totalSitios' => SitioWeb::where('activo', true)->count(),
             'ultimosResultados' => ResultadoScraping::with('sitio')
                 ->orderBy('fecha_encontrado', 'desc')

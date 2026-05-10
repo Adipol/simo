@@ -100,45 +100,57 @@ class Cambio extends Model
     }
 
     /**
-     * Scope: cambios con persona detectada (por Gemini o por el scraper).
+     * Scope: cambios con persona detectada.
      *
-     * Incluye registros donde:
-     * - Gemini detectó persona_nueva o persona_removida, O
-     * - El scraper detectó posibles_peps (fallback si Gemini falló)
+     * Regla:
+     * - Si Gemini ya analizó, su veredicto es la verdad: solo coincide
+     *   cuando detectó persona_nueva o persona_removida.
+     * - Si Gemini todavía NO analizó (pending), se usa posibles_peps del
+     *   scraper como señal provisoria (fallback).
+     *
+     * El scraper NO sobrescribe a Gemini: una vez que Gemini dictaminó
+     * "no es persona", el cambio queda fuera de este scope aunque el
+     * scraper haya marcado posibles_peps.
      */
-    public function scopeConPersona(\Illuminate\Database\Eloquent\Builder $query): \Illuminate\Database\Eloquent\Builder
+    public function scopeConPersona(Builder $query): Builder
     {
-        return $query->where(function (\Illuminate\Database\Eloquent\Builder $sub): void {
-            $sub->where(function (\Illuminate\Database\Eloquent\Builder $gemini): void {
+        return $query->where(function (Builder $sub): void {
+            // Rama 1: Gemini analizó y detectó persona.
+            $sub->where(function (Builder $gemini): void {
                 $gemini->where('gemini_analyzed', true)
-                    ->where(function (\Illuminate\Database\Eloquent\Builder $personas): void {
+                    ->where(function (Builder $personas): void {
                         $personas->whereRaw("gemini_analisis_json->>'persona_nueva' IS NOT NULL")
                             ->orWhereRaw("gemini_analisis_json->>'persona_removida' IS NOT NULL");
                     });
-            })->orWhere(function (\Illuminate\Database\Eloquent\Builder $scraper): void {
-                $scraper->whereNotNull('posibles_peps')
+            })->orWhere(function (Builder $scraperFallback): void {
+                // Rama 2 (fallback): Gemini aún no analizó Y scraper detectó posibles_peps.
+                $scraperFallback->where('gemini_analyzed', false)
+                    ->whereNotNull('posibles_peps')
                     ->where('posibles_peps', '!=', '');
             });
         });
     }
 
     /**
-     * Scope: cambios sin persona detectada (ni por Gemini ni por scraper).
+     * Scope: cambios sin persona detectada.
+     *
+     * Solo incluye cambios donde Gemini analizó y dictaminó que NO hay
+     * persona. El estado del scraper (posibles_peps) ya no importa una
+     * vez que Gemini habló: Gemini es la fuente de verdad.
+     *
+     * Los cambios pending (gemini_analyzed=false) NO entran acá: están
+     * en limbo hasta que Gemini analice.
      */
-    public function scopeSinPersona(\Illuminate\Database\Eloquent\Builder $query): \Illuminate\Database\Eloquent\Builder
+    public function scopeSinPersona(Builder $query): Builder
     {
         return $query->where('gemini_analyzed', true)
-            ->whereRaw("(gemini_analisis_json->>'persona_nueva' IS NULL AND gemini_analisis_json->>'persona_removida' IS NULL)")
-            ->where(function (\Illuminate\Database\Eloquent\Builder $sub): void {
-                $sub->whereNull('posibles_peps')
-                    ->orWhere('posibles_peps', '');
-            });
+            ->whereRaw("(gemini_analisis_json->>'persona_nueva' IS NULL AND gemini_analisis_json->>'persona_removida' IS NULL)");
     }
 
     /**
      * Scope: filtrar por nivel de riesgo en el análisis Gemini.
      */
-    public function scopeConRiesgo(\Illuminate\Database\Eloquent\Builder $query, string $riesgo): \Illuminate\Database\Eloquent\Builder
+    public function scopeConRiesgo(Builder $query, string $riesgo): Builder
     {
         return $query->where('gemini_analyzed', true)
             ->whereRaw("gemini_analisis_json->>'riesgo' = ?", [$riesgo]);
