@@ -159,7 +159,9 @@ final class DashboardSummaryService
         $sparklines = [];
 
         foreach ($buckets as $name => $applyFilter) {
-            $base = Cambio::query()->where('revisado', false);
+            // Aplicar conPersona() para alinear con el filtro por defecto de la bandeja
+            // (ver bug de "37 vs 2" — el KPI debe contar lo mismo que la pantalla destino).
+            $base = Cambio::query()->where('revisado', false)->conPersona();
             $applyFilter($base);
 
             $counts[$name] = (int) (clone $base)->count();
@@ -175,10 +177,16 @@ final class DashboardSummaryService
             $sparklines[$name] = $this->buildSparkline($dayRows);
         }
 
-        // sin_leer: from resultados_scraping table
-        $counts['sin_leer'] = (int) ResultadoScraping::where('leido', false)->count();
+        // sin_leer: alineado con el filtro por defecto de la bandeja Resultados
+        // (esconde descartados y archivados — son trabajo ya descartado del usuario).
+        $counts['sin_leer'] = (int) ResultadoScraping::where('leido', false)
+            ->where('descartado', false)
+            ->noArchivado()
+            ->count();
 
         $sinLeerRows = ResultadoScraping::where('leido', false)
+            ->where('descartado', false)
+            ->noArchivado()
             ->where('fecha_encontrado', '>=', now()->subDays(7))
             ->selectRaw($this->dateTruncDay('fecha_encontrado').' AS day, COUNT(*) AS cnt')
             ->groupByRaw($this->dateTruncDay('fecha_encontrado'))

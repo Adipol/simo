@@ -79,11 +79,11 @@ class SparklineEnforcementTest extends TestCase
      */
     public function test_sparklines_have_7_elements_with_1_day_of_data(): void
     {
-        // Create 1 alto-risk cambio today
+        // Create 1 alto-risk cambio today (con persona detectada para pasar conPersona())
         Cambio::factory()->create([
             'revisado'             => false,
             'gemini_analyzed'      => true,
-            'gemini_analisis_json' => ['riesgo' => 'alto'],
+            'gemini_analisis_json' => ['riesgo' => 'alto', 'persona_nueva' => 'Test Person'],
             'fecha'                => now(),
         ]);
 
@@ -109,14 +109,14 @@ class SparklineEnforcementTest extends TestCase
      */
     public function test_sparklines_have_7_elements_with_14_days_of_data(): void
     {
-        // Create 2 alto-risk cambios per day for 14 days
+        // Create 2 alto-risk cambios per day for 14 days (con persona detectada)
         for ($i = 13; $i >= 0; $i--) {
             Cambio::factory()
                 ->count(2)
                 ->create([
                     'revisado'             => false,
                     'gemini_analyzed'      => true,
-                    'gemini_analisis_json' => ['riesgo' => 'alto'],
+                    'gemini_analisis_json' => ['riesgo' => 'alto', 'persona_nueva' => 'Test Person'],
                     'fecha'                => now()->subDays($i),
                 ]);
         }
@@ -136,12 +136,12 @@ class SparklineEnforcementTest extends TestCase
      */
     public function test_sparkline_values_are_nonzero_when_data_exists(): void
     {
-        // Create cambios for last 7 days
+        // Create cambios for last 7 days (con persona detectada)
         for ($i = 6; $i >= 0; $i--) {
             Cambio::factory()->create([
                 'revisado'             => false,
                 'gemini_analyzed'      => true,
-                'gemini_analisis_json' => ['riesgo' => 'alto'],
+                'gemini_analisis_json' => ['riesgo' => 'alto', 'persona_nueva' => 'Test Person'],
                 'fecha'                => now()->subDays($i),
             ]);
         }
