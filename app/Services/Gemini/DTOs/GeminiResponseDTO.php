@@ -14,7 +14,7 @@ namespace App\Services\Gemini\DTOs;
 final readonly class GeminiResponseDTO
 {
     /**
-     * @param  array  $content       Parsed inner JSON from candidates[0].content.parts[0].text
+     * @param  array  $content  Parsed inner JSON from candidates[0].content.parts[0].text
      * @param  array|null  $usageMetadata  Raw usageMetadata from the top-level response, or null if absent
      */
     public function __construct(

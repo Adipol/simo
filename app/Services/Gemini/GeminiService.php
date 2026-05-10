@@ -267,7 +267,7 @@ class GeminiService
 
         if (! is_array($responseData)) {
             Log::channel('gemini')->error('Gemini returned non-JSON response (multimodal)', [
-                'model'       => $model,
+                'model' => $model,
                 'image_count' => count($imagenes),
                 'raw_response' => $response->body(),
             ]);
@@ -283,10 +283,10 @@ class GeminiService
 
         if (json_last_error() !== JSON_ERROR_NONE) {
             Log::channel('gemini')->error('Gemini returned invalid JSON (multimodal)', [
-                'model'       => $model,
+                'model' => $model,
                 'image_count' => count($imagenes),
                 'raw_response' => $text,
-                'json_error'  => json_last_error_msg(),
+                'json_error' => json_last_error_msg(),
             ]);
 
             throw new GeminiInvalidResponseException(

@@ -42,10 +42,10 @@ class GeminiFiltroService
     {
         if (! $this->preFiltro->shouldAnalyzeWithGemini($record)) {
             $record->update([
-                'gemini_analyzed'    => true,
+                'gemini_analyzed' => true,
                 'gemini_analyzed_at' => now(),
-                'gemini_is_pep'      => false,
-                'gemini_motivo'      => '[PRE-FILTRO] Sin mención de cargo público en el texto.',
+                'gemini_is_pep' => false,
+                'gemini_motivo' => '[PRE-FILTRO] Sin mención de cargo público en el texto.',
             ]);
 
             return;
@@ -88,7 +88,7 @@ class GeminiFiltroService
             } else {
                 Log::channel('gemini')->warning('Persona descartada por threshold', [
                     'record_id' => $record->id,
-                    'nombre'    => $persona->nombre,
+                    'nombre' => $persona->nombre,
                     'confianza' => $persona->confianza,
                     'threshold' => $minConfianza,
                 ]);
@@ -98,24 +98,24 @@ class GeminiFiltroService
 
             ResultadoPersona::create([
                 'resultado_scraping_id' => $record->id,
-                'nombre'                => $persona->nombre,
-                'nombre_normalizado'    => $normalizado,
-                'cargo'                 => $persona->cargo,
-                'categoria'             => $persona->categoria,
-                'entidad_tipo'          => $persona->entidadTipo,
-                'confianza'             => $persona->confianza,
-                'evento'                => $persona->evento,
-                'motivo'                => $persona->motivo,
-                'threshold_passed'      => $thresholdPassed,
+                'nombre' => $persona->nombre,
+                'nombre_normalizado' => $normalizado,
+                'cargo' => $persona->cargo,
+                'categoria' => $persona->categoria,
+                'entidad_tipo' => $persona->entidadTipo,
+                'confianza' => $persona->confianza,
+                'evento' => $persona->evento,
+                'motivo' => $persona->motivo,
+                'threshold_passed' => $thresholdPassed,
             ]);
         }
 
         // Update the parent record with timestamp
         $record->update([
-            'gemini_analyzed'    => true,
+            'gemini_analyzed' => true,
             'gemini_analyzed_at' => now(),
-            'gemini_is_pep'      => $anyPepPassed,
-            'gemini_motivo'      => $dto->motivoGeneral,
+            'gemini_is_pep' => $anyPepPassed,
+            'gemini_motivo' => $dto->motivoGeneral,
         ]);
 
         // Write usage log
@@ -129,26 +129,26 @@ class GeminiFiltroService
             // Must NEVER break the analysis result
             try {
                 GeminiUsageLog::create([
-                    'model'                 => $model,
-                    'prompt_tokens'         => $geminiResponse->promptTokens(),
-                    'completion_tokens'     => $geminiResponse->completionTokens(),
-                    'total_tokens'          => $geminiResponse->totalTokens(),
-                    'request_type'          => 'filtro',
-                    'cambio_id'             => null,
+                    'model' => $model,
+                    'prompt_tokens' => $geminiResponse->promptTokens(),
+                    'completion_tokens' => $geminiResponse->completionTokens(),
+                    'total_tokens' => $geminiResponse->totalTokens(),
+                    'request_type' => 'filtro',
+                    'cambio_id' => null,
                     'resultado_scraping_id' => $record->id,
                 ]);
             } catch (\Throwable $e) {
                 Log::channel('gemini')->error('FiltroPEP: error al insertar gemini_usage_log (análisis guardado)', [
                     'record_id' => $record->id,
-                    'error'     => $e->getMessage(),
+                    'error' => $e->getMessage(),
                 ]);
             }
         }
 
         Log::channel('gemini')->info('FiltroPEP completado', [
-            'record_id'           => $record->id,
+            'record_id' => $record->id,
             'personas_detectadas' => count($dto->personas),
-            'pep_passed'          => $anyPepPassed,
+            'pep_passed' => $anyPepPassed,
         ]);
     }
 

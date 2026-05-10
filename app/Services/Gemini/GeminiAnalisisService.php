@@ -129,7 +129,7 @@ class GeminiAnalisisService
             $visionModel = config('services.gemini.vision_model', config('services.gemini.pro_model'));
 
             Log::channel('gemini')->info('AnalisisCambio multimodal iniciado', [
-                'cambio_id'   => $cambio->id,
+                'cambio_id' => $cambio->id,
                 'image_count' => count($imagenes),
             ]);
 
@@ -140,10 +140,10 @@ class GeminiAnalisisService
             $this->persistirAnalisis($cambio, $dto, $geminiResponse, $visionModel, 'analisis_multimodal');
 
             Log::channel('gemini')->info('procesarCambioMultimodal completado', [
-                'cambio_id'   => $cambio->id,
+                'cambio_id' => $cambio->id,
                 'image_count' => count($imagenes),
-                'es_mae'      => $dto->esMae,
-                'riesgo'      => $dto->riesgo,
+                'es_mae' => $dto->esMae,
+                'riesgo' => $dto->riesgo,
             ]);
         } catch (GeminiInvalidResponseException|GeminiBadRequestException|GeminiPayloadTooLargeException $e) {
             $this->marcarFallido($cambio, $e);
@@ -162,7 +162,7 @@ class GeminiAnalisisService
         $resolved = [];
 
         foreach ($entries as $entry) {
-            $absPath = storage_path('app/' . $entry['path']);
+            $absPath = storage_path('app/'.$entry['path']);
 
             if (! is_readable($absPath)) {
                 Log::channel('gemini')->warning('resolverImagenes: image not readable, skipping', [
@@ -192,15 +192,15 @@ class GeminiAnalisisService
         $now = now();
 
         $cambio->update([
-            'gemini_analyzed'    => true,
+            'gemini_analyzed' => true,
             'gemini_analyzed_at' => $now,
             'gemini_analisis_json' => [
-                'persona_removida'    => $dto->personaRemovida,
-                'persona_nueva'       => $dto->personaNueva,
-                'cargo'               => $dto->cargo,
-                'es_mae'              => $dto->esMae,
-                'riesgo'              => $dto->riesgo,
-                'analisis'            => $dto->analisis,
+                'persona_removida' => $dto->personaRemovida,
+                'persona_nueva' => $dto->personaNueva,
+                'cargo' => $dto->cargo,
+                'es_mae' => $dto->esMae,
+                'riesgo' => $dto->riesgo,
+                'analisis' => $dto->analisis,
                 'personas_detectadas' => $dto->personasDetectadas,
             ],
         ]);
@@ -209,7 +209,7 @@ class GeminiAnalisisService
         if ($geminiResponse !== null) {
             if (! $geminiResponse->hasUsageMetadata()) {
                 Log::channel('gemini')->warning('AnalisisCambio: usageMetadata ausente en respuesta Gemini', [
-                    'cambio_id'    => $cambio->id,
+                    'cambio_id' => $cambio->id,
                     'request_type' => $requestType,
                 ]);
             }
@@ -217,26 +217,26 @@ class GeminiAnalisisService
             // The usage_log insert must NEVER break the analysis result.
             try {
                 GeminiUsageLog::create([
-                    'model'                => $model,
-                    'prompt_tokens'        => $geminiResponse->promptTokens(),
-                    'completion_tokens'    => $geminiResponse->completionTokens(),
-                    'total_tokens'         => $geminiResponse->totalTokens(),
-                    'request_type'         => $requestType,
-                    'cambio_id'            => $cambio->id,
+                    'model' => $model,
+                    'prompt_tokens' => $geminiResponse->promptTokens(),
+                    'completion_tokens' => $geminiResponse->completionTokens(),
+                    'total_tokens' => $geminiResponse->totalTokens(),
+                    'request_type' => $requestType,
+                    'cambio_id' => $cambio->id,
                     'resultado_scraping_id' => null,
                 ]);
             } catch (\Throwable $e) {
                 Log::channel('gemini')->error('AnalisisCambio: error al insertar gemini_usage_log (análisis guardado)', [
                     'cambio_id' => $cambio->id,
-                    'error'     => $e->getMessage(),
+                    'error' => $e->getMessage(),
                 ]);
             }
         }
 
         Log::channel('gemini')->info('AnalisisCambio completado', [
             'cambio_id' => $cambio->id,
-            'es_mae'    => $dto->esMae,
-            'riesgo'    => $dto->riesgo,
+            'es_mae' => $dto->esMae,
+            'riesgo' => $dto->riesgo,
         ]);
     }
 

@@ -31,10 +31,10 @@ class GeminiUsageLog extends Model
     ];
 
     protected $casts = [
-        'prompt_tokens'     => 'integer',
+        'prompt_tokens' => 'integer',
         'completion_tokens' => 'integer',
-        'total_tokens'      => 'integer',
-        'created_at'        => 'datetime',
+        'total_tokens' => 'integer',
+        'created_at' => 'datetime',
     ];
 
     public function cambio(): BelongsTo
