@@ -35,7 +35,7 @@ final readonly class PepHighConfidence
      */
     public function initials(): string
     {
-        $parts  = array_filter(explode(' ', $this->nombre));
+        $parts = array_filter(explode(' ', $this->nombre));
         $result = implode('', array_map(
             fn (string $p): string => strtoupper(substr($p, 0, 1)),
             array_slice(array_values($parts), 0, 2),
@@ -50,11 +50,11 @@ final readonly class PepHighConfidence
      */
     public function avatarColorClass(): string
     {
-        return match(true) {
+        return match (true) {
             $this->confianza >= 95 => 'bg-emerald-500',
             $this->confianza >= 85 => 'bg-indigo-500',
             $this->confianza >= 75 => 'bg-amber-500',
-            default                => 'bg-zinc-400',
+            default => 'bg-zinc-400',
         };
     }
 

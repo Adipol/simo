@@ -164,8 +164,6 @@ final class DashboardHealthService
 
     /**
      * Resolve whether the requesting user may see pipeline details.
-     *
-     * @param  ?User  $user
      */
     private function canSeeDetails(?User $user): bool
     {

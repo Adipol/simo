@@ -34,10 +34,10 @@ final readonly class CambioSummary
      */
     public function riskBadgeClass(): string
     {
-        return match($this->riesgo) {
-            'alto'  => 'bg-rose-50 text-rose-600',
+        return match ($this->riesgo) {
+            'alto' => 'bg-rose-50 text-rose-600',
             'medio' => 'bg-amber-50 text-amber-600',
-            'bajo'  => 'bg-emerald-50 text-emerald-600',
+            'bajo' => 'bg-emerald-50 text-emerald-600',
             default => 'bg-zinc-100 text-zinc-500',
         };
     }

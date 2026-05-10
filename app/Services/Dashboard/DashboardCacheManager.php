@@ -13,7 +13,13 @@ final class DashboardCacheManager
     /**
      * Retrieve a value from cache or compute it via the callback.
      *
-     * @param \Closure(): mixed $callback
+     * mixed return is justified: this is a generic cache wrapper —
+     * callers are responsible for the concrete type (DTOs, primitives, etc.).
+     *
+     * @template T
+     *
+     * @param  \Closure(): T  $callback
+     * @return T
      */
     public function remember(string $key, int $ttl, \Closure $callback): mixed
     {
@@ -51,7 +57,7 @@ final class DashboardCacheManager
             return $base;
         }
 
-        return $base . ':user:' . $userId;
+        return $base.':user:'.$userId;
     }
 
     /**
@@ -63,15 +69,15 @@ final class DashboardCacheManager
     private function knownDashboardKeys(): array
     {
         return [
-            self::KEY_PREFIX . 'summary:hero',
-            self::KEY_PREFIX . 'summary:triage',
-            self::KEY_PREFIX . 'summary:backlog',
-            self::KEY_PREFIX . 'summary:ultima',
-            self::KEY_PREFIX . 'summary:recent',
-            self::KEY_PREFIX . 'summary:spark',
-            self::KEY_PREFIX . 'health',
-            self::KEY_PREFIX . 'health:latency',
-            self::KEY_PREFIX . 'health:quota',
+            self::KEY_PREFIX.'summary:hero',
+            self::KEY_PREFIX.'summary:triage',
+            self::KEY_PREFIX.'summary:backlog',
+            self::KEY_PREFIX.'summary:ultima',
+            self::KEY_PREFIX.'summary:recent',
+            self::KEY_PREFIX.'summary:spark',
+            self::KEY_PREFIX.'health',
+            self::KEY_PREFIX.'health:latency',
+            self::KEY_PREFIX.'health:quota',
         ];
     }
 }

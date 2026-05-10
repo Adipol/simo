@@ -6,15 +6,15 @@ namespace App\Livewire;
 
 use App\Models\User;
 use App\Services\Dashboard\DashboardHealthService;
+use App\Services\Dashboard\DashboardMetricsService;
 use App\Services\Dashboard\DashboardSummaryService;
 use App\Services\Dashboard\DTOs\DashboardSummaryDTO;
-use App\Services\Dashboard\DTOs\PipelineHealthDTO;
-use App\Services\Dashboard\DTOs\VolumeMetricsDTO;
-use App\Services\Dashboard\DTOs\PrecisionMetricsDTO;
 use App\Services\Dashboard\DTOs\GeographicMetricsDTO;
+use App\Services\Dashboard\DTOs\PipelineHealthDTO;
+use App\Services\Dashboard\DTOs\PrecisionMetricsDTO;
 use App\Services\Dashboard\DTOs\RecentActivityDTO;
 use App\Services\Dashboard\DTOs\TrendIndicatorsDTO;
-use App\Services\Dashboard\DashboardMetricsService;
+use App\Services\Dashboard\DTOs\VolumeMetricsDTO;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
@@ -50,7 +50,7 @@ class Dashboard extends Component
         DashboardMetricsService $metricsService,
     ): void {
         $this->summaryService = $summaryService;
-        $this->healthService  = $healthService;
+        $this->healthService = $healthService;
         $this->metricsService = $metricsService;
     }
 
@@ -175,7 +175,7 @@ class Dashboard extends Component
 
         return collect($this->geographicMetrics->byCountry)
             ->pluck('peps_count', 'pais')
-            ->map(fn ($v): int => (int) $v)
+            ->map(fn (int|string|null $v): int => (int) $v)
             ->all();
     }
 
@@ -204,8 +204,8 @@ class Dashboard extends Component
         }, $activity->latestCorrections);
 
         return [
-            'highConfidencePeps'  => $peps,
-            'latestCorrections'   => $corrections,
+            'highConfidencePeps' => $peps,
+            'latestCorrections' => $corrections,
         ];
     }
 
