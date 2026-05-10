@@ -4,13 +4,15 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Services\LogScript\LogScriptRetentionService;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\MassPrunable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 
 class LogScript extends Model
 {
-    use MassPrunable;
+    use HasFactory, MassPrunable;
 
     protected $table = 'log_scripts';
 
@@ -18,11 +20,11 @@ class LogScript extends Model
 
     /**
      * Prunable query: registros antiguos segun politica de retencion.
-     * Complementa a aplicarRetencion(); model:prune los elimina via bulk delete.
+     * Complementa a LogScriptRetentionService; model:prune los elimina via bulk delete.
      */
     public function prunable(): \Illuminate\Database\Eloquent\Builder
     {
-        return static::query()->where(function ($q) {
+        return static::query()->where(function ($q): void {
             $q->where(fn ($s) => $s->where('estado', 'interrumpido')->where('inicio', '<', now()->subDays(7)))
                 ->orWhere(fn ($s) => $s->where('estado', 'completado')->where('items_resultado', 0)->where('inicio', '<', now()->subHours(24)))
                 ->orWhere(fn ($s) => $s->where('estado', 'error')->where('inicio', '<', now()->subDays(30)))
@@ -55,7 +57,7 @@ class LogScript extends Model
      */
     public static function estaEjecutando(string $script): bool
     {
-        $timeoutMin = \App\Models\ConfigScript::where('script', $script)
+        $timeoutMin = ConfigScript::where('script', $script)
             ->value('timeout_minutos') ?? 120;
 
         return static::where('script', $script)
@@ -71,7 +73,7 @@ class LogScript extends Model
      */
     public static function limpiarHuerfanos(string $script): int
     {
-        $timeoutMin = \App\Models\ConfigScript::where('script', $script)
+        $timeoutMin = ConfigScript::where('script', $script)
             ->value('timeout_minutos') ?? 120;
 
         return static::where('script', $script)
@@ -87,41 +89,13 @@ class LogScript extends Model
     }
 
     /**
-     * Política de retención automática del historial:
+     * @deprecated Delegado a LogScriptRetentionService::aplicarRetencion()
+     * Mantenido por compatibilidad con código existente (LimpiarLogs command).
      *
-     * - Registros 'interrumpido': se eliminan después de 7 días.
-     * - Registros 'completado' con 0 resultados: se eliminan después de 24 horas.
-     * - Registros 'error': se conservan 30 días.
-     * - Registros 'completado' con resultados > 0: se conservan 90 días.
-     *
-     * Llamar desde Estado::render() o desde runner.py periódicamente.
+     * @return array{interrumpidos: int, completados_vacios: int, errores_viejos: int, completados_viejos: int, total: int}
      */
     public static function aplicarRetencion(): array
     {
-        $n1 = static::where('estado', 'interrumpido')
-            ->where('inicio', '<', now()->subDays(7))
-            ->delete();
-
-        $n2 = static::where('estado', 'completado')
-            ->where('items_resultado', 0)
-            ->where('inicio', '<', now()->subHours(24))
-            ->delete();
-
-        $n3 = static::where('estado', 'error')
-            ->where('inicio', '<', now()->subDays(30))
-            ->delete();
-
-        $n4 = static::where('estado', 'completado')
-            ->where('items_resultado', '>', 0)
-            ->where('inicio', '<', now()->subDays(90))
-            ->delete();
-
-        return [
-            'interrumpidos' => $n1,
-            'completados_vacios' => $n2,
-            'errores_viejos' => $n3,
-            'completados_viejos' => $n4,
-            'total' => $n1 + $n2 + $n3 + $n4,
-        ];
+        return (new LogScriptRetentionService())->aplicarRetencion();
     }
 }
