@@ -42,8 +42,16 @@ final class DedupeArticulosService
 
         $article = ResultadoScraping::find($resultadoId);
 
-        if ($article === null || $article->secundario_de !== null) {
-            return; // already processed or non-existent
+        if ($article === null) {
+            return; // non-existent — nothing to stamp
+        }
+
+        if ($article->secundario_de !== null) {
+            // Path A (early-exit): already a secondary — stamp and return.
+            // Stamp OUTSIDE any transaction: this is a processing receipt, not part of cluster invariant.
+            $article->update(['dedupe_processed_at' => now()]);
+
+            return;
         }
 
         $threshold  = $config->dedupeThreshold();
@@ -80,6 +88,12 @@ final class DedupeArticulosService
                 'similarity' => $bestCandidate->sim,
             ]);
         });
+
+        // Path B (post-transaction): stamp processing receipt OUTSIDE the transaction.
+        // Design decision: dedupe_processed_at is not part of the cluster invariant —
+        // stamping outside avoids extending the lock window. If this update fails,
+        // the next safety-net cycle re-dispatches the job (idempotent).
+        $article->update(['dedupe_processed_at' => now()]);
     }
 
     /**

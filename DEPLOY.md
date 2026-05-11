@@ -32,6 +32,7 @@ sudo -u www-data git -C /var/www/simo pull origin main
 php artisan migrate
 supervisorctl restart simo-pep-monitor
 supervisorctl restart simo-gemini-worker
+supervisorctl restart simo-dedupe-worker
 ```
 
 ---
@@ -233,6 +234,18 @@ numprocs=1
 redirect_stderr=true
 stdout_logfile=/var/www/simo/storage/logs/gemini-worker.log
 
+[program:simo-dedupe-worker]
+process_name=%(program_name)s_%(process_num)02d
+command=php /var/www/simo/artisan queue:work --queue=dedupe --sleep=3 --tries=3 --max-time=3600
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+user=www-data
+numprocs=1
+redirect_stderr=true
+stdout_logfile=/var/www/simo/storage/logs/dedupe-worker.log
+
 [program:simo-pep-monitor]
 process_name=%(program_name)s_%(process_num)02d
 command=python3 /var/www/simo/scripts/website_monitor_pro/pep_monitor.py
@@ -243,6 +256,35 @@ numprocs=1
 redirect_stderr=true
 stdout_logfile=/var/www/simo/storage/logs/pep-monitor.log
 ```
+
+### Activar simo-dedupe-worker (primer deploy)
+
+Al agregar `[program:simo-dedupe-worker]` por primera vez, ejecutar:
+
+```bash
+# 1. Copiar el bloque de configuración a supervisor
+sudo cp /etc/supervisor/conf.d/simo.conf /etc/supervisor/conf.d/simo.conf.bak
+
+# 2. Editar el archivo y agregar el bloque [program:simo-dedupe-worker] (ver arriba)
+sudo nano /etc/supervisor/conf.d/simo.conf
+
+# 3. Recargar la configuración de supervisor
+sudo supervisorctl reread && sudo supervisorctl update
+
+# 4. Iniciar el worker
+sudo supervisorctl start simo-dedupe-worker
+
+# 5. Verificar que está corriendo
+sudo supervisorctl status simo-dedupe-worker
+# Esperado: simo-dedupe-worker RUNNING pid XXXXX, uptime 0:00:XX
+
+# 6. Verificar el log
+tail -20 /var/www/simo/storage/logs/dedupe-worker.log
+```
+
+> **Kill switch**: Para deshabilitar temporalmente el processing de dedupe sin detener el worker,
+> agregar `DEDUPE_ENABLED=false` al `.env` y correr `php artisan config:cache`.
+> El comando `simo:dedupar-pendientes` seguirá ejecutándose en schedule pero no despachará jobs.
 
 ---
 

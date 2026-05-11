@@ -20,6 +20,12 @@ Schedule::command('simo:analizar-gemini')
     ->withoutOverlapping()
     ->onOneServer();
 
+// Dedupe: safety net para filas sin procesar (dedupe_processed_at IS NULL)
+Schedule::command('simo:dedupar-pendientes')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->onOneServer();
+
 // Limpieza de imágenes de cambios: borra archivos de cambios inexistentes o >90 días
 Schedule::command('cleanup:imagenes-cambios --days=90')
     ->dailyAt('03:00')
