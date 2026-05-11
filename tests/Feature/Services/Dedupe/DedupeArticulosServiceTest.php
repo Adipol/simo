@@ -92,6 +92,40 @@ class DedupeArticulosServiceTest extends TestCase
         ], $overrides));
     }
 
+    // ─── T3: Migration — column + partial index ───────────────────────────────
+
+    /**
+     * SCN-4.1 / T3: Verify the migration added the column and (pgsql) partial index.
+     */
+    public function test_it_adds_dedupe_processed_at_column_with_partial_index(): void
+    {
+        // Column exists in all drivers
+        $this->assertTrue(
+            \Illuminate\Support\Facades\Schema::hasColumn('resultados_scraping', 'dedupe_processed_at'),
+            'Column dedupe_processed_at must exist on resultados_scraping'
+        );
+
+        // New rows must default to NULL
+        $article = $this->makeArticle('Test migration column default');
+        $this->assertNull(
+            $article->fresh()->dedupe_processed_at,
+            'dedupe_processed_at must default to NULL for new rows'
+        );
+
+        // Partial index only checked on pgsql
+        if (DB::getDriverName() !== 'pgsql') {
+            $this->markTestIncomplete('Partial index assertion skipped on SQLite (pgsql-only feature)');
+        }
+
+        $indexExists = DB::selectOne(
+            "SELECT 1 FROM pg_indexes
+             WHERE tablename = 'resultados_scraping'
+               AND indexname  = 'resultados_scraping_dedupe_pending_idx'"
+        );
+
+        $this->assertNotNull($indexExists, 'Partial index resultados_scraping_dedupe_pending_idx must exist on pgsql');
+    }
+
     // ─── No candidates ────────────────────────────────────────────────────────
 
     public function test_article_stays_primary_when_no_candidates_exist(): void
@@ -223,6 +257,71 @@ class DedupeArticulosServiceTest extends TestCase
 
         $new->refresh();
         $this->assertNull($new->secundario_de, 'Articles outside the window must not form a cluster');
+    }
+
+    // ─── T5-T7: dedupe_processed_at stamping ─────────────────────────────────
+
+    /**
+     * SCN-1.2 / T5 (RED): Service stamps dedupe_processed_at after successful procesar().
+     *
+     * Uses habilitado=true in ConfigScript and article with no secondary candidates.
+     * Even when no cluster forms, the timestamp must be set (Path B: post-transaction).
+     */
+    public function test_it_sets_dedupe_processed_at_after_successful_processing(): void
+    {
+        ConfigScript::where('script', 'dedupe')->update(['habilitado' => true]);
+
+        $article = $this->makeArticle('Artículo único sin candidatos similares');
+
+        $this->assertNull($article->dedupe_processed_at, 'Precondition: must be NULL before procesar()');
+
+        $this->service->procesar($article->id);
+
+        $article->refresh();
+        $this->assertNotNull(
+            $article->dedupe_processed_at,
+            'dedupe_processed_at must be set after procesar() completes (SCN-1.2)'
+        );
+    }
+
+    /**
+     * SCN-1.3 / T6 (RED): Service stamps dedupe_processed_at on early-exit (already secondary).
+     *
+     * Path A (early-exit at line ~45): article has secundario_de set → service returns early.
+     * Even in this path the timestamp must be stamped.
+     */
+    public function test_it_sets_dedupe_processed_at_even_when_row_is_already_secondary(): void
+    {
+        ConfigScript::where('script', 'dedupe')->update(['habilitado' => true]);
+
+        $primary   = $this->makeArticle('Artículo primario de referencia');
+        $secondary = $this->makeArticle('Artículo secundario con secundario_de ya definido', [
+            'secundario_de' => $primary->id,
+        ]);
+
+        $this->assertNull($secondary->dedupe_processed_at, 'Precondition: must be NULL before procesar()');
+
+        $this->service->procesar($secondary->id);
+
+        $secondary->refresh();
+        $this->assertNotNull(
+            $secondary->dedupe_processed_at,
+            'dedupe_processed_at must be set even when article is already a secondary (SCN-1.3 Path A)'
+        );
+    }
+
+    /**
+     * T7 (RED): null guard — article not found must NOT stamp (no-op).
+     */
+    public function test_it_does_not_stamp_when_article_does_not_exist(): void
+    {
+        ConfigScript::where('script', 'dedupe')->update(['habilitado' => true]);
+
+        // Non-existent id — should not throw and DB must not have any row with this id
+        $this->service->procesar(999_888_777);
+
+        // No row exists → nothing to check; assert no exception was thrown
+        $this->assertDatabaseMissing('resultados_scraping', ['id' => 999_888_777]);
     }
 
     // ─── habilitado = false → no-op ───────────────────────────────────────────

@@ -26,7 +26,7 @@ class ResultadoScraping extends Model
         'gemini_analyzed', 'gemini_analyzed_at', 'gemini_is_pep', 'gemini_error_motivo',
         'gemini_nombre', 'gemini_nombre_normalizado', 'gemini_cargo',
         'gemini_categoria', 'gemini_entidad_tipo', 'gemini_confianza', 'gemini_motivo',
-        'secundario_de',
+        'secundario_de', 'dedupe_processed_at',
     ];
 
     protected $casts = [
@@ -42,6 +42,7 @@ class ResultadoScraping extends Model
         'gemini_is_pep'      => 'boolean',
         'gemini_confianza'   => 'integer',
         'secundario_de'      => 'integer',
+        'dedupe_processed_at' => 'datetime',
     ];
 
     public function sitio(): BelongsTo
