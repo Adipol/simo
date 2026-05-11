@@ -119,8 +119,19 @@ final class DedupeArticulosService
             return [];
         }
 
-        // Set pg_trgm similarity threshold for this session
-        DB::statement('SET LOCAL pg_trgm.similarity_threshold = ?', [$threshold]);
+        // Set pg_trgm similarity threshold for this transaction.
+        //
+        // We use set_config(name, value, is_local) instead of `SET LOCAL ... = ?`
+        // because PostgreSQL does NOT allow parameter bindings in `SET` statements
+        // (those are not prepared queries — the value must be a literal). The
+        // function form set_config(...) IS a regular function call that accepts
+        // bound parameters, with `is_local = true` giving the same scope as SET LOCAL.
+        //
+        // Reference: https://www.postgresql.org/docs/current/functions-admin.html
+        DB::statement(
+            'SELECT set_config(?, ?, true)',
+            ['pg_trgm.similarity_threshold', (string) $threshold]
+        );
 
         // Design D2 canonical query: find existing PRIMARY articles with similar title
         // within the window, excluding self and already-secondary articles

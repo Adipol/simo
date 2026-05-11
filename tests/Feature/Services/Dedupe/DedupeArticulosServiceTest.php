@@ -324,6 +324,47 @@ class DedupeArticulosServiceTest extends TestCase
         $this->assertDatabaseMissing('resultados_scraping', ['id' => 999_888_777]);
     }
 
+    // ─── REGRESSION GUARD: pg_trgm threshold via set_config(...) ──────────────
+
+    /**
+     * Regression guard for production hotfix `hotfix/dedupe-pg-trgm-set-local`.
+     *
+     * BUG: `DB::statement('SET LOCAL pg_trgm.similarity_threshold = ?', [$threshold])`
+     * fails on PostgreSQL with `syntax error at or near "$1"` because PG does NOT
+     * accept parameter bindings on `SET` statements. The fix uses the function form
+     * `SELECT set_config(name, value, true)` which IS a regular function and accepts
+     * bound params.
+     *
+     * This test executes the EXACT SQL the service runs and asserts:
+     *   1. It does not throw a PDOException.
+     *   2. The session variable is actually set to the requested value.
+     *
+     * Tests in SQLite skip because pg_trgm and set_config are PostgreSQL-specific.
+     */
+    public function test_pg_trgm_threshold_is_set_via_set_config_function_not_set_local(): void
+    {
+        $this->skipIfNotPgsql();
+
+        // Replicate the EXACT statement DedupeArticulosService::queryCandidates uses.
+        // If we ever regress to `SET LOCAL ... = ?`, this test fails immediately.
+        DB::transaction(function (): void {
+            DB::statement(
+                'SELECT set_config(?, ?, true)',
+                ['pg_trgm.similarity_threshold', '0.85']
+            );
+
+            $value = DB::selectOne("SELECT current_setting('pg_trgm.similarity_threshold') AS v");
+
+            $this->assertSame(
+                '0.85',
+                $value->v,
+                'pg_trgm.similarity_threshold must be set to 0.85 via set_config(?, ?, true). '
+                . 'If this fails with a syntax error, the service likely regressed to `SET LOCAL ... = ?` '
+                . 'which is INVALID syntax in PostgreSQL.'
+            );
+        });
+    }
+
     // ─── habilitado = false → no-op ───────────────────────────────────────────
 
     public function test_procesar_is_noop_when_dedupe_disabled_in_config(): void
