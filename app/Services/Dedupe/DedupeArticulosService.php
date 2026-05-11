@@ -134,7 +134,17 @@ final class DedupeArticulosService
         );
 
         // Design D2 canonical query: find existing PRIMARY articles with similar title
-        // within the window, excluding self and already-secondary articles
+        // within the window, excluding self and already-secondary articles.
+        //
+        // ORDER BY rationale:
+        //  1. sim DESC — strongest similarity first (the primary candidate is the most similar).
+        //  2. fecha_encontrado ASC — tie-breaker: when two candidates have the same similarity
+        //     (common when titles are identical or near-identical), prefer the OLDER one as
+        //     cluster head. This makes the heuristic intuitive: "first published wins primary".
+        //     Without this, the order is non-deterministic (depends on PG plan), which led to
+        //     contraintuitive cluster heads during the dedupe-safety-net backfill of 2026-05-11
+        //     (e.g. EJU TV beat EL PAIS because EL PAIS's job ran first and found EJU TV as
+        //     candidate first).
         return DB::select(
             "SELECT id, contexto, similarity(titulo, ?) AS sim
              FROM resultados_scraping
@@ -142,7 +152,7 @@ final class DedupeArticulosService
                AND fecha_encontrado >= NOW() - ? * INTERVAL '1 day'
                AND id != ?
                AND secundario_de IS NULL
-             ORDER BY sim DESC
+             ORDER BY sim DESC, fecha_encontrado ASC
              LIMIT 10",
             [
                 $article->titulo,

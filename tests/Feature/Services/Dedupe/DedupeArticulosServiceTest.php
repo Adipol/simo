@@ -365,6 +365,62 @@ class DedupeArticulosServiceTest extends TestCase
         });
     }
 
+    // ─── REGRESSION GUARD: older candidate wins as cluster head on similarity tie ─────
+
+    /**
+     * Regression guard for hotfix `hotfix/cluster-head-prefers-older`.
+     *
+     * BUG (pre-fix): when two candidate primaries had identical similarity, the cluster
+     * head was non-deterministic — depended on PostgreSQL's query plan. In the
+     * 2026-05-11 backfill this caused "first-processed loses" behavior: the article
+     * whose dedupe job ran first ended up as secondary of the second one.
+     *
+     * FIX: ORDER BY sim DESC, fecha_encontrado ASC — tie-breaker prefers the older row.
+     *
+     * Setup: create TWO primaries with identical titles (similarity = 1.0) but
+     * different fecha_encontrado. Process a THIRD identical article. It must
+     * become secondary of the OLDEST primary, not the newest.
+     */
+    public function test_older_primary_wins_cluster_head_on_similarity_tie(): void
+    {
+        $this->skipIfNotPgsql();
+
+        $titulo = 'Renuncia gerente YPFB Carlos Cronenbold Bolivia';
+
+        // Two existing primaries with IDENTICAL titles → similarity = 1.0 for both
+        $older = $this->makeArticle($titulo, [
+            'fecha_encontrado' => now()->subHours(4),
+        ]);
+        $newer = $this->makeArticle($titulo, [
+            'fecha_encontrado' => now()->subHours(2),
+        ]);
+
+        // Third article with the same title — must cluster under the OLDER primary
+        $incoming = $this->makeArticle($titulo, [
+            'fecha_encontrado' => now(),
+        ]);
+
+        $this->service->procesar($incoming->id);
+
+        $incoming->refresh();
+        $this->assertNotNull(
+            $incoming->secundario_de,
+            'Incoming article with identical title must be marked secondary'
+        );
+        $this->assertSame(
+            $older->id,
+            $incoming->secundario_de,
+            'On similarity tie, the OLDER primary must win as cluster head (ORDER BY fecha_encontrado ASC). '
+            . 'If this fails, the query likely regressed to ORDER BY sim DESC without the fecha_encontrado tie-breaker, '
+            . 'leaving cluster head non-deterministic.'
+        );
+        $this->assertNotSame(
+            $newer->id,
+            $incoming->secundario_de,
+            'Incoming must NOT cluster under the newer primary when an older candidate of equal similarity exists.'
+        );
+    }
+
     // ─── habilitado = false → no-op ───────────────────────────────────────────
 
     public function test_procesar_is_noop_when_dedupe_disabled_in_config(): void
