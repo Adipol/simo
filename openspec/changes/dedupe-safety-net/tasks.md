@@ -157,6 +157,8 @@ T17 (DEPLOY.md: simo-dedupe-worker supervisor block + ops checklist)
 
 - [x] **T19**: Manual smoke on VPS: deploy, run `php artisan simo:dedupar-pendientes`, check `failed_jobs` for `queue='dedupe'`, observe `dedupe_processed_at` populating in DB.
 
+- [x] **T20 (GREEN-only)**: Add `tests/Feature/Dedupe/DedupeConfigDefaultTest.php` — regression guard for SCN-5.1. Asserts `config/services.php:38-40` defaults `services.dedupe.enabled` to `true` when `DEDUPE_ENABLED` env var is not set. Skips artificial RED step — config already correct; closing verify-report #868 coverage gap. *(satisfies SCN-5.1, REQ-5)*
+
 ---
 
 ## Open questions resolved here
