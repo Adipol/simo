@@ -136,15 +136,25 @@ final class DedupeArticulosService
         // Design D2 canonical query: find existing PRIMARY articles with similar title
         // within the window, excluding self and already-secondary articles.
         //
+        // CRITICAL: dedupe_processed_at IS NOT NULL — only consider articles that have
+        // ALREADY been processed by the safety net as candidate primaries. Without this
+        // filter, two pending rows processed in series would see each other as candidates,
+        // and the first-processed would become secondary of the second, regardless of
+        // publication order. This was the bug observed in the 2026-05-11 backfill (PR #19's
+        // ORDER BY tie-breaker did NOT fix it, because only ONE candidate is visible at a
+        // time when both rows are pending). The filter ensures backfill order = dispatch
+        // order = primary-establishment order.
+        //
+        // Edge case (known, deferred): if two near-identical articles enter in the same
+        // safety-net cycle, neither sees the other as a candidate (both have dedupe_processed_at
+        // = NULL). Result: both become separate primaries instead of clustering. A future
+        // `simo:reclusterar` periodic command can re-evaluate this case.
+        //
         // ORDER BY rationale:
-        //  1. sim DESC — strongest similarity first (the primary candidate is the most similar).
-        //  2. fecha_encontrado ASC — tie-breaker: when two candidates have the same similarity
-        //     (common when titles are identical or near-identical), prefer the OLDER one as
-        //     cluster head. This makes the heuristic intuitive: "first published wins primary".
-        //     Without this, the order is non-deterministic (depends on PG plan), which led to
-        //     contraintuitive cluster heads during the dedupe-safety-net backfill of 2026-05-11
-        //     (e.g. EJU TV beat EL PAIS because EL PAIS's job ran first and found EJU TV as
-        //     candidate first).
+        //  1. sim DESC — strongest similarity first.
+        //  2. fecha_encontrado ASC — tie-breaker for the common-case (post-backfill) when
+        //     a new article enters and finds multiple established primaries of equal
+        //     similarity; the OLDEST established primary wins as cluster head.
         return DB::select(
             "SELECT id, contexto, similarity(titulo, ?) AS sim
              FROM resultados_scraping
@@ -152,6 +162,7 @@ final class DedupeArticulosService
                AND fecha_encontrado >= NOW() - ? * INTERVAL '1 day'
                AND id != ?
                AND secundario_de IS NULL
+               AND dedupe_processed_at IS NOT NULL
              ORDER BY sim DESC, fecha_encontrado ASC
              LIMIT 10",
             [
