@@ -36,8 +36,14 @@ class DeduparPendientes extends Command
             return self::SUCCESS;
         }
 
+        // Dispatch in chronological order (oldest first) so that — combined with the
+        // `dedupe_processed_at IS NOT NULL` candidate filter in DedupeArticulosService —
+        // the oldest pending row processes first and becomes primary, while later
+        // similar rows find it as a candidate and cluster underneath it correctly.
+        // Single-worker setup (numprocs=1) ensures FIFO processing matches dispatch order.
         $ids = ResultadoScraping::query()
             ->whereNull('dedupe_processed_at')
+            ->orderBy('fecha_encontrado', 'asc')
             ->pluck('id');
 
         $count = $ids->count();

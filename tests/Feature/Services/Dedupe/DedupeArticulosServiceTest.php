@@ -160,7 +160,11 @@ class DedupeArticulosServiceTest extends TestCase
     {
         $this->skipIfNotPgsql();
 
-        $existing = $this->makeArticle('Renuncia del gerente Carlos Cronenbold de YPFB');
+        // Existing primary must be ALREADY processed (post-backfill steady state) so the
+        // new query's `dedupe_processed_at IS NOT NULL` filter sees it as a candidate.
+        $existing = $this->makeArticle('Renuncia del gerente Carlos Cronenbold de YPFB', [
+            'dedupe_processed_at' => now()->subMinutes(10),
+        ]);
 
         // Near-identical title, inserted later → should become secondary
         $new = $this->makeArticle('Renuncia del gerente Carlos Cronenbold de la empresa YPFB', [
@@ -209,11 +213,15 @@ class DedupeArticulosServiceTest extends TestCase
     {
         $this->skipIfNotPgsql();
 
-        $primary = $this->makeArticle('Renuncia gerente YPFB Carlos Cronenbold Bolivia');
+        // Established primary (already processed) so the candidate filter sees it.
+        $primary = $this->makeArticle('Renuncia gerente YPFB Carlos Cronenbold Bolivia', [
+            'dedupe_processed_at' => now()->subMinutes(10),
+        ]);
 
         // Make an article that is already secondary under $primary
         $alreadySecondary = $this->makeArticle('Renuncia del gerente YPFB Carlos Cronenbold en Bolivia', [
-            'secundario_de' => $primary->id,
+            'secundario_de'       => $primary->id,
+            'dedupe_processed_at' => now()->subMinutes(5),
         ]);
 
         // New article with similar title → should find $primary (not $alreadySecondary) as candidate
@@ -244,9 +252,12 @@ class DedupeArticulosServiceTest extends TestCase
         // Set window to 3 days
         ConfigScript::where('script', 'dedupe')->update(['intervalo_minutos' => 3]);
 
-        // Existing article is 5 days old — outside the 3-day window
+        // Existing article is 5 days old AND processed — outside the 3-day window so
+        // it should still be filtered out by the window check (not by the new
+        // dedupe_processed_at filter).
         $old = $this->makeArticle('Renuncia gerente YPFB Bolivia noticias', [
-            'fecha_encontrado' => now()->subDays(5),
+            'fecha_encontrado'    => now()->subDays(5),
+            'dedupe_processed_at' => now()->subDays(5),
         ]);
 
         $new = $this->makeArticle('Renuncia gerente de YPFB Bolivia noticias recientes', [
@@ -365,29 +376,31 @@ class DedupeArticulosServiceTest extends TestCase
         });
     }
 
-    // ─── REGRESSION GUARD: older candidate wins as cluster head on similarity tie ─────
+    // ─── REGRESSION GUARDS: backfill ordering + candidate filter ──────────────
 
     /**
-     * Regression guard for hotfix `hotfix/cluster-head-prefers-older`.
+     * Regression guard #1 for hotfix `hotfix/dedupe-filter-processed-candidates`.
      *
-     * BUG (pre-fix): when two candidate primaries had identical similarity, the cluster
-     * head was non-deterministic — depended on PostgreSQL's query plan. In the
-     * 2026-05-11 backfill this caused "first-processed loses" behavior: the article
-     * whose dedupe job ran first ended up as secondary of the second one.
+     * Replicates the EXACT 2026-05-11 backfill scenario: TWO rows in `resultados_scraping`
+     * with similar titles, both pending (dedupe_processed_at IS NULL), processed in
+     * chronological order (oldest first — as the command now dispatches).
      *
-     * FIX: ORDER BY sim DESC, fecha_encontrado ASC — tie-breaker prefers the older row.
+     * Expected after the fix:
+     *  - Oldest row processes first → no candidates available (no one is processed yet)
+     *    → stays primary
+     *  - Newest row processes second → finds the oldest (now processed) as candidate
+     *    → becomes secondary of the oldest
      *
-     * Setup: create TWO primaries with identical titles (similarity = 1.0) but
-     * different fecha_encontrado. Process a THIRD identical article. It must
-     * become secondary of the OLDEST primary, not the newest.
+     * If this test fails, the candidate filter `dedupe_processed_at IS NOT NULL` was
+     * dropped from queryCandidates() OR the command stopped dispatching in ASC order.
      */
-    public function test_older_primary_wins_cluster_head_on_similarity_tie(): void
+    public function test_backfill_two_pending_rows_cluster_older_as_primary(): void
     {
         $this->skipIfNotPgsql();
 
-        $titulo = 'Renuncia gerente YPFB Carlos Cronenbold Bolivia';
+        $titulo = 'El gas que sostiene a Bolivia se acaba el reemplazo es posible';
 
-        // Two existing primaries with IDENTICAL titles → similarity = 1.0 for both
+        // Both rows are PENDING (dedupe_processed_at IS NULL) — the actual backfill state
         $older = $this->makeArticle($titulo, [
             'fecha_encontrado' => now()->subHours(4),
         ]);
@@ -395,7 +408,60 @@ class DedupeArticulosServiceTest extends TestCase
             'fecha_encontrado' => now()->subHours(2),
         ]);
 
-        // Third article with the same title — must cluster under the OLDER primary
+        // Simulate the command dispatching in chronological order (older first)
+        // and the single-worker FIFO processing.
+        $this->service->procesar($older->id);
+        $this->service->procesar($newer->id);
+
+        $older->refresh();
+        $newer->refresh();
+
+        $this->assertNull(
+            $older->secundario_de,
+            'Oldest pending row must become primary (no candidates available when it processes first)'
+        );
+        $this->assertSame(
+            $older->id,
+            $newer->secundario_de,
+            'Newer row must cluster under the older (now processed) primary. '
+            . 'If this is null, the candidate filter `dedupe_processed_at IS NOT NULL` is missing '
+            . 'OR the dispatch order is no longer chronological ASC.'
+        );
+        $this->assertNotNull(
+            $older->dedupe_processed_at,
+            'Older row must have dedupe_processed_at stamped after procesar()'
+        );
+        $this->assertNotNull(
+            $newer->dedupe_processed_at,
+            'Newer row must have dedupe_processed_at stamped after procesar()'
+        );
+    }
+
+    /**
+     * Regression guard #2: post-backfill steady state.
+     *
+     * Scenario: TWO established primaries (already processed, no cluster). A THIRD
+     * article enters with similar title. With the dedupe_processed_at filter, both
+     * established primaries are candidates. The ORDER BY tie-breaker
+     * (fecha_encontrado ASC) ensures the incoming clusters under the OLDEST.
+     */
+    public function test_incoming_clusters_under_oldest_established_primary(): void
+    {
+        $this->skipIfNotPgsql();
+
+        $titulo = 'Renuncia gerente YPFB Carlos Cronenbold Bolivia';
+
+        // Two ESTABLISHED primaries (already processed by safety net in a prior cycle)
+        $older = $this->makeArticle($titulo, [
+            'fecha_encontrado'    => now()->subHours(4),
+            'dedupe_processed_at' => now()->subHours(3),
+        ]);
+        $newer = $this->makeArticle($titulo, [
+            'fecha_encontrado'    => now()->subHours(2),
+            'dedupe_processed_at' => now()->subHours(1),
+        ]);
+
+        // Third article enters fresh
         $incoming = $this->makeArticle($titulo, [
             'fecha_encontrado' => now(),
         ]);
@@ -403,21 +469,15 @@ class DedupeArticulosServiceTest extends TestCase
         $this->service->procesar($incoming->id);
 
         $incoming->refresh();
+
         $this->assertNotNull(
             $incoming->secundario_de,
-            'Incoming article with identical title must be marked secondary'
+            'Incoming must cluster under one of the two established primaries'
         );
         $this->assertSame(
             $older->id,
             $incoming->secundario_de,
-            'On similarity tie, the OLDER primary must win as cluster head (ORDER BY fecha_encontrado ASC). '
-            . 'If this fails, the query likely regressed to ORDER BY sim DESC without the fecha_encontrado tie-breaker, '
-            . 'leaving cluster head non-deterministic.'
-        );
-        $this->assertNotSame(
-            $newer->id,
-            $incoming->secundario_de,
-            'Incoming must NOT cluster under the newer primary when an older candidate of equal similarity exists.'
+            'Incoming must cluster under the OLDEST established primary (ORDER BY fecha_encontrado ASC tie-breaker)'
         );
     }
 
