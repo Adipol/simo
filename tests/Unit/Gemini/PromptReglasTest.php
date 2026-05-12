@@ -20,7 +20,7 @@ class PromptReglasTest extends TestCase
     {
         $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'PEP-designacion');
         $this->assertStringContainsString('REGLAS DE CLASIFICACIÓN', $prompt);
-        $this->assertStringContainsString('EXPLÍCITAMENTE', $prompt);
+        $this->assertStringContainsString('PRINCIPALMENTE', $prompt);
         $this->assertStringContainsString('SUJETO ACTIVO', $prompt);
     }
 
