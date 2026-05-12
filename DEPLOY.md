@@ -8,7 +8,7 @@ Instrucciones para deployar SIMO en un VPS Ubuntu/Debian con Nginx + PHP-FPM + P
 
 | Componente | Versión mínima | Notas |
 |---|---|---|
-| PHP | 8.2+ | Requerido por Laravel 12 |
+| PHP | 8.4+ (prod: 8.5) | `composer.lock` requiere ≥8.4 por spatie/laravel-permission 7.x, symfony v8.x y carbon 3.x. VPS productivo corre 8.5.x. |
 | PostgreSQL | 17+ | Probado en 17, debería funcionar 14+ |
 | Python | 3.9+ | Para el scraper `pep_monitor.py` (usa `list[dict]` syntax) |
 | Composer | 2.x | Para dependencias PHP |
@@ -17,11 +17,14 @@ Instrucciones para deployar SIMO en un VPS Ubuntu/Debian con Nginx + PHP-FPM + P
 ### Extensiones PHP requeridas
 
 ```bash
-sudo apt install -y php8.2-cli php8.2-fpm php8.2-pgsql php8.2-mbstring \
-    php8.2-xml php8.2-curl php8.2-zip php8.2-bcmath php8.2-intl
+# Reemplazá 8.5 por la versión exacta que corras (mínimo 8.4)
+sudo apt install -y php8.5-cli php8.5-fpm php8.5-pgsql php8.5-mbstring \
+    php8.5-xml php8.5-curl php8.5-zip php8.5-bcmath php8.5-intl
 ```
 
-> ⚠️ `php8.2-intl` es necesario para `php artisan db:show` y para los formatters de Laravel. Sin él, varias features dan `RuntimeException: The "intl" PHP extension is required`.
+> ⚠️ `intl` es necesario para `php artisan db:show` y para los formatters de Laravel. Sin él, varias features dan `RuntimeException: The "intl" PHP extension is required`.
+
+> 📝 **Histórico**: hasta 2026-05 la doc decía "PHP 8.2+", pero `composer.lock` ya requería ≥8.4 desde el upgrade de Carbon 3 y Symfony 8 (2026-03-29). El primer run de CI (PR #21) expuso el mismatch; este fix alinea la doc con la realidad. Si necesitás bajar a 8.4 en un nuevo VPS, regenerá `composer.lock` con `composer update` en 8.4 — algunos paquetes pueden bajar de versión.
 
 ---
 

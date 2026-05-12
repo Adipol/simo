@@ -24,7 +24,10 @@ jobs:
 
       - uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.2'
+          # Match production VPS runtime (PHP 8.5.3) so CI exercises the same
+          # Zend Engine + extensions stack. composer.lock requires >=8.4 due to
+          # locked versions of spatie/laravel-permission, symfony v8.x and carbon 3.x.
+          php-version: '8.5'
           extensions: pgsql, mbstring, xml, curl, zip, bcmath, intl, sqlite3
           coverage: none
 
