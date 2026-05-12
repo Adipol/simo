@@ -66,7 +66,7 @@ class InvalidResponseIntegrationTest extends TestCase
 
         $record = $this->createRecord();
 
-        $plainText = file_get_contents(base_path('tests/Fixtures/Gemini\invalid_text_response.txt'));
+        $plainText = file_get_contents(base_path('tests/Fixtures/Gemini/invalid_text_response.txt'));
         Http::fake([
             'generativelanguage.googleapis.com/*' => Http::response($plainText, 200),
         ]);

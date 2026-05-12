@@ -1,0 +1,65 @@
+name: tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  TZ: America/La_Paz
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          # Match production VPS runtime (PHP 8.5.3) so CI exercises the same
+          # Zend Engine + extensions stack. composer.lock requires >=8.4 due to
+          # locked versions of spatie/laravel-permission, symfony v8.x and carbon 3.x.
+          php-version: '8.5'
+          extensions: pgsql, mbstring, xml, curl, zip, bcmath, intl, sqlite3
+          coverage: none
+
+      - id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ runner.os }}-${{ hashFiles('**/composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-
+
+      - run: composer install --prefer-dist --no-progress --no-interaction
+
+      # Node + Vite build is required even for backend tests because feature
+      # tests that GET full pages (e.g. ProfileTest) render layouts/app.blade.php
+      # which uses the @vite directive. That directive looks up
+      # public/build/manifest.json — without it, every layout-rendering test
+      # throws "Vite manifest not found".
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci --prefer-offline --no-audit
+
+      - run: npm run build
+
+      - run: cp .env.example .env
+
+      - run: php artisan key:generate
+
+      - env:
+          APP_ENV: testing
+        run: php -d memory_limit=512M artisan test

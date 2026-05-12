@@ -13,12 +13,16 @@ class FiltroResultadoDTOTest extends TestCase
     private function validData(): array
     {
         return [
-            'is_pep' => true,
-            'nombre' => 'Juan Pérez',
-            'cargo' => 'Ministro de Economía',
-            'categoria' => 'PEP',
-            'confianza' => 95,
-            'motivo' => 'Cargo ejecutivo de alto nivel',
+            'personas' => [[
+                'nombre' => 'Juan Pérez',
+                'cargo' => 'Ministro de Economía',
+                'categoria' => 'PEP',
+                'entidad_tipo' => null,
+                'confianza' => 95,
+                'evento' => 'designacion',
+                'motivo' => 'Cargo ejecutivo de alto nivel',
+            ]],
+            'motivo_general' => 'Artículo sobre acción ministerial',
         ];
     }
 
@@ -26,87 +30,88 @@ class FiltroResultadoDTOTest extends TestCase
     {
         $dto = FiltroResultadoDTO::fromArray($this->validData());
 
-        $this->assertTrue($dto->isPep);
-        $this->assertSame('Juan Pérez', $dto->nombre);
-        $this->assertSame('Ministro de Economía', $dto->cargo);
-        $this->assertSame('PEP', $dto->categoria);
-        $this->assertSame(95, $dto->confianza);
-        $this->assertSame('Cargo ejecutivo de alto nivel', $dto->motivo);
+        $this->assertCount(1, $dto->personas);
+        $this->assertSame('Juan Pérez', $dto->personas[0]->nombre);
+        $this->assertSame('Ministro de Economía', $dto->personas[0]->cargo);
+        $this->assertSame('PEP', $dto->personas[0]->categoria);
+        $this->assertSame(95, $dto->personas[0]->confianza);
+        $this->assertSame('Cargo ejecutivo de alto nivel', $dto->personas[0]->motivo);
+        $this->assertSame('Artículo sobre acción ministerial', $dto->motivoGeneral);
     }
 
     public function test_from_array_with_null_categoria(): void
     {
         $data = $this->validData();
-        $data['categoria'] = null;
-        $data['is_pep'] = false;
+        $data['personas'][0]['categoria'] = null;
 
         $dto = FiltroResultadoDTO::fromArray($data);
 
-        $this->assertFalse($dto->isPep);
-        $this->assertNull($dto->categoria);
+        $this->assertNull($dto->personas[0]->categoria);
     }
 
     public function test_from_array_with_null_nombre_and_cargo(): void
     {
         $data = $this->validData();
-        $data['nombre'] = null;
-        $data['cargo'] = null;
-        $data['is_pep'] = false;
-        $data['categoria'] = null;
+        $data['personas'][0]['nombre'] = '';
+        $data['personas'][0]['cargo'] = null;
+        $data['personas'][0]['categoria'] = null;
 
         $dto = FiltroResultadoDTO::fromArray($data);
 
-        $this->assertNull($dto->nombre);
-        $this->assertNull($dto->cargo);
+        // Personas with empty nombre are filtered out
+        $this->assertCount(0, $dto->personas);
     }
 
     public function test_from_array_casts_confianza_to_int(): void
     {
         $data = $this->validData();
-        $data['confianza'] = '85';
+        $data['personas'][0]['confianza'] = '85';
 
         $dto = FiltroResultadoDTO::fromArray($data);
 
-        $this->assertSame(85, $dto->confianza);
+        $this->assertSame(85, $dto->personas[0]->confianza);
     }
 
     public function test_from_array_with_opi_categoria(): void
     {
         $data = $this->validData();
-        $data['categoria'] = 'OPI';
-        $data['nombre'] = 'Rodrigo Vargas';
-        $data['cargo'] = null;
+        $data['personas'][0]['categoria'] = 'OPI';
+        $data['personas'][0]['nombre'] = 'Rodrigo Vargas';
+        $data['personas'][0]['cargo'] = null;
 
         $dto = FiltroResultadoDTO::fromArray($data);
 
-        $this->assertSame('OPI', $dto->categoria);
+        $this->assertSame('OPI', $dto->personas[0]->categoria);
     }
 
-    public function test_from_array_throws_when_is_pep_missing(): void
+    public function test_from_array_throws_when_personas_key_missing(): void
     {
         $data = $this->validData();
-        unset($data['is_pep']);
+        unset($data['personas']);
 
         $this->expectException(GeminiInvalidResponseException::class);
         FiltroResultadoDTO::fromArray($data);
     }
 
-    public function test_from_array_throws_when_confianza_missing(): void
+    public function test_from_array_with_empty_personas_array(): void
     {
         $data = $this->validData();
-        unset($data['confianza']);
+        $data['personas'] = [];
 
-        $this->expectException(GeminiInvalidResponseException::class);
-        FiltroResultadoDTO::fromArray($data);
+        $dto = FiltroResultadoDTO::fromArray($data);
+
+        $this->assertCount(0, $dto->personas);
+        $this->assertFalse($dto->hasPersonas());
     }
 
-    public function test_from_array_throws_when_motivo_missing(): void
+    public function test_from_array_with_motivo_general(): void
     {
         $data = $this->validData();
-        unset($data['motivo']);
+        $data['motivo_general'] = 'Texto deportivo sin mención de cargos públicos';
 
-        $this->expectException(GeminiInvalidResponseException::class);
-        FiltroResultadoDTO::fromArray($data);
+        $dto = FiltroResultadoDTO::fromArray($data);
+
+        $this->assertSame('Texto deportivo sin mención de cargos públicos', $dto->motivoGeneral);
     }
 
     public function test_dto_is_readonly(): void
@@ -121,28 +126,31 @@ class FiltroResultadoDTOTest extends TestCase
 
     public function test_from_array_parses_entidad_tipo_field(): void
     {
-        $data = array_merge($this->validData(), ['entidad_tipo' => 'publica']);
+        $data = $this->validData();
+        $data['personas'][0]['entidad_tipo'] = 'publica';
 
         $dto = FiltroResultadoDTO::fromArray($data);
 
-        $this->assertSame('publica', $dto->entidadTipo);
+        $this->assertSame('publica', $dto->personas[0]->entidadTipo);
     }
 
     public function test_from_array_entidad_tipo_defaults_to_null_when_missing(): void
     {
-        $data = $this->validData(); // no entidad_tipo key
+        $data = $this->validData();
+        unset($data['personas'][0]['entidad_tipo']);
 
         $dto = FiltroResultadoDTO::fromArray($data);
 
-        $this->assertNull($dto->entidadTipo);
+        $this->assertNull($dto->personas[0]->entidadTipo);
     }
 
     public function test_from_array_entidad_tipo_accepts_all_valid_values(): void
     {
         foreach (['publica', 'privada', 'desconocido'] as $value) {
-            $data = array_merge($this->validData(), ['entidad_tipo' => $value]);
+            $data = $this->validData();
+            $data['personas'][0]['entidad_tipo'] = $value;
             $dto = FiltroResultadoDTO::fromArray($data);
-            $this->assertSame($value, $dto->entidadTipo);
+            $this->assertSame($value, $dto->personas[0]->entidadTipo);
         }
     }
 }

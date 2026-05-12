@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Services;
 
+use App\Models\ResultadoPersona;
 use App\Models\ResultadoScraping;
 use App\Services\Gemini\GeminiFiltroService;
 use App\Services\Gemini\GeminiPromptBuilder;
 use App\Services\Gemini\GeminiService;
+use App\Services\Gemini\PreFiltroService;
 use App\Services\Normalization\NombreNormalizador;
 use App\Services\Normalization\NombreNormalizadorInterface;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -21,6 +23,10 @@ class GeminiFiltroNormalizacionTest extends TestCase
 
     private function createRecord(array $overrides = []): ResultadoScraping
     {
+        // Flush event listeners to prevent observer from dispatching sync jobs
+        // that would make real HTTP calls before Http::fake() is set up.
+        ResultadoScraping::flushEventListeners();
+
         return ResultadoScraping::create(array_merge([
             'url' => 'https://example.com/article',
             'keyword' => 'corrupcion',
@@ -33,6 +39,11 @@ class GeminiFiltroNormalizacionTest extends TestCase
         ], $overrides));
     }
 
+    /**
+     * Wraps inner data (personas + motivo_general) inside the Gemini API envelope.
+     * The $data must be in the current FiltroResultadoDTO shape:
+     *   ['personas' => [...], 'motivo_general' => '...']
+     */
     private function fakeGeminiResponse(array $data): string
     {
         return json_encode([
@@ -51,6 +62,7 @@ class GeminiFiltroNormalizacionTest extends TestCase
         return new GeminiFiltroService(
             new GeminiService(apiKey: 'test-key-123'),
             new GeminiPromptBuilder,
+            new PreFiltroService,
             new NombreNormalizador,
         );
     }
@@ -65,13 +77,16 @@ class GeminiFiltroNormalizacionTest extends TestCase
         Http::fake([
             'generativelanguage.googleapis.com/*' => Http::response(
                 $this->fakeGeminiResponse([
-                    'is_pep' => true,
-                    'nombre' => 'Dr. Juan Pérez',
-                    'cargo' => 'Ministro',
-                    'categoria' => 'PEP',
-                    'entidad_tipo' => null,
-                    'confianza' => 90,
-                    'motivo' => 'Funcionario público',
+                    'personas' => [[
+                        'nombre' => 'Dr. Juan Pérez',
+                        'cargo' => 'Ministro',
+                        'categoria' => 'PEP',
+                        'entidad_tipo' => null,
+                        'confianza' => 90,
+                        'evento' => 'designacion',
+                        'motivo' => 'Funcionario público',
+                    ]],
+                    'motivo_general' => 'Artículo sobre acción ministerial',
                 ]),
                 200
             ),
@@ -79,9 +94,10 @@ class GeminiFiltroNormalizacionTest extends TestCase
 
         $this->makeService()->analizarLote(collect([$record]));
 
-        $record->refresh();
-        $this->assertSame('Dr. Juan Pérez', $record->gemini_nombre);
-        $this->assertSame('Juan Pérez', $record->gemini_nombre_normalizado);
+        $persona = ResultadoPersona::where('resultado_scraping_id', $record->id)->first();
+        $this->assertNotNull($persona);
+        $this->assertSame('Dr. Juan Pérez', $persona->nombre);
+        $this->assertSame('Juan Pérez', $persona->nombre_normalizado);
     }
 
     public function test_persist_populates_normalized_for_all_caps_name(): void
@@ -92,13 +108,16 @@ class GeminiFiltroNormalizacionTest extends TestCase
         Http::fake([
             'generativelanguage.googleapis.com/*' => Http::response(
                 $this->fakeGeminiResponse([
-                    'is_pep' => true,
-                    'nombre' => 'JUAN PÉREZ',
-                    'cargo' => 'Senador',
-                    'categoria' => 'PEP',
-                    'entidad_tipo' => null,
-                    'confianza' => 85,
-                    'motivo' => 'Senador en ejercicio',
+                    'personas' => [[
+                        'nombre' => 'JUAN PÉREZ',
+                        'cargo' => 'Senador',
+                        'categoria' => 'PEP',
+                        'entidad_tipo' => null,
+                        'confianza' => 85,
+                        'evento' => 'designacion',
+                        'motivo' => 'Senador en ejercicio',
+                    ]],
+                    'motivo_general' => 'Artículo sobre cargo legislativo',
                 ]),
                 200
             ),
@@ -106,9 +125,10 @@ class GeminiFiltroNormalizacionTest extends TestCase
 
         $this->makeService()->analizarLote(collect([$record]));
 
-        $record->refresh();
-        $this->assertSame('JUAN PÉREZ', $record->gemini_nombre);
-        $this->assertSame('Juan Pérez', $record->gemini_nombre_normalizado);
+        $persona = ResultadoPersona::where('resultado_scraping_id', $record->id)->first();
+        $this->assertNotNull($persona);
+        $this->assertSame('JUAN PÉREZ', $persona->nombre);
+        $this->assertSame('Juan Pérez', $persona->nombre_normalizado);
     }
 
     // ─── 5.2: Null name propagation ───────────────────────────────────────────
@@ -121,13 +141,8 @@ class GeminiFiltroNormalizacionTest extends TestCase
         Http::fake([
             'generativelanguage.googleapis.com/*' => Http::response(
                 $this->fakeGeminiResponse([
-                    'is_pep' => false,
-                    'nombre' => null,
-                    'cargo' => null,
-                    'categoria' => null,
-                    'entidad_tipo' => null,
-                    'confianza' => 10,
-                    'motivo' => 'No es PEP',
+                    'personas' => [],
+                    'motivo_general' => 'No es PEP',
                 ]),
                 200
             ),
@@ -136,8 +151,8 @@ class GeminiFiltroNormalizacionTest extends TestCase
         $this->makeService()->analizarLote(collect([$record]));
 
         $record->refresh();
-        $this->assertNull($record->gemini_nombre);
-        $this->assertNull($record->gemini_nombre_normalizado);
+        $this->assertFalse($record->gemini_is_pep);
+        $this->assertSame(0, ResultadoPersona::where('resultado_scraping_id', $record->id)->count());
     }
 
     // ─── 5.3: Graceful failure ────────────────────────────────────────────────
@@ -155,27 +170,32 @@ class GeminiFiltroNormalizacionTest extends TestCase
         $service = new GeminiFiltroService(
             new GeminiService(apiKey: 'test-key-123'),
             new GeminiPromptBuilder,
+            new PreFiltroService,
             $mockNormalizador,
         );
 
         Http::fake([
             'generativelanguage.googleapis.com/*' => Http::response(
                 $this->fakeGeminiResponse([
-                    'is_pep' => true,
-                    'nombre' => 'Dr. Juan Pérez',
-                    'cargo' => 'Ministro',
-                    'categoria' => 'PEP',
-                    'entidad_tipo' => null,
-                    'confianza' => 90,
-                    'motivo' => 'Funcionario',
+                    'personas' => [[
+                        'nombre' => 'Dr. Juan Pérez',
+                        'cargo' => 'Ministro',
+                        'categoria' => 'PEP',
+                        'entidad_tipo' => null,
+                        'confianza' => 90,
+                        'evento' => 'designacion',
+                        'motivo' => 'Funcionario',
+                    ]],
+                    'motivo_general' => 'Artículo ministerial',
                 ]),
                 200
             ),
         ]);
 
-        Log::shouldReceive('warning')->once()->withArgs(function (string $message, array $context) {
+        Log::shouldReceive('warning')->atLeast()->once()->withArgs(function (string $message, array $context) {
             return str_contains($message, 'normalization') || str_contains($message, 'normalizaci');
         });
+        Log::shouldReceive('warning')->zeroOrMoreTimes();
         Log::shouldReceive('channel')->andReturnSelf();
         Log::shouldReceive('info')->andReturnNull();
 
@@ -184,10 +204,13 @@ class GeminiFiltroNormalizacionTest extends TestCase
         $record->refresh();
         // Persistence must continue
         $this->assertTrue($record->gemini_analyzed);
+
+        $persona = ResultadoPersona::where('resultado_scraping_id', $record->id)->first();
+        $this->assertNotNull($persona);
         // Normalized must be null (graceful failure)
-        $this->assertNull($record->gemini_nombre_normalizado);
+        $this->assertNull($persona->nombre_normalizado);
         // Original must be preserved
-        $this->assertSame('Dr. Juan Pérez', $record->gemini_nombre);
+        $this->assertSame('Dr. Juan Pérez', $persona->nombre);
     }
 
     // ─── 8.1: Full flow integration ───────────────────────────────────────────
@@ -200,13 +223,16 @@ class GeminiFiltroNormalizacionTest extends TestCase
         Http::fake([
             'generativelanguage.googleapis.com/*' => Http::response(
                 $this->fakeGeminiResponse([
-                    'is_pep' => true,
-                    'nombre' => 'Dr. Pedro López',
-                    'cargo' => 'Director General',
-                    'categoria' => 'PEP',
-                    'entidad_tipo' => null,
-                    'confianza' => 92,
-                    'motivo' => 'Director de entidad pública',
+                    'personas' => [[
+                        'nombre' => 'Dr. Pedro López',
+                        'cargo' => 'Director General',
+                        'categoria' => 'PEP',
+                        'entidad_tipo' => null,
+                        'confianza' => 92,
+                        'evento' => 'designacion',
+                        'motivo' => 'Director de entidad pública',
+                    ]],
+                    'motivo_general' => 'Artículo sobre director de entidad pública',
                 ]),
                 200
             ),
@@ -215,9 +241,12 @@ class GeminiFiltroNormalizacionTest extends TestCase
         $this->makeService()->analizarLote(collect([$record]));
 
         $record->refresh();
-        $this->assertSame('Dr. Pedro López', $record->gemini_nombre);
-        $this->assertSame('Pedro López', $record->gemini_nombre_normalizado);
         $this->assertTrue($record->gemini_analyzed);
         $this->assertTrue($record->gemini_is_pep);
+
+        $persona = ResultadoPersona::where('resultado_scraping_id', $record->id)->first();
+        $this->assertNotNull($persona);
+        $this->assertSame('Dr. Pedro López', $persona->nombre);
+        $this->assertSame('Pedro López', $persona->nombre_normalizado);
     }
 }

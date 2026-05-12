@@ -57,3 +57,7 @@ If you discover a security vulnerability within Laravel, please send an e-mail t
 ## License
 
 The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+
+## Continuous Integration
+
+Every pull request targeting `main`, every direct push to `main`, and any manual dispatch from the Actions tab triggers the CI workflow defined in `.github/workflows/test.yml`. The workflow sets up PHP 8.2 with the required extensions, installs Composer dependencies (with caching), copies `.env.example` to `.env`, and runs the full test suite via `php -d memory_limit=512M artisan test`. A failing test causes the workflow step to exit non-zero and the run is marked as failed — there are no exclusion groups or skip bypasses. To debug a failure, open the **Actions** tab in the GitHub repository, select the failed run, and expand the **test** step to see the exact failing assertion inline. You cannot bypass CI; fix the test or open an issue to track the regression.
