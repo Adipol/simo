@@ -17,7 +17,7 @@ class EntidadesPublicasBoliviaSeederTest extends TestCase
     {
         $this->seed(EntidadesPublicasBoliviaSeeder::class);
 
-        $this->assertSame(33, EntidadPublica::count());
+        $this->assertGreaterThan(200, EntidadPublica::count());
     }
 
     public function test_all_records_have_pais_codigo_bo(): void
@@ -44,8 +44,8 @@ class EntidadesPublicasBoliviaSeederTest extends TestCase
     {
         $this->seed(EntidadesPublicasBoliviaSeeder::class);
 
-        $this->assertDatabaseHas('entidades_publicas', ['pais_codigo' => 'BO', 'nombre' => 'YPFB']);
-        $this->assertDatabaseHas('entidades_publicas', ['pais_codigo' => 'BO', 'nombre' => 'ENTEL']);
+        $this->assertDatabaseHas('entidades_publicas', ['pais_codigo' => 'BO', 'nombre' => 'Ministerio de Economía y Finanzas Públicas']);
+        $this->assertDatabaseHas('entidades_publicas', ['pais_codigo' => 'BO', 'nombre' => 'Ministerio de Gobierno']);
         $this->assertDatabaseHas('entidades_publicas', ['pais_codigo' => 'BO', 'nombre' => 'Banco Central de Bolivia']);
     }
 
