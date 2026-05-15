@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\ResultadoScraping;
+use App\Services\Contracts\NegativeExamplesProvider;
 use App\Services\Dashboard\DTOs\ConfianzaBucketDTO;
 use App\Services\Dashboard\DTOs\DescartadosMetricsDTO;
 use App\Services\Dashboard\DTOs\DriftDTO;
@@ -24,7 +25,7 @@ use Illuminate\Support\Facades\DB;
  *
  * feedback-loop-from-descartados · design §Service API
  */
-final class DescartadosAnalisisService
+final class DescartadosAnalisisService implements NegativeExamplesProvider
 {
     private const CACHE_TTL = 300;
     private const MIN_SAMPLE_KEYWORD = 5;

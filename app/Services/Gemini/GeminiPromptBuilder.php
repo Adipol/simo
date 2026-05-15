@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Gemini;
 
 use App\Enums\EntidadTipo;
+use App\Services\Contracts\NegativeExamplesProvider;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 
@@ -20,8 +21,12 @@ class GeminiPromptBuilder
 
     private const CONTEXT_LINES = 2;
 
+    private ?Collection $cachedExamples = null;
+
     public function __construct(
         private readonly ?PepCatalogService $catalog = null,
+        private readonly ?NegativeExamplesProvider $negativeExamplesService = null,
+        private readonly int $negativeExamplesLimit = 5,
     ) {}
 
     /**
@@ -198,6 +203,70 @@ RULES;
     }
 
     private function buildEjemplosNegativos(): string
+    {
+        if ($this->negativeExamplesService !== null && $this->isNegativeExamplesFlagEnabled()) {
+            $dynamic = $this->formatDynamicExamples($this->getCachedExamples());
+            if ($dynamic !== '') {
+                return $dynamic;
+            }
+        }
+
+        return $this->buildHardcodedExamples();
+    }
+
+    private function isNegativeExamplesFlagEnabled(): bool
+    {
+        try {
+            return (bool) config('services.gemini.negative_examples_enabled', true);
+        } catch (\RuntimeException) {
+            // Laravel container not bootstrapped (pure unit test context) → default true
+            return true;
+        }
+    }
+
+    private function getCachedExamples(): Collection
+    {
+        return $this->cachedExamples ??= ($this->negativeExamplesService?->getNegativeExamples(
+            $this->negativeExamplesLimit
+        ) ?? collect());
+    }
+
+    private function formatDynamicExamples(Collection $examples): string
+    {
+        if ($examples->isEmpty()) {
+            return '';
+        }
+
+        $lines = $examples->map(function (object $r): string {
+            $titulo    = $r->titulo ?? '';
+            $motivo    = $r->gemini_motivo ?? '';
+            $confianza = (int) ($r->gemini_confianza ?? 0);
+
+            // Encode titulo as a JSON string so embedded quotes/backslashes are correctly escaped
+            $tituloJson = json_encode($titulo, JSON_UNESCAPED_UNICODE);
+
+            // Build the payload via json_encode so PHP handles all escaping in motivo_general
+            $payload = json_encode(
+                [
+                    'personas'        => [],
+                    'motivo_general'  => sprintf('%s. Confianza original: %d.', $motivo, $confianza),
+                ],
+                JSON_UNESCAPED_UNICODE
+            );
+
+            return sprintf('[NEG-OP] %s → %s', $tituloJson, $payload);
+        })->implode("\n\n");
+
+        try {
+            Log::info('gemini.negative_examples.injected', ['count' => $examples->count()]);
+        } catch (\RuntimeException) {
+            // Facade not available in pure unit test context
+        }
+
+        return $lines."\n\n";
+    }
+
+    private function buildHardcodedExamples(): string
     {
         return <<<'NEGATIVES'
 [NEG] "El caso confirmado de fiebre amarilla obligó a las autoridades sanitarias a activar protocolo. Carlos Hurtado, de 45 años, fue hospitalizado en el centro médico."

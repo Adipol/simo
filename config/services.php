@@ -53,6 +53,8 @@ return [
         'multimodal_enabled' => (bool) env('GEMINI_MULTIMODAL_ENABLED', true),
         'multimodal_max_payload_bytes' => (int) env('GEMINI_MULTIMODAL_MAX_PAYLOAD_BYTES', 100 * 1024 * 1024),
         'multimodal_max_image_bytes' => (int) env('GEMINI_MULTIMODAL_MAX_IMAGE_BYTES', 5 * 1024 * 1024),
+        'negative_examples_enabled' => env('GEMINI_NEGATIVE_EXAMPLES_ENABLED', true),
+        'negative_examples_limit' => (int) env('GEMINI_NEGATIVE_EXAMPLES_LIMIT', 5),
     ],
 
 ];
