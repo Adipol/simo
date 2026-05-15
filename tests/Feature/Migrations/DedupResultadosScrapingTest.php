@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Migrations;
 
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
 /**
@@ -47,18 +49,23 @@ class DedupResultadosScrapingTest extends TestCase
     // =========================================================================
 
     /**
-     * Temporarily drop the UNIQUE constraint (M3b index) so we can seed
-     * duplicates, then run M3a to dedup them.
+     * Temporarily drop the UNIQUE constraint (M3b) so we can seed duplicates,
+     * then run M3a to dedup them.
      *
-     * On SQLite, the constraint is stored as an index named
-     * 'resultados_scraping_url_categoria_unique'.
-     * On PostgreSQL it would be a constraint — but tests run on SQLite.
+     * Cross-driver via Schema::table + dropUnique — Laravel handles the
+     * SQLite (drop index) vs pgsql (drop constraint) difference internally.
+     *
+     * IMPORTANT: previous implementation used `DB::statement('DROP INDEX...')`
+     * which works on SQLite but fails on pgsql (UNIQUE is a CONSTRAINT, not
+     * a bare INDEX). The failing DROP aborted the transaction, causing 5 tests
+     * to cascade-fail with SQLSTATE[25P02].
      */
     private function dropUniqueConstraint(): void
     {
-        // SQLite stores the unique as an index we can drop directly.
         try {
-            DB::statement('DROP INDEX IF EXISTS resultados_scraping_url_categoria_unique');
+            Schema::table('resultados_scraping', function (Blueprint $table): void {
+                $table->dropUnique('resultados_scraping_url_categoria_unique');
+            });
         } catch (\Throwable) {
             // Constraint might not exist yet in some test orders — safe to ignore.
         }
@@ -67,10 +74,9 @@ class DedupResultadosScrapingTest extends TestCase
     private function restoreUniqueConstraint(): void
     {
         try {
-            DB::statement(
-                'CREATE UNIQUE INDEX IF NOT EXISTS resultados_scraping_url_categoria_unique
-                 ON resultados_scraping (url, categoria)'
-            );
+            Schema::table('resultados_scraping', function (Blueprint $table): void {
+                $table->unique(['url', 'categoria'], 'resultados_scraping_url_categoria_unique');
+            });
         } catch (\Throwable) {
             // Already exists or not applicable.
         }
