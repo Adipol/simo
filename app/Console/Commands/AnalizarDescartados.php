@@ -30,7 +30,7 @@ final class AnalizarDescartados extends Command
 
     protected $description = 'Análisis de descartados (uso CLI; sin gate de permiso — acceso SSH implica trust).';
 
-    private const string SEPARATOR = '================================================================================';
+    private const SEPARATOR = '================================================================================';
 
     public function handle(DescartadosAnalisisService $service): int
     {
