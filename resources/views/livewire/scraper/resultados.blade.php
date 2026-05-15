@@ -250,6 +250,12 @@
                     class="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 text-lg">&times;</button>
             </div>
             <div class="px-6 py-4 overflow-y-auto">
+                @if($resultadoAnalisis->gemini_motivo)
+                    <div class="mb-4 bg-gray-50 rounded-xl px-4 py-3">
+                        <p class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Razonamiento Gemini</p>
+                        <p class="text-xs text-gray-600 leading-relaxed">{{ $resultadoAnalisis->gemini_motivo }}</p>
+                    </div>
+                @endif
                 @if($resultadoAnalisis->personas->isEmpty())
                     <p class="text-sm text-gray-500 text-center py-6">Sin personas detectadas</p>
                 @else
