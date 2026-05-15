@@ -287,12 +287,20 @@ final class DashboardHealthService
 
     private function computeQuota(): GeminiQuotaDTO
     {
+        // Use Carbon's startOfDay() (PHP timezone-aware) instead of SQL CURRENT_DATE
+        // which returns UTC date in SQLite/PG and silently breaks when app timezone
+        // differs from UTC (e.g. America/La_Paz = UTC-4). Without this, rows inserted
+        // with now() in local timezone don't match the CURRENT_DATE filter when CI
+        // runs in the early UTC hours.
+        $startOfToday = now()->startOfDay()->toDateTimeString();
+
         $row = DB::selectOne(
             'SELECT
                 COALESCE(SUM(total_tokens), 0) AS tokens_today,
                 COUNT(*) AS requests_today
              FROM gemini_usage_log
-             WHERE created_at >= CURRENT_DATE'
+             WHERE created_at >= ?',
+            [$startOfToday]
         );
 
         $requestsToday = (int) ($row->requests_today ?? 0);
