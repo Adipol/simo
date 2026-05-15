@@ -66,3 +66,14 @@ Chain strategy: pending
 - [x] 4.1 Run `php artisan test` (SQLite) — full suite green (913 tests, 0 failures)
 - [x] 4.2 Run `php artisan test --filter=Gemini` — 246 Gemini tests passing
 - [x] 4.3 Mark all checkboxes above as completed
+
+---
+
+## Phase 5: Nits Remediation (verify-report WARNING 1 + 2)
+
+- [x] T5.1 [TEST] `tests/Feature/Commands/BackfillGeminiConfianzaTest.php` — replace weak `expectsOutputToContain('2'/'1')` in `test_command_reports_correct_counters` with `expectsTable(...)` asserting all 5 rows including new 4th counter; RED confirmed (2 failures)
+- [x] T5.2 [TEST] Same file — add `test_command_reports_skipped_already_populated_counter`; asserts 4th row = 0 even when already-populated rows exist in DB; RED confirmed
+- [x] T5.3 [PROD] `app/Console/Commands/BackfillGeminiConfianza.php` — add `['Skipped (already populated)', 0]` row to output table; GREEN (7/7 backfill tests pass)
+- [x] T5.4 Full suite: 914 tests, 0 failures, 0 errors (9 skipped + 1 incomplete pre-existing)
+- [x] T5.5 Committed: `bb633d9` — `fix(gemini): match spec counter labels and harden backfill test assertions`
+- [x] T5.6 Pushed: `git push origin feat/gemini-confidence-persistence` (regular push, 6011f63..bb633d9)
