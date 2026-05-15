@@ -618,6 +618,118 @@ class GeminiPromptBuilderTest extends TestCase
         config(['services.gemini.negative_examples_enabled' => null]);
     }
 
+    // ============================================
+    // WU6 — Quote-safe NEG-OP rendering (W1 verify-report nit)
+    // ============================================
+
+    /**
+     * T6.1: titulo con comillas embebidas → salida correctamente escapada.
+     * El formato debe ser: [NEG-OP] "Pérez dice \"renuncio mañana\"" → {...}
+     */
+    public function test_dynamic_examples_escape_quotes_in_titulo(): void
+    {
+        config(['services.gemini.negative_examples_enabled' => true]);
+
+        $descartado = new ResultadoScraping([
+            'titulo'           => 'Pérez dice "renuncio mañana"',
+            'gemini_motivo'    => 'Deportivo',
+            'gemini_confianza' => 95,
+        ]);
+
+        $service = $this->createMock(NegativeExamplesProvider::class);
+        $service->method('getNegativeExamples')->willReturn(collect([$descartado]));
+
+        $builder = new GeminiPromptBuilder(null, $service, 5);
+        $prompt = $builder->filtroPEP('Texto de prueba', 'Bolivia', 'PEP');
+
+        // Las comillas dentro del título deben estar escapadas con backslash
+        $this->assertStringContainsString('[NEG-OP] "Pérez dice \"renuncio mañana\""', $prompt);
+        // No debe contener la forma sin escapar (comillas crudas dentro de comillas externas)
+        $this->assertStringNotContainsString('[NEG-OP] "Pérez dice "renuncio mañana""', $prompt);
+
+        config(['services.gemini.negative_examples_enabled' => null]);
+    }
+
+    /**
+     * T6.2: motivo con comillas embebidas → payload JSON sigue siendo válido.
+     * Este es el verdadero peligro: motivo se interpola directo en el literal JSON.
+     */
+    public function test_dynamic_examples_escape_quotes_in_motivo(): void
+    {
+        config(['services.gemini.negative_examples_enabled' => true]);
+
+        $descartado = new ResultadoScraping([
+            'titulo'           => 'Artículo deportivo',
+            'gemini_motivo'    => 'Operador dijo "no es PEP"',
+            'gemini_confianza' => 90,
+        ]);
+
+        $service = $this->createMock(NegativeExamplesProvider::class);
+        $service->method('getNegativeExamples')->willReturn(collect([$descartado]));
+
+        $builder = new GeminiPromptBuilder(null, $service, 5);
+        $prompt = $builder->filtroPEP('Texto de prueba', 'Bolivia', 'PEP');
+
+        // Extraer el payload JSON de la línea [NEG-OP] usando el separador →
+        preg_match('/\[NEG-OP\].+?→\s+(\{.+\})/u', $prompt, $matches);
+        $this->assertNotEmpty($matches, 'No se encontró una línea [NEG-OP] en el prompt');
+
+        $payload = $matches[1];
+        $decoded = json_decode($payload, true);
+
+        // El JSON del payload debe ser parseable — si motivo tiene comillas sin escapar, esto falla
+        $this->assertNotNull($decoded, 'El payload JSON de [NEG-OP] no es válido: '.json_last_error_msg());
+        $this->assertArrayHasKey('motivo_general', $decoded);
+        $this->assertStringContainsString('Operador dijo "no es PEP"', $decoded['motivo_general']);
+
+        config(['services.gemini.negative_examples_enabled' => null]);
+    }
+
+    /**
+     * T6.3: invariante más fuerte — cualquier título/motivo con caracteres especiales
+     * debe producir un payload JSON válido y parseable.
+     */
+    public function test_dynamic_examples_produce_valid_json_payload(): void
+    {
+        config(['services.gemini.negative_examples_enabled' => true]);
+
+        $descartados = collect([
+            new ResultadoScraping([
+                'titulo'           => 'Pérez dice "renuncio mañana"',
+                'gemini_motivo'    => 'Operador dijo "no es PEP"',
+                'gemini_confianza' => 95,
+            ]),
+            new ResultadoScraping([
+                'titulo'           => "Título con 'comillas simples' y \"dobles\"",
+                'gemini_motivo'    => "Motivo con barra invertida \\ y \"comillas\"",
+                'gemini_confianza' => 80,
+            ]),
+        ]);
+
+        $service = $this->createMock(NegativeExamplesProvider::class);
+        $service->method('getNegativeExamples')->willReturn($descartados);
+
+        $builder = new GeminiPromptBuilder(null, $service, 5);
+        $prompt = $builder->filtroPEP('Texto de prueba', 'Bolivia', 'PEP');
+
+        // Cada línea [NEG-OP] debe tener un payload JSON válido
+        preg_match_all('/\[NEG-OP\].+?→\s+(\{.+\})/u', $prompt, $matches);
+        $this->assertCount(2, $matches[1], 'Deben encontrarse exactamente 2 líneas [NEG-OP]');
+
+        foreach ($matches[1] as $i => $payload) {
+            $decoded = json_decode($payload, true);
+            $this->assertNotNull(
+                $decoded,
+                "El payload JSON de [NEG-OP] #$i no es válido: ".json_last_error_msg()." — payload: $payload"
+            );
+            $this->assertArrayHasKey('personas', $decoded);
+            $this->assertArrayHasKey('motivo_general', $decoded);
+            $this->assertSame([], $decoded['personas']);
+        }
+
+        config(['services.gemini.negative_examples_enabled' => null]);
+    }
+
     /**
      * REQ-9: caracteres especiales en título se preservan sin corrupción.
      */

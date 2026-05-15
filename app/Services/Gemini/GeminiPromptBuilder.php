@@ -242,12 +242,19 @@ RULES;
             $motivo    = $r->gemini_motivo ?? '';
             $confianza = (int) ($r->gemini_confianza ?? 0);
 
-            return sprintf(
-                '[NEG-OP] "%s" → {"personas":[],"motivo_general":"%s. Confianza original: %d."}',
-                $titulo,
-                $motivo,
-                $confianza
+            // Encode titulo as a JSON string so embedded quotes/backslashes are correctly escaped
+            $tituloJson = json_encode($titulo, JSON_UNESCAPED_UNICODE);
+
+            // Build the payload via json_encode so PHP handles all escaping in motivo_general
+            $payload = json_encode(
+                [
+                    'personas'        => [],
+                    'motivo_general'  => sprintf('%s. Confianza original: %d.', $motivo, $confianza),
+                ],
+                JSON_UNESCAPED_UNICODE
             );
+
+            return sprintf('[NEG-OP] %s → %s', $tituloJson, $payload);
         })->implode("\n\n");
 
         try {
