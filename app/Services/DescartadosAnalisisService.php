@@ -273,22 +273,21 @@ final class DescartadosAnalisisService
     {
         $since = Carbon::now()->subDays($dias);
 
+        // Math (ROUND, division) moved to PHP to avoid driver-specific SQL function
+        // signatures: pgsql has no ROUND(double, integer), only ROUND(numeric, integer).
+        // SQLite accepts ROUND(REAL, integer) silently. Computing in PHP is portable
+        // and eliminates the entire numeric-cast headache.
         $rows = DB::table('resultados_scraping')
             ->where('fecha_encontrado', '>=', $since)
             ->selectRaw('
                 keyword,
                 COUNT(*) AS total,
                 SUM(CASE WHEN descartado IS TRUE THEN 1 ELSE 0 END) AS descartados,
-                SUM(CASE WHEN relevante IS TRUE THEN 1 ELSE 0 END) AS relevantes,
-                ROUND(
-                    SUM(CASE WHEN descartado IS TRUE THEN 1.0 ELSE 0 END)
-                    / COUNT(*) * 100,
-                    1
-                ) AS pct_descartado
+                SUM(CASE WHEN relevante IS TRUE THEN 1 ELSE 0 END) AS relevantes
             ')
             ->groupBy('keyword')
             ->havingRaw('COUNT(*) >= ?', [$minSample])
-            ->orderByRaw('pct_descartado DESC')
+            ->orderByRaw('SUM(CASE WHEN descartado IS TRUE THEN 1 ELSE 0 END) * 100.0 / COUNT(*) DESC')
             ->limit($limit)
             ->get();
 
@@ -297,7 +296,7 @@ final class DescartadosAnalisisService
             'total'         => (int) $row->total,
             'descartados'   => (int) $row->descartados,
             'relevantes'    => (int) $row->relevantes,
-            'pct_descartado' => (float) $row->pct_descartado,
+            'pct_descartado' => round(((int) $row->descartados / (int) $row->total) * 100, 1),
         ]));
     }
 
@@ -308,6 +307,7 @@ final class DescartadosAnalisisService
     {
         $since = Carbon::now()->subDays($dias);
 
+        // Same portability pattern: SQL returns raw counts, PHP computes pct.
         $rows = DB::table('resultados_scraping AS rs')
             ->leftJoin('sitios_web AS sw', 'rs.sitio_id', '=', 'sw.id')
             ->where('rs.fecha_encontrado', '>=', $since)
@@ -315,16 +315,11 @@ final class DescartadosAnalisisService
                 rs.sitio_id,
                 COALESCE(sw.nombre, CAST(rs.sitio_id AS TEXT)) AS sitio_nombre,
                 COUNT(*) AS total,
-                SUM(CASE WHEN rs.descartado IS TRUE THEN 1 ELSE 0 END) AS descartados,
-                ROUND(
-                    SUM(CASE WHEN rs.descartado IS TRUE THEN 1.0 ELSE 0 END)
-                    / COUNT(*) * 100,
-                    1
-                ) AS pct_descartado
+                SUM(CASE WHEN rs.descartado IS TRUE THEN 1 ELSE 0 END) AS descartados
             ')
             ->groupBy('rs.sitio_id', 'sw.nombre')
             ->havingRaw('COUNT(*) >= ?', [$minSample])
-            ->orderByRaw('pct_descartado DESC')
+            ->orderByRaw('SUM(CASE WHEN rs.descartado IS TRUE THEN 1 ELSE 0 END) * 100.0 / COUNT(*) DESC')
             ->limit($limit)
             ->get();
 
@@ -333,7 +328,7 @@ final class DescartadosAnalisisService
             'sitio_nombre'  => (string) $row->sitio_nombre,
             'total'         => (int) $row->total,
             'descartados'   => (int) $row->descartados,
-            'pct_descartado' => (float) $row->pct_descartado,
+            'pct_descartado' => round(((int) $row->descartados / (int) $row->total) * 100, 1),
         ]));
     }
 
@@ -357,6 +352,8 @@ final class DescartadosAnalisisService
         $previousStartStr = $previousStart->toDateTimeString();
         $previousEndStr   = $previousEnd->toDateTimeString();
 
+        // SQL returns raw counts per window; PHP computes percentages and drift to
+        // avoid driver-specific ROUND signatures (pgsql vs SQLite mismatch).
         /** @var array<object> $rows */
         $rows = DB::select(<<<SQL
             WITH current_window AS (
@@ -381,16 +378,10 @@ final class DescartadosAnalisisService
             )
             SELECT
                 c.keyword,
-                ROUND(CAST(c.descartados AS REAL) / c.total * 100, 1)  AS pct_actual,
-                ROUND(CAST(p.descartados AS REAL) / p.total * 100, 1)  AS pct_anterior,
-                ROUND(
-                    CAST(c.descartados AS REAL) / c.total * 100
-                    - CASE WHEN p.total IS NOT NULL
-                           THEN CAST(p.descartados AS REAL) / p.total * 100
-                           ELSE NULL
-                      END,
-                    1
-                ) AS drift_ppt
+                c.total           AS current_total,
+                c.descartados     AS current_descartados,
+                p.total           AS previous_total,
+                p.descartados     AS previous_descartados
             FROM current_window c
             LEFT JOIN previous_window p ON c.keyword = p.keyword
             ORDER BY c.keyword
@@ -401,12 +392,30 @@ final class DescartadosAnalisisService
             'prev_end'     => $previousEndStr,
         ]);
 
-        return collect($rows)->map(fn (object $row) => DriftDTO::fromArray([
-            'keyword'     => $row->keyword,
-            'pct_actual'  => isset($row->pct_actual) ? (float) $row->pct_actual : null,
-            'pct_anterior' => isset($row->pct_anterior) && $row->pct_anterior !== null ? (float) $row->pct_anterior : null,
-            'drift_ppt'   => isset($row->drift_ppt) && $row->drift_ppt !== null ? (float) $row->drift_ppt : null,
-        ]));
+        return collect($rows)->map(function (object $row): DriftDTO {
+            $currentTotal       = (int) $row->current_total;
+            $currentDescartados = (int) $row->current_descartados;
+            $pctActual = $currentTotal > 0
+                ? round(($currentDescartados / $currentTotal) * 100, 1)
+                : null;
+
+            $previousTotal       = isset($row->previous_total) ? (int) $row->previous_total : null;
+            $previousDescartados = isset($row->previous_descartados) ? (int) $row->previous_descartados : null;
+            $pctAnterior = ($previousTotal !== null && $previousTotal > 0 && $previousDescartados !== null)
+                ? round(($previousDescartados / $previousTotal) * 100, 1)
+                : null;
+
+            $driftPpt = ($pctActual !== null && $pctAnterior !== null)
+                ? round($pctActual - $pctAnterior, 1)
+                : null;
+
+            return DriftDTO::fromArray([
+                'keyword'     => $row->keyword,
+                'pct_actual'  => $pctActual,
+                'pct_anterior' => $pctAnterior,
+                'drift_ppt'   => $driftPpt,
+            ]);
+        });
     }
 
     /**
@@ -430,12 +439,7 @@ final class DescartadosAnalisisService
                     ELSE '0-49'
                 END AS bucket,
                 COUNT(*) AS total,
-                SUM(CASE WHEN descartado IS TRUE THEN 1 ELSE 0 END) AS descartados,
-                ROUND(
-                    SUM(CASE WHEN descartado IS TRUE THEN 1.0 ELSE 0 END)
-                    / COUNT(*) * 100,
-                    1
-                ) AS pct_descartado
+                SUM(CASE WHEN descartado IS TRUE THEN 1 ELSE 0 END) AS descartados
             ")
             ->groupByRaw("
                 CASE
@@ -459,7 +463,7 @@ final class DescartadosAnalisisService
             'bucket'         => $row->bucket,
             'total'          => (int) $row->total,
             'descartados'    => (int) $row->descartados,
-            'pct_descartado' => (float) $row->pct_descartado,
+            'pct_descartado' => round(((int) $row->descartados / (int) $row->total) * 100, 1),
         ]));
     }
 }
