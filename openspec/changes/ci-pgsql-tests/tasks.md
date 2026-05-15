@@ -89,8 +89,14 @@ Chain strategy: size-exception
 ## Phase 5: PR + verification (post-implementation)
 
 - [x] 5.1 Open PR with title `feat(ci): add PostgreSQL test job (Fase 2 of ci-pipeline)`. Body must reference SCN-A1.1, SCN-A2.2, SCN-A3.3, REQ-A6. → PR #29: https://github.com/Adipol/simo/pull/29
-- [ ] 5.2 Wait for both `test-sqlite` and `test-pgsql` jobs to complete on the PR. Expect both green; `test-pgsql` log should show 9 previously-skipped tests now executing (Skipped: 0 or < previous count).
-- [ ] 5.3 If `test-pgsql` reveals unexpected failures, create separate hotfix PRs per REQ-A6 (no-blocker policy). Do NOT revert this SDD.
+- [~] 5.2 CI run #25922967919: test-sqlite PASSED (886 tests) ✅ — test-pgsql FAILED (11 failures) ❌ per REQ-A6 first-run policy. Failures documented as hotfix candidates below. Do NOT revert this SDD.
+- [ ] 5.3 Open hotfix PRs for each failure cluster (see apply-progress engram #967 for full details):
+  - Cluster 1 (HIGH): json_extract() → pgsql ->> operator — ProPipelineIntegrationTest, CambiosGeminiTest
+  - Cluster 2 (MEDIUM): Test asserts SQLite SQL string for date trunc — DashboardMetricsServiceTest
+  - Cluster 3 (MEDIUM): AnalizarCambioConProTest personas JSON extraction on pgsql
+  - Cluster 4 (HIGH): SQLSTATE[25P02] aborted transaction cascade in DedupResultadosScrapingTest (invalid '?' categoria fixture)
+  - Cluster 5 (LOW): Percentile precision — DashboardHealthServiceLatencyTest
+  - Cluster 6 (LOW): pg_trgm similarity threshold — DedupeArticulosServiceTest
 
 ## Phase 6: Post-merge ops (manual — user action required)
 
