@@ -1,8 +1,7 @@
 # gemini-filtro Specification
 
-**Change**: `gemini-confidence-persistence`
-**Capability**: `gemini-filtro` (New)
-**Date**: 2026-05-15
+**Capability**: `gemini-filtro`
+**Added by**: `gemini-confidence-persistence` (2026-05-15)
 
 ## Purpose
 
