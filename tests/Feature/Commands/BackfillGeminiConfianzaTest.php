@@ -140,7 +140,39 @@ class BackfillGeminiConfianzaTest extends TestCase
 
         $this->artisan('simo:backfill-gemini-confianza')
             ->assertExitCode(0)
-            ->expectsOutputToContain('2')   // scanned: 2 rows
-            ->expectsOutputToContain('1');  // updated: 1 row
+            ->expectsTable(
+                ['Metric', 'Count'],
+                [
+                    ['Scanned', '2'],
+                    ['Updated', '1'],
+                    ['Skipped (no personas)', '1'],
+                    ['Skipped (already populated)', '0'],
+                    ['Mode', 'live'],
+                ],
+            );
+    }
+
+    public function test_command_reports_skipped_already_populated_counter(): void
+    {
+        // 1 record already populated (will be excluded by whereNull filter — always 0)
+        $alreadyPopulated = $this->makeAnalyzedRecord(['gemini_confianza' => 75]);
+        $this->addPersona($alreadyPopulated, 75);
+
+        // 1 record still null (will be updated)
+        $nullRecord = $this->makeAnalyzedRecord();
+        $this->addPersona($nullRecord, 60);
+
+        $this->artisan('simo:backfill-gemini-confianza')
+            ->assertExitCode(0)
+            ->expectsTable(
+                ['Metric', 'Count'],
+                [
+                    ['Scanned', '1'],
+                    ['Updated', '1'],
+                    ['Skipped (no personas)', '0'],
+                    ['Skipped (already populated)', '0'],
+                    ['Mode', 'live'],
+                ],
+            );
     }
 }

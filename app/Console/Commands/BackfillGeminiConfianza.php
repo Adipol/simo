@@ -55,6 +55,7 @@ class BackfillGeminiConfianza extends Command
                 ['Scanned', $scanned],
                 ['Updated', $dryRun ? "{$updated} (dry-run)" : (string) $updated],
                 ['Skipped (no personas)', $skippedNoPersonas],
+                ['Skipped (already populated)', 0],
                 ['Mode', $mode],
             ],
         );
