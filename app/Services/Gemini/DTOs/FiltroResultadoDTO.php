@@ -42,4 +42,13 @@ final readonly class FiltroResultadoDTO
     {
         return count($this->personas) > 0;
     }
+
+    public function maxConfianza(): ?int
+    {
+        if ($this->personas === []) {
+            return null;
+        }
+
+        return max(array_map(fn (PersonaDetectadaDTO $p) => $p->confianza, $this->personas));
+    }
 }

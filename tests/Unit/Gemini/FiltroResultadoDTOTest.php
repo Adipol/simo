@@ -153,4 +153,76 @@ class FiltroResultadoDTOTest extends TestCase
             $this->assertSame($value, $dto->personas[0]->entidadTipo);
         }
     }
+
+    // ─── maxConfianza ────────────────────────────────────────────────────────
+
+    public function test_max_confianza_returns_null_when_personas_empty(): void
+    {
+        $dto = FiltroResultadoDTO::fromArray([
+            'personas' => [],
+            'motivo_general' => '',
+        ]);
+
+        $this->assertNull($dto->maxConfianza());
+    }
+
+    public function test_max_confianza_returns_single_value_when_one_persona(): void
+    {
+        $dto = FiltroResultadoDTO::fromArray([
+            'personas' => [[
+                'nombre' => 'Juan Pérez',
+                'cargo' => null,
+                'categoria' => null,
+                'entidad_tipo' => null,
+                'confianza' => 85,
+                'evento' => null,
+                'motivo' => '',
+            ]],
+            'motivo_general' => '',
+        ]);
+
+        $this->assertSame(85, $dto->maxConfianza());
+    }
+
+    public function test_max_confianza_returns_max_when_multiple_personas(): void
+    {
+        $dto = FiltroResultadoDTO::fromArray([
+            'personas' => [
+                ['nombre' => 'A', 'cargo' => null, 'categoria' => null, 'entidad_tipo' => null, 'confianza' => 60, 'evento' => null, 'motivo' => ''],
+                ['nombre' => 'B', 'cargo' => null, 'categoria' => null, 'entidad_tipo' => null, 'confianza' => 90, 'evento' => null, 'motivo' => ''],
+                ['nombre' => 'C', 'cargo' => null, 'categoria' => null, 'entidad_tipo' => null, 'confianza' => 75, 'evento' => null, 'motivo' => ''],
+            ],
+            'motivo_general' => '',
+        ]);
+
+        $this->assertSame(90, $dto->maxConfianza());
+    }
+
+    public function test_max_confianza_returns_zero_when_all_personas_zero(): void
+    {
+        $dto = FiltroResultadoDTO::fromArray([
+            'personas' => [
+                ['nombre' => 'A', 'cargo' => null, 'categoria' => null, 'entidad_tipo' => null, 'confianza' => 0, 'evento' => null, 'motivo' => ''],
+                ['nombre' => 'B', 'cargo' => null, 'categoria' => null, 'entidad_tipo' => null, 'confianza' => 0, 'evento' => null, 'motivo' => ''],
+            ],
+            'motivo_general' => '',
+        ]);
+
+        $this->assertSame(0, $dto->maxConfianza());
+    }
+
+    public function test_max_confianza_returns_max_when_mixed_zero_and_valued(): void
+    {
+        $dto = FiltroResultadoDTO::fromArray([
+            'personas' => [
+                ['nombre' => 'A', 'cargo' => null, 'categoria' => null, 'entidad_tipo' => null, 'confianza' => 0, 'evento' => null, 'motivo' => ''],
+                ['nombre' => 'B', 'cargo' => null, 'categoria' => null, 'entidad_tipo' => null, 'confianza' => 70, 'evento' => null, 'motivo' => ''],
+                ['nombre' => 'C', 'cargo' => null, 'categoria' => null, 'entidad_tipo' => null, 'confianza' => 0, 'evento' => null, 'motivo' => ''],
+                ['nombre' => 'D', 'cargo' => null, 'categoria' => null, 'entidad_tipo' => null, 'confianza' => 55, 'evento' => null, 'motivo' => ''],
+            ],
+            'motivo_general' => '',
+        ]);
+
+        $this->assertSame(70, $dto->maxConfianza());
+    }
 }
