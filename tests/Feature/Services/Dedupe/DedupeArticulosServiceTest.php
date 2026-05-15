@@ -162,12 +162,15 @@ class DedupeArticulosServiceTest extends TestCase
 
         // Existing primary must be ALREADY processed (post-backfill steady state) so the
         // new query's `dedupe_processed_at IS NOT NULL` filter sees it as a candidate.
-        $existing = $this->makeArticle('Renuncia del gerente Carlos Cronenbold de YPFB', [
+        //
+        // Titles must be NEARLY IDENTICAL (similarity >= 0.90, the configured threshold).
+        // Realistic case: same event reported by 2 outlets with a 1-2 char difference.
+        $existing = $this->makeArticle('Renuncia del gerente Carlos Cronenbold de YPFB Bolivia hoy', [
             'dedupe_processed_at' => now()->subMinutes(10),
         ]);
 
-        // Near-identical title, inserted later → should become secondary
-        $new = $this->makeArticle('Renuncia del gerente Carlos Cronenbold de la empresa YPFB', [
+        // Same title with one trailing word changed — pg_trgm similarity stays >= 0.90
+        $new = $this->makeArticle('Renuncia del gerente Carlos Cronenbold de YPFB Bolivia ayer', [
             'fecha_encontrado' => now()->addSeconds(5),
         ]);
 
