@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Gemini;
 
+use App\Models\ResultadoScraping;
+use App\Services\Contracts\NegativeExamplesProvider;
 use App\Services\Gemini\GeminiPromptBuilder;
 use App\Services\Gemini\PepCatalogService;
-use PHPUnit\Framework\TestCase;
+use Illuminate\Support\Collection;
+use Tests\TestCase;
 
 class GeminiPromptBuilderTest extends TestCase
 {
@@ -481,5 +484,162 @@ class GeminiPromptBuilderTest extends TestCase
         $result = $this->builder->truncarDiff($text);
 
         $this->assertLessThanOrEqual(13000, strlen($result)); // 12000 + some buffer for markers
+    }
+
+    // ============================================
+    // WU3 — Dynamic negative examples (REQ-5, REQ-7, REQ-9, REQ-10)
+    // ============================================
+
+    /**
+     * REQ-5 / REQ-10: sin servicio inyectado → ejemplos hardcodeados.
+     */
+    public function test_construye_ejemplos_hardcodeados_cuando_servicio_es_null(): void
+    {
+        $builder = new GeminiPromptBuilder(null, null);
+        $prompt = $builder->filtroPEP('Texto de prueba', 'Bolivia', 'PEP');
+
+        $this->assertStringContainsString('fiebre amarilla', $prompt);
+        $this->assertStringNotContainsString('[NEG-OP]', $prompt);
+    }
+
+    /**
+     * REQ-7: flag deshabilitado → hardcodeados aunque el servicio esté inyectado.
+     */
+    public function test_flag_deshabilitado_usa_hardcodeados(): void
+    {
+        config(['services.gemini.negative_examples_enabled' => false]);
+
+        $service = $this->createMock(NegativeExamplesProvider::class);
+        $service->expects($this->never())->method('getNegativeExamples');
+
+        $builder = new GeminiPromptBuilder(null, $service, 5);
+        $prompt = $builder->filtroPEP('Texto de prueba', 'Bolivia', 'PEP');
+
+        $this->assertStringContainsString('fiebre amarilla', $prompt);
+        $this->assertStringNotContainsString('[NEG-OP]', $prompt);
+
+        config(['services.gemini.negative_examples_enabled' => null]);
+    }
+
+    /**
+     * REQ-5: servicio inyectado + flag habilitado + resultados → ejemplos dinámicos.
+     */
+    public function test_construye_ejemplos_dinamicos_cuando_flag_habilitado(): void
+    {
+        config(['services.gemini.negative_examples_enabled' => true]);
+
+        $descartado = new ResultadoScraping([
+            'titulo'           => 'Renuncia del DT del club Bolívar',
+            'gemini_motivo'    => 'Deportivo',
+            'gemini_confianza' => 95,
+        ]);
+
+        $service = $this->createMock(NegativeExamplesProvider::class);
+        $service->method('getNegativeExamples')->willReturn(collect([$descartado]));
+
+        $builder = new GeminiPromptBuilder(null, $service, 5);
+        $prompt = $builder->filtroPEP('Texto de prueba', 'Bolivia', 'PEP');
+
+        $this->assertStringContainsString('[NEG-OP]', $prompt);
+        $this->assertStringContainsString('Renuncia del DT del club Bolívar', $prompt);
+        $this->assertStringNotContainsString('fiebre amarilla', $prompt);
+
+        config(['services.gemini.negative_examples_enabled' => null]);
+    }
+
+    /**
+     * REQ-5: servicio retorna colección vacía → fallback a hardcodeados.
+     */
+    public function test_servicio_retorna_vacio_usa_hardcodeados(): void
+    {
+        config(['services.gemini.negative_examples_enabled' => true]);
+
+        $service = $this->createMock(NegativeExamplesProvider::class);
+        $service->method('getNegativeExamples')->willReturn(collect([]));
+
+        $builder = new GeminiPromptBuilder(null, $service, 5);
+        $prompt = $builder->filtroPEP('Texto de prueba', 'Bolivia', 'PEP');
+
+        $this->assertStringContainsString('fiebre amarilla', $prompt);
+        $this->assertStringNotContainsString('[NEG-OP]', $prompt);
+
+        config(['services.gemini.negative_examples_enabled' => null]);
+    }
+
+    /**
+     * REQ-9: formato exacto del ejemplo dinámico [NEG-OP].
+     */
+    public function test_formato_neg_op_es_correcto(): void
+    {
+        config(['services.gemini.negative_examples_enabled' => true]);
+
+        $descartado = new ResultadoScraping([
+            'titulo'           => 'Renuncia del DT del club Bolívar',
+            'gemini_motivo'    => 'Deportivo',
+            'gemini_confianza' => 95,
+        ]);
+
+        $service = $this->createMock(NegativeExamplesProvider::class);
+        $service->method('getNegativeExamples')->willReturn(collect([$descartado]));
+
+        $builder = new GeminiPromptBuilder(null, $service, 5);
+        $prompt = $builder->filtroPEP('Texto de prueba', 'Bolivia', 'PEP');
+
+        $expected = '[NEG-OP] "Renuncia del DT del club Bolívar" → {"personas":[],"motivo_general":"Deportivo. Confianza original: 95."}';
+        $this->assertStringContainsString($expected, $prompt);
+
+        config(['services.gemini.negative_examples_enabled' => null]);
+    }
+
+    /**
+     * REQ-5: respeta el límite de ejemplos negativos.
+     */
+    public function test_respeta_limite_de_ejemplos_negativos(): void
+    {
+        config(['services.gemini.negative_examples_enabled' => true]);
+
+        $descartados = collect([
+            new ResultadoScraping(['titulo' => 'Artículo 1', 'gemini_motivo' => 'Motivo A', 'gemini_confianza' => 90]),
+            new ResultadoScraping(['titulo' => 'Artículo 2', 'gemini_motivo' => 'Motivo B', 'gemini_confianza' => 85]),
+            new ResultadoScraping(['titulo' => 'Artículo 3', 'gemini_motivo' => 'Motivo C', 'gemini_confianza' => 80]),
+        ]);
+
+        $service = $this->createMock(NegativeExamplesProvider::class);
+        $service->expects($this->once())
+            ->method('getNegativeExamples')
+            ->with(3)
+            ->willReturn($descartados);
+
+        $builder = new GeminiPromptBuilder(null, $service, 3);
+        $prompt = $builder->filtroPEP('Texto de prueba', 'Bolivia', 'PEP');
+
+        $this->assertSame(3, substr_count($prompt, '[NEG-OP]'));
+
+        config(['services.gemini.negative_examples_enabled' => null]);
+    }
+
+    /**
+     * REQ-9: caracteres especiales en título se preservan sin corrupción.
+     */
+    public function test_caracteres_especiales_en_titulo_se_preservan(): void
+    {
+        config(['services.gemini.negative_examples_enabled' => true]);
+
+        $descartado = new ResultadoScraping([
+            'titulo'           => 'Álvaro Pérez dimite',
+            'gemini_motivo'    => 'Deportivo, sin cargo público',
+            'gemini_confianza' => 88,
+        ]);
+
+        $service = $this->createMock(NegativeExamplesProvider::class);
+        $service->method('getNegativeExamples')->willReturn(collect([$descartado]));
+
+        $builder = new GeminiPromptBuilder(null, $service, 5);
+        $prompt = $builder->filtroPEP('Texto de prueba', 'Bolivia', 'PEP');
+
+        $this->assertStringContainsString('Álvaro Pérez dimite', $prompt);
+        $this->assertStringContainsString('Deportivo, sin cargo público', $prompt);
+
+        config(['services.gemini.negative_examples_enabled' => null]);
     }
 }
