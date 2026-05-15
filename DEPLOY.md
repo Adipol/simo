@@ -40,6 +40,25 @@ supervisorctl restart simo-dedupe-worker
 
 ---
 
+## CI / Branch Protection
+
+Two CI jobs run on every PR and push to `main`:
+- `test-sqlite` — fast SQLite in-memory tests (default driver)
+- `test-pgsql` — full suite against PostgreSQL 17 (matches production VPS)
+
+Both MUST pass before merge. To enforce this:
+
+1. Repo → Settings → Branches → Branch protection rules → `main` → Edit
+2. Under "Require status checks to pass before merging", click "Edit"
+3. In the search box, add BOTH:
+   - `test-sqlite`
+   - `test-pgsql`
+4. Save changes
+
+If only one is configured as required, the missing one becomes optional and bugs that only surface on the unconfigured driver may slip through.
+
+---
+
 ## Variables de entorno
 
 Copiar `.env.example` a `.env` y ajustar cada valor:
