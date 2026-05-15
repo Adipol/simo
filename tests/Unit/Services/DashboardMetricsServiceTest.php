@@ -285,15 +285,23 @@ class DashboardMetricsServiceTest extends TestCase
 
     // 2.4 dateTruncMonth — driver-aware
 
-    public function test_date_trunc_month_returns_sqlite_expression_in_test_env(): void
+    public function test_date_trunc_month_returns_driver_specific_expression(): void
     {
         $service = new DashboardMetricsService;
 
-        // Tests run on SQLite
         $expr = $service->dateTruncMonthPublic('fecha_encontrado');
 
-        $this->assertStringContainsString('strftime', $expr);
+        // The method's contract is "return the right expression for the active driver".
+        // SQLite test env → strftime('%Y-%m', col). pgsql CI env → TO_CHAR(DATE_TRUNC('month', col), 'YYYY-MM').
+        // The column name must appear in both cases.
         $this->assertStringContainsString('fecha_encontrado', $expr);
+
+        if (\Illuminate\Support\Facades\DB::getDriverName() === 'pgsql') {
+            $this->assertStringContainsString('TO_CHAR', $expr);
+            $this->assertStringContainsString('DATE_TRUNC', $expr);
+        } else {
+            $this->assertStringContainsString('strftime', $expr);
+        }
     }
 
     // ─── Phase 3: Service Methods ──────────────────────────────────────────
