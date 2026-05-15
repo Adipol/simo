@@ -204,9 +204,7 @@ RULES;
 
     private function buildEjemplosNegativos(): string
     {
-        $flagEnabled = (bool) config('services.gemini.negative_examples_enabled', true);
-
-        if ($this->negativeExamplesService !== null && $flagEnabled) {
+        if ($this->negativeExamplesService !== null && $this->isNegativeExamplesFlagEnabled()) {
             $dynamic = $this->formatDynamicExamples($this->getCachedExamples());
             if ($dynamic !== '') {
                 return $dynamic;
@@ -216,11 +214,21 @@ RULES;
         return $this->buildHardcodedExamples();
     }
 
+    private function isNegativeExamplesFlagEnabled(): bool
+    {
+        try {
+            return (bool) config('services.gemini.negative_examples_enabled', true);
+        } catch (\RuntimeException) {
+            // Laravel container not bootstrapped (pure unit test context) → default true
+            return true;
+        }
+    }
+
     private function getCachedExamples(): Collection
     {
-        return $this->cachedExamples ??= $this->negativeExamplesService->getNegativeExamples(
+        return $this->cachedExamples ??= ($this->negativeExamplesService?->getNegativeExamples(
             $this->negativeExamplesLimit
-        );
+        ) ?? collect());
     }
 
     private function formatDynamicExamples(Collection $examples): string
