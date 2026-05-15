@@ -69,6 +69,56 @@ final class PrecisionDashboard extends Component
         return app(DescartadosAnalisisService::class)->confianzaGeminiVsDescartado();
     }
 
+    // ─── Chart data — pre-shaped for Js::from() in Blade ─────────────────────
+
+    /**
+     * @return array<int, array{label: string, value: float}>
+     */
+    #[Computed]
+    public function topLemasChart(): array
+    {
+        return $this->topLemas
+            ->map(fn ($d) => ['label' => $d->keyword, 'value' => $d->pctDescartado])
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<int, array{label: string, value: float}>
+     */
+    #[Computed]
+    public function topSitiosChart(): array
+    {
+        return $this->topSitios
+            ->map(fn ($d) => ['label' => $d->sitioNombre, 'value' => $d->pctDescartado])
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<int, array{label: string, value: float}>
+     */
+    #[Computed]
+    public function confianzaChart(): array
+    {
+        return $this->confianzaBuckets
+            ->map(fn ($d) => ['label' => 'Confianza '.$d->bucket, 'value' => $d->pctDescartado])
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<int, array{label: string, value: float}>
+     */
+    #[Computed]
+    public function driftChart(): array
+    {
+        return $this->driftPorKeyword
+            ->map(fn ($d) => ['label' => $d->keyword, 'value' => $d->driftPpt ?? 0.0])
+            ->values()
+            ->all();
+    }
+
     // ─── Actions ──────────────────────────────────────────────────────────────
 
     /**
@@ -86,6 +136,10 @@ final class PrecisionDashboard extends Component
         unset($this->topSitios);
         unset($this->driftPorKeyword);
         unset($this->confianzaBuckets);
+        unset($this->topLemasChart);
+        unset($this->topSitiosChart);
+        unset($this->confianzaChart);
+        unset($this->driftChart);
     }
 
     // ─── Render ───────────────────────────────────────────────────────────────
