@@ -26,9 +26,9 @@ use Illuminate\Support\Facades\DB;
  */
 final class DescartadosAnalisisService
 {
-    private const int CACHE_TTL = 300;
-    private const int MIN_SAMPLE_KEYWORD = 5;
-    private const int MIN_SAMPLE_GLOBAL = 10;
+    private const CACHE_TTL = 300;
+    private const MIN_SAMPLE_KEYWORD = 5;
+    private const MIN_SAMPLE_GLOBAL = 10;
 
     /**
      * Registry of all cached method specs.
@@ -41,7 +41,7 @@ final class DescartadosAnalisisService
      *
      * CACHED_KEY_SPECS maps to the DEFAULT parameter set used by flushCache().
      */
-    private const array CACHED_KEY_SPECS = [
+    private const CACHED_KEY_SPECS = [
         'precision' => 'descartados:precision:%d',
         'lemas'     => 'descartados:lemas:%d:%d',
         'sitios'    => 'descartados:sitios:%d:%d',
@@ -50,7 +50,7 @@ final class DescartadosAnalisisService
     ];
 
     /** Default parameter sets for flushCache() — mirrors method defaults. */
-    private const array FLUSH_DEFAULT_PARAMS = [
+    private const FLUSH_DEFAULT_PARAMS = [
         'precision' => [30],
         'lemas'     => [30, 5],
         'sitios'    => [30, 5],
@@ -230,9 +230,9 @@ final class DescartadosAnalisisService
             })
             ->selectRaw('
                 COUNT(*) AS total_procesados,
-                SUM(CASE WHEN descartado = 1 OR descartado = true THEN 1 ELSE 0 END) AS total_descartados,
-                SUM(CASE WHEN relevante  = 1 OR relevante  = true THEN 1 ELSE 0 END) AS total_relevantes,
-                SUM(CASE WHEN relevante = 1 OR relevante = true THEN 1 ELSE 0 END) AS total_archivados
+                SUM(CASE WHEN descartado IS TRUE THEN 1 ELSE 0 END) AS total_descartados,
+                SUM(CASE WHEN relevante IS TRUE THEN 1 ELSE 0 END) AS total_relevantes,
+                SUM(CASE WHEN archivado_at IS NOT NULL THEN 1 ELSE 0 END) AS total_archivados
             ')
             ->first();
 
@@ -278,10 +278,10 @@ final class DescartadosAnalisisService
             ->selectRaw('
                 keyword,
                 COUNT(*) AS total,
-                SUM(CASE WHEN descartado = 1 OR descartado = true THEN 1 ELSE 0 END) AS descartados,
-                SUM(CASE WHEN relevante  = 1 OR relevante  = true THEN 1 ELSE 0 END) AS relevantes,
+                SUM(CASE WHEN descartado IS TRUE THEN 1 ELSE 0 END) AS descartados,
+                SUM(CASE WHEN relevante IS TRUE THEN 1 ELSE 0 END) AS relevantes,
                 ROUND(
-                    SUM(CASE WHEN descartado = 1 OR descartado = true THEN 1.0 ELSE 0 END)
+                    SUM(CASE WHEN descartado IS TRUE THEN 1.0 ELSE 0 END)
                     / COUNT(*) * 100,
                     1
                 ) AS pct_descartado
@@ -315,9 +315,9 @@ final class DescartadosAnalisisService
                 rs.sitio_id,
                 COALESCE(sw.nombre, CAST(rs.sitio_id AS TEXT)) AS sitio_nombre,
                 COUNT(*) AS total,
-                SUM(CASE WHEN rs.descartado = 1 OR rs.descartado = true THEN 1 ELSE 0 END) AS descartados,
+                SUM(CASE WHEN rs.descartado IS TRUE THEN 1 ELSE 0 END) AS descartados,
                 ROUND(
-                    SUM(CASE WHEN rs.descartado = 1 OR rs.descartado = true THEN 1.0 ELSE 0 END)
+                    SUM(CASE WHEN rs.descartado IS TRUE THEN 1.0 ELSE 0 END)
                     / COUNT(*) * 100,
                     1
                 ) AS pct_descartado
@@ -363,7 +363,7 @@ final class DescartadosAnalisisService
                 SELECT
                     keyword,
                     COUNT(*) AS total,
-                    SUM(CASE WHEN descartado = 1 THEN 1 ELSE 0 END) AS descartados
+                    SUM(CASE WHEN descartado IS TRUE THEN 1 ELSE 0 END) AS descartados
                 FROM resultados_scraping
                 WHERE fecha_encontrado >= :recent_start
                 GROUP BY keyword
@@ -373,7 +373,7 @@ final class DescartadosAnalisisService
                 SELECT
                     keyword,
                     COUNT(*) AS total,
-                    SUM(CASE WHEN descartado = 1 THEN 1 ELSE 0 END) AS descartados
+                    SUM(CASE WHEN descartado IS TRUE THEN 1 ELSE 0 END) AS descartados
                 FROM resultados_scraping
                 WHERE fecha_encontrado >= :prev_start
                   AND fecha_encontrado <  :prev_end
@@ -430,9 +430,9 @@ final class DescartadosAnalisisService
                     ELSE '0-49'
                 END AS bucket,
                 COUNT(*) AS total,
-                SUM(CASE WHEN descartado = 1 OR descartado = true THEN 1 ELSE 0 END) AS descartados,
+                SUM(CASE WHEN descartado IS TRUE THEN 1 ELSE 0 END) AS descartados,
                 ROUND(
-                    SUM(CASE WHEN descartado = 1 OR descartado = true THEN 1.0 ELSE 0 END)
+                    SUM(CASE WHEN descartado IS TRUE THEN 1.0 ELSE 0 END)
                     / COUNT(*) * 100,
                     1
                 ) AS pct_descartado
