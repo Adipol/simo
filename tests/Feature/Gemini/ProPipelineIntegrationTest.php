@@ -7,6 +7,7 @@ namespace Tests\Feature\Gemini;
 use App\Models\Cambio;
 use App\Models\Fuente;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
@@ -98,9 +99,15 @@ class ProPipelineIntegrationTest extends TestCase
         $job = new \App\Jobs\AnalizarCambioConPro;
         $job->handle();
 
-        // Use whereRaw for SQLite compatibility — check es_mae = true in JSON
+        // Driver-aware JSON check: SQLite uses json_extract (legacy), pgsql uses ->>
+        // and needs explicit boolean cast.
+        $isPgsql = DB::getDriverName() === 'pgsql';
         $maeCount = Cambio::where('gemini_analyzed', true)
-            ->whereRaw("json_extract(gemini_analisis_json, '$.es_mae') = 1")
+            ->whereRaw(
+                $isPgsql
+                    ? "(gemini_analisis_json->>'es_mae')::boolean = true"
+                    : "json_extract(gemini_analisis_json, '$.es_mae') = 1"
+            )
             ->count();
 
         $this->assertSame(1, $maeCount);
