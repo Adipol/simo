@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Http\Controllers\ProfileController;
+use App\Livewire\Admin\PrecisionDashboard;
 use App\Livewire\Configuracion\Paises;
 use App\Livewire\Dashboard;
 use App\Livewire\Pep\Cambios;
@@ -69,6 +70,11 @@ Route::middleware(['auth', 'usuario.activo'])->group(function () {
     Route::get('/configuracion/paises', Paises::class)
         ->middleware('permission:gestionar sitios')
         ->name('configuracion.paises');
+
+    // Precision Dashboard — admin y supervisor (permission gate also in mount())
+    Route::get('/admin/precision', PrecisionDashboard::class)
+        ->middleware('permission:gestionar resultados')
+        ->name('admin.precision');
 
     // Perfil (Breeze)
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
