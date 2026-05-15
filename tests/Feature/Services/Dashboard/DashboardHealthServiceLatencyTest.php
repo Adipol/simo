@@ -111,10 +111,16 @@ class DashboardHealthServiceLatencyTest extends TestCase
         $this->assertNotNull($health->latency->p50_seconds);
         $this->assertNotNull($health->latency->p95_seconds);
 
-        // p50 must be near 50 seconds (median of 10, tolerance 2s for julianday precision)
-        $this->assertEqualsWithDelta(50.0, (float) $health->latency->p50_seconds, 2.0);
+        // p50 must be near 50 seconds. Tolerance covers driver math differences:
+        //   - SQLite uses discrete approximation: median of [10..100] = 50 (val[4])
+        //   - PostgreSQL PERCENTILE_CONT(0.5) uses linear interpolation: (50+60)/2 = 55
+        // Both are valid statistical interpretations; the test only asserts the
+        // answer is "in the middle of the distribution", not the exact method.
+        $this->assertEqualsWithDelta(52.5, (float) $health->latency->p50_seconds, 7.5);
 
-        // p95 must be near 95 seconds (95th percentile of 10 values, tolerance 2s)
+        // p95 must be near 95 seconds. Same driver-tolerance reasoning:
+        //   - SQLite discrete: val at index floor(0.95 * 10) = val[9] = 100
+        //   - PostgreSQL PERCENTILE_CONT(0.95): linear interp ≈ 95.5
         $this->assertEqualsWithDelta(95.0, (float) $health->latency->p95_seconds, 10.0);
     }
 
