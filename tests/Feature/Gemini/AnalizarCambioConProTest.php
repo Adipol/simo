@@ -61,8 +61,18 @@ class AnalizarCambioConProTest extends TestCase
         ]);
 
         $fuente = $this->createFuente();
-        $c1 = $this->createCambio($fuente);
-        $c2 = $this->createCambio($fuente);
+
+        // Explicit fechas: c1 newer than c2. The job orders by 'fecha DESC' so c1
+        // will be processed first and receive the first Http::sequence response.
+        //
+        // Why explicit fechas matter: SQLite stores DATETIME at second precision
+        // and ties resolve by ROWID ASC (insertion order). PostgreSQL stores
+        // TIMESTAMP at microsecond precision, so two rows created in the same
+        // second still differ by ~100µs, and ORDER BY fecha DESC puts the second
+        // one first. Without explicit fechas the test passes on SQLite (because
+        // c1 wins the tie) and fails on pgsql (because c2 wins by microsecond).
+        $c1 = $this->createCambio($fuente, ['fecha' => now()]);
+        $c2 = $this->createCambio($fuente, ['fecha' => now()->subMinutes(1)]);
 
         Http::fake([
             'generativelanguage.googleapis.com/*' => Http::sequence()
