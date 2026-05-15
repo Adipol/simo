@@ -642,4 +642,90 @@ class GeminiPromptBuilderTest extends TestCase
 
         config(['services.gemini.negative_examples_enabled' => null]);
     }
+
+    // ============================================
+    // WU4 — Cache behavior + logging (REQ-6, REQ-8)
+    // ============================================
+
+    /**
+     * REQ-6: la misma instancia reutiliza el cache — getNegativeExamples se llama UNA sola vez
+     * aunque se invoque filtroPEP() dos veces.
+     */
+    public function test_cache_reusado_en_multiples_llamadas_misma_instancia(): void
+    {
+        config(['services.gemini.negative_examples_enabled' => true]);
+
+        $descartado = new ResultadoScraping([
+            'titulo'           => 'Artículo deportivo',
+            'gemini_motivo'    => 'Deportivo',
+            'gemini_confianza' => 90,
+        ]);
+
+        $service = $this->createMock(NegativeExamplesProvider::class);
+        $service->expects($this->once())
+            ->method('getNegativeExamples')
+            ->willReturn(collect([$descartado]));
+
+        $builder = new GeminiPromptBuilder(null, $service, 5);
+        $builder->filtroPEP('Texto uno', 'Bolivia', 'PEP');
+        $builder->filtroPEP('Texto dos', 'Bolivia', 'PEP');
+
+        // El mock lanzaría fallo si getNegativeExamples se llamara más de una vez
+        config(['services.gemini.negative_examples_enabled' => null]);
+    }
+
+    /**
+     * REQ-6: una nueva instancia consulta la DB de nuevo (cache es per-instance).
+     */
+    public function test_nueva_instancia_consulta_db_de_nuevo(): void
+    {
+        config(['services.gemini.negative_examples_enabled' => true]);
+
+        $descartado = new ResultadoScraping([
+            'titulo'           => 'Artículo deportivo',
+            'gemini_motivo'    => 'Deportivo',
+            'gemini_confianza' => 90,
+        ]);
+
+        $service = $this->createMock(NegativeExamplesProvider::class);
+        $service->expects($this->exactly(2))
+            ->method('getNegativeExamples')
+            ->willReturn(collect([$descartado]));
+
+        $builder1 = new GeminiPromptBuilder(null, $service, 5);
+        $builder1->filtroPEP('Texto uno', 'Bolivia', 'PEP');
+
+        $builder2 = new GeminiPromptBuilder(null, $service, 5);
+        $builder2->filtroPEP('Texto dos', 'Bolivia', 'PEP');
+
+        // El mock verifica que se llamó exactamente 2 veces (una por instancia)
+        config(['services.gemini.negative_examples_enabled' => null]);
+    }
+
+    /**
+     * REQ-8: cuando se usan ejemplos dinámicos se registra el conteo en el log.
+     */
+    public function test_loguea_cuenta_cuando_inyecta_dinamicos(): void
+    {
+        config(['services.gemini.negative_examples_enabled' => true]);
+
+        $descartados = collect([
+            new ResultadoScraping(['titulo' => 'Art 1', 'gemini_motivo' => 'Motivo', 'gemini_confianza' => 90]),
+            new ResultadoScraping(['titulo' => 'Art 2', 'gemini_motivo' => 'Motivo', 'gemini_confianza' => 85]),
+        ]);
+
+        $service = $this->createMock(NegativeExamplesProvider::class);
+        $service->method('getNegativeExamples')->willReturn($descartados);
+
+        \Illuminate\Support\Facades\Log::spy();
+
+        $builder = new GeminiPromptBuilder(null, $service, 5);
+        $builder->filtroPEP('Texto de prueba', 'Bolivia', 'PEP');
+
+        \Illuminate\Support\Facades\Log::shouldHaveReceived('info')
+            ->once()
+            ->with('gemini.negative_examples.injected', ['count' => 2]);
+
+        config(['services.gemini.negative_examples_enabled' => null]);
+    }
 }
