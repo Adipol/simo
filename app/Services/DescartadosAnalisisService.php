@@ -449,14 +449,13 @@ final class DescartadosAnalisisService
                     ELSE '0-49'
                 END
             ")
-            ->orderByRaw("
-                CASE
-                    WHEN gemini_confianza BETWEEN 85 AND 100 THEN 1
-                    WHEN gemini_confianza BETWEEN 70 AND 84  THEN 2
-                    WHEN gemini_confianza BETWEEN 50 AND 69  THEN 3
-                    ELSE 4
-                END
-            ")
+            // ORDER BY uses the aggregated alias 'bucket' (string sort works
+            // because the four bucket names sort correctly lexicographically:
+            // '85-100' > '70-84' > '50-69' > '0-49' DESC). Cannot reference
+            // gemini_confianza directly in ORDER BY of a GROUP BY query —
+            // pgsql is strict ("must appear in GROUP BY or aggregate function").
+            // SQLite tolerates the column reference, masking the issue in tests.
+            ->orderByRaw("bucket DESC")
             ->get();
 
         return $rows->map(fn (object $row) => ConfianzaBucketDTO::fromArray([
