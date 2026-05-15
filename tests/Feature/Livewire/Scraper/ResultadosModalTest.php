@@ -232,4 +232,40 @@ class ResultadosModalTest extends TestCase
             ->assertSee('unanalyzed keyword')
             ->assertDontSee('Ver análisis');
     }
+
+    // ─── Gemini motivo display ────────────────────────────────────────────────
+
+    /**
+     * Modal must show Gemini's motivo_general explanation when present.
+     * The motivo is operationally valuable for validating that Gemini is
+     * applying the classification rules correctly (especially post-T3 deploy).
+     */
+    public function test_modal_shows_gemini_motivo_when_present(): void
+    {
+        $sitio     = $this->createSitio();
+        $resultado = $this->createAnalyzedResultado($sitio);
+
+        $motivo = 'El artículo se centra en las demandas del COD, sin que las autoridades sean el sujeto activo.';
+        $resultado->update(['gemini_motivo' => $motivo]);
+
+        Livewire::test(Resultados::class)
+            ->set('verAnalisisId', $resultado->id)
+            ->assertSee('Razonamiento Gemini')
+            ->assertSee($motivo);
+    }
+
+    /**
+     * Modal must NOT show the motivo section when gemini_motivo is null.
+     * Avoids rendering an empty box.
+     */
+    public function test_modal_hides_motivo_section_when_null(): void
+    {
+        $sitio     = $this->createSitio();
+        $resultado = $this->createAnalyzedResultado($sitio);
+        // gemini_motivo stays null (default)
+
+        Livewire::test(Resultados::class)
+            ->set('verAnalisisId', $resultado->id)
+            ->assertDontSee('Razonamiento Gemini');
+    }
 }
