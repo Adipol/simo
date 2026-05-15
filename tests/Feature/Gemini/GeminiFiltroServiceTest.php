@@ -493,4 +493,97 @@ class GeminiFiltroServiceTest extends TestCase
         $this->assertTrue($record->gemini_analyzed, 'gemini_analyzed must be true after failure');
         $this->assertFalse($record->gemini_is_pep, 'gemini_is_pep must be false (not null) after failure');
     }
+
+    // ─── gemini_confianza persistence ────────────────────────────────────────
+
+    public function test_persistir_resultado_writes_gemini_confianza_for_single_persona(): void
+    {
+        config(['services.gemini.api_key' => 'test-key']);
+
+        $record = $this->createRecord();
+
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response($this->fakeGeminiResponse([
+                'personas' => [[
+                    'nombre' => 'Juan Pérez',
+                    'cargo' => 'Ministro',
+                    'categoria' => 'PEP',
+                    'entidad_tipo' => 'publica',
+                    'confianza' => 80,
+                    'evento' => 'designacion',
+                    'motivo' => 'Alto cargo',
+                ]],
+                'motivo_general' => 'Artículo ministerial',
+            ])),
+        ]);
+
+        $this->makeService()->analizarLote(collect([$record]));
+
+        $record->refresh();
+        $this->assertSame(80, $record->gemini_confianza);
+        $this->assertTrue($record->gemini_analyzed);
+    }
+
+    public function test_persistir_resultado_writes_max_gemini_confianza_for_multiple_personas(): void
+    {
+        config(['services.gemini.api_key' => 'test-key']);
+
+        $record = $this->createRecord();
+
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response($this->fakeGeminiResponse([
+                'personas' => [
+                    ['nombre' => 'A', 'cargo' => null, 'categoria' => 'PEP', 'entidad_tipo' => null, 'confianza' => 50, 'evento' => null, 'motivo' => ''],
+                    ['nombre' => 'B', 'cargo' => null, 'categoria' => 'OPI', 'entidad_tipo' => null, 'confianza' => 95, 'evento' => null, 'motivo' => ''],
+                ],
+                'motivo_general' => 'Múltiples personas',
+            ])),
+        ]);
+
+        $this->makeService()->analizarLote(collect([$record]));
+
+        $record->refresh();
+        $this->assertSame(95, $record->gemini_confianza);
+    }
+
+    public function test_persistir_resultado_writes_null_gemini_confianza_when_no_personas(): void
+    {
+        config(['services.gemini.api_key' => 'test-key']);
+
+        $record = $this->createRecord();
+
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response($this->fakeGeminiResponse([
+                'personas' => [],
+                'motivo_general' => 'Sin personas relevantes',
+            ])),
+        ]);
+
+        $this->makeService()->analizarLote(collect([$record]));
+
+        $record->refresh();
+        $this->assertNull($record->gemini_confianza);
+        $this->assertTrue($record->gemini_analyzed);
+    }
+
+    public function test_pre_filter_rejected_article_keeps_gemini_confianza_null(): void
+    {
+        config(['services.gemini.api_key' => 'test-key']);
+
+        // A record that will be rejected by PreFiltroService (no cargo público context)
+        $record = $this->createRecord([
+            'titulo' => 'Receta de cocina',
+            'contexto' => 'Ingredientes para hacer una torta de chocolate.',
+            'categoria' => 'entretenimiento',
+        ]);
+
+        Http::fake(); // No HTTP call should happen
+
+        $this->makeService()->analizarLote(collect([$record]));
+
+        $record->refresh();
+        $this->assertNull($record->gemini_confianza);
+        $this->assertTrue($record->gemini_analyzed);
+        $this->assertFalse($record->gemini_is_pep);
+    }
 }

@@ -116,6 +116,7 @@ class GeminiFiltroService
             'gemini_analyzed_at' => now(),
             'gemini_is_pep' => $anyPepPassed,
             'gemini_motivo' => $dto->motivoGeneral,
+            'gemini_confianza' => $dto->maxConfianza(),
         ]);
 
         // Write usage log
