@@ -15,10 +15,12 @@ env:
   TZ: America/La_Paz
 
 jobs:
-  test:
-    name: test
+  test-sqlite:
+    name: test-sqlite
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      DB_CONNECTION: sqlite
     steps:
       - uses: actions/checkout@v4
 
@@ -59,6 +61,73 @@ jobs:
       - run: cp .env.example .env
 
       - run: php artisan key:generate
+
+      - env:
+          APP_ENV: testing
+        run: php -d memory_limit=512M artisan test
+
+  test-pgsql:
+    name: test-pgsql
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DB_CONNECTION: pgsql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_DATABASE: testing
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: testing
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: pgsql, pdo_pgsql, mbstring, xml, curl, zip, bcmath, intl, sqlite3
+          coverage: none
+
+      - id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ runner.os }}-${{ hashFiles('**/composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-
+
+      - run: composer install --prefer-dist --no-progress --no-interaction
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - run: cp .env.example .env
+
+      - run: php artisan key:generate
+
+      - name: Enable pg_trgm extension
+        env:
+          PGPASSWORD: postgres
+        run: psql -h 127.0.0.1 -U postgres -d testing -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
 
       - env:
           APP_ENV: testing
