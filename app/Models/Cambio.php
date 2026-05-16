@@ -73,6 +73,26 @@ class Cambio extends Model
         };
     }
 
+    /**
+     * Returns a driver-aware SQL expression for extracting a scalar value from a JSON column.
+     *
+     * Mirrors DashboardSummaryService::heroCard() driver-branching pattern:
+     * - pgsql: uses ->> operator (returns TEXT, NULL for missing or JSON null keys)
+     * - sqlite: uses json_extract() (equivalent semantics on SQLite 3.38+)
+     *
+     * The helper is a pure accessor — type interpretation (casting, comparison operators)
+     * is the caller's responsibility, mirroring how dateTruncDay() returns an expression
+     * but the caller decides what comparison to apply.
+     */
+    private function jsonExtract(string $column, string $path): string
+    {
+        return match (DB::getDriverName()) {
+            'pgsql' => "{$column}->>'$path'",
+            'sqlite' => "json_extract({$column}, '$.{$path}')",
+            default => throw new \RuntimeException('Unsupported DB driver: '.DB::getDriverName()),
+        };
+    }
+
     public static function marcarComoRevisado(int $id): void
     {
         static::where('id', $id)->update(['revisado' => true]);
@@ -137,8 +157,8 @@ class Cambio extends Model
             $sub->where(function (Builder $gemini): void {
                 $gemini->where('gemini_analyzed', true)
                     ->where(function (Builder $personas): void {
-                        $personas->whereRaw("gemini_analisis_json->>'persona_nueva' IS NOT NULL")
-                            ->orWhereRaw("gemini_analisis_json->>'persona_removida' IS NOT NULL");
+                        $personas->whereRaw($this->jsonExtract('gemini_analisis_json', 'persona_nueva').' IS NOT NULL')
+                            ->orWhereRaw($this->jsonExtract('gemini_analisis_json', 'persona_removida').' IS NOT NULL');
                     });
             })->orWhere(function (Builder $scraperFallback): void {
                 // Rama 2 (fallback): Gemini aún no analizó Y scraper detectó posibles_peps.
@@ -162,7 +182,10 @@ class Cambio extends Model
     public function scopeSinPersona(Builder $query): Builder
     {
         return $query->where('gemini_analyzed', true)
-            ->whereRaw("(gemini_analisis_json->>'persona_nueva' IS NULL AND gemini_analisis_json->>'persona_removida' IS NULL)");
+            ->whereRaw(
+                '('.$this->jsonExtract('gemini_analisis_json', 'persona_nueva').' IS NULL'
+                .' AND '.$this->jsonExtract('gemini_analisis_json', 'persona_removida').' IS NULL)'
+            );
     }
 
     /**
@@ -171,7 +194,7 @@ class Cambio extends Model
     public function scopeConRiesgo(Builder $query, string $riesgo): Builder
     {
         return $query->where('gemini_analyzed', true)
-            ->whereRaw("gemini_analisis_json->>'riesgo' = ?", [$riesgo]);
+            ->whereRaw($this->jsonExtract('gemini_analisis_json', 'riesgo').' = ?', [$riesgo]);
     }
 
     /**
