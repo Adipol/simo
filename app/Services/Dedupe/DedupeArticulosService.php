@@ -6,6 +6,7 @@ namespace App\Services\Dedupe;
 
 use App\Models\ConfigScript;
 use App\Models\ResultadoScraping;
+use App\Support\PgsqlTimezone;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -54,7 +55,7 @@ final class DedupeArticulosService
             return;
         }
 
-        $threshold  = $config->dedupeThreshold();
+        $threshold = $config->dedupeThreshold();
         $ventanaDias = $config->ventanaDias();
 
         // Use a DB transaction with SELECT FOR UPDATE to prevent race conditions
@@ -155,11 +156,13 @@ final class DedupeArticulosService
         //  2. fecha_encontrado ASC — tie-breaker for the common-case (post-backfill) when
         //     a new article enters and finds multiple established primaries of equal
         //     similarity; the OLDEST established primary wins as cluster head.
+        $fechaTz = PgsqlTimezone::normalize('fecha_encontrado');
+
         return DB::select(
             "SELECT id, contexto, similarity(titulo, ?) AS sim
              FROM resultados_scraping
              WHERE titulo % ?
-               AND fecha_encontrado >= NOW() - ? * INTERVAL '1 day'
+               AND {$fechaTz} >= NOW() - ? * INTERVAL '1 day'
                AND id != ?
                AND secundario_de IS NULL
                AND dedupe_processed_at IS NOT NULL
