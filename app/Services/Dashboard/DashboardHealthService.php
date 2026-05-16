@@ -185,8 +185,8 @@ final class DashboardHealthService
 
         $row = DB::selectOne(
             "SELECT
-                percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (gemini_analyzed_at - {$fechaTz}))) AS p50,
-                percentile_cont(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (gemini_analyzed_at - {$fechaTz}))) AS p95,
+                percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (gemini_analyzed_at - fecha))) AS p50,
+                percentile_cont(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (gemini_analyzed_at - fecha))) AS p95,
                 COUNT(*) AS sample_size
              FROM cambios
              WHERE gemini_analyzed_at IS NOT NULL

@@ -110,6 +110,10 @@ class DashboardPortabilityTest extends TestCase
             $health->latency->sample_size,
             'all 10 rows inside 24h window must be included regardless of session_tz'
         );
+        $this->assertGreaterThan(0, $health->latency->p50_seconds, 'p50 must be positive — negative value indicates asymmetric AT TIME ZONE regression');
+        $this->assertLessThan(86400, $health->latency->p50_seconds, 'p50 must be < 1 day (sanity)');
+        $this->assertGreaterThan(0, $health->latency->p95_seconds, 'p95 must be positive — negative value indicates asymmetric AT TIME ZONE regression');
+        $this->assertLessThan(86400, $health->latency->p95_seconds, 'p95 must be < 1 day (sanity)');
     }
 
     // =========================================================================
