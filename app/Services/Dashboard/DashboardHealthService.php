@@ -11,6 +11,7 @@ use App\Services\Dashboard\DTOs\LatencyDTO;
 use App\Services\Dashboard\DTOs\PipelineHealthDTO;
 use App\Services\Dashboard\DTOs\QueueDepthDTO;
 use App\Services\Dashboard\DTOs\ScraperStatusDTO;
+use App\Support\PgsqlTimezone;
 use Illuminate\Support\Facades\DB;
 
 final class DashboardHealthService
@@ -180,6 +181,8 @@ final class DashboardHealthService
      */
     private function computeLatencyPostgres(): LatencyDTO
     {
+        $fechaTz = PgsqlTimezone::normalize('fecha');
+
         $row = DB::selectOne(
             "SELECT
                 percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (gemini_analyzed_at - fecha))) AS p50,
@@ -187,7 +190,7 @@ final class DashboardHealthService
                 COUNT(*) AS sample_size
              FROM cambios
              WHERE gemini_analyzed_at IS NOT NULL
-               AND fecha >= NOW() - INTERVAL '24 hours'"
+               AND {$fechaTz} >= NOW() - INTERVAL '24 hours'"
         );
 
         $sampleSize = (int) ($row->sample_size ?? 0);

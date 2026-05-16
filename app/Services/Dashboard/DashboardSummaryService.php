@@ -13,6 +13,7 @@ use App\Services\Dashboard\DTOs\HeroCardDTO;
 use App\Services\Dashboard\DTOs\PepHighConfidence;
 use App\Services\Dashboard\DTOs\RecentDiscoveriesDTO;
 use App\Services\Dashboard\DTOs\TriageStripDTO;
+use App\Support\PgsqlTimezone;
 use Illuminate\Support\Facades\DB;
 
 final class DashboardSummaryService
@@ -87,7 +88,8 @@ final class DashboardSummaryService
         if ($isPgsql) {
             $riesgoExpr = "CASE WHEN gemini_analisis_json->>'riesgo' = 'alto' THEN {$riesgoAltoW} ELSE 0 END";
             $esMaeExpr = "CASE WHEN (gemini_analisis_json->>'es_mae')::boolean = true THEN {$esMaeW} ELSE 0 END";
-            $agingExpr = "EXTRACT(DAY FROM NOW() - fecha) / {$agingDiv}";
+            $fechaTz = PgsqlTimezone::normalize('fecha');
+            $agingExpr = "EXTRACT(DAY FROM NOW() - {$fechaTz}) / {$agingDiv}";
         } else {
             // SQLite-compatible: JSON via json_extract, days via JULIANDAY
             $riesgoExpr = "CASE WHEN json_extract(gemini_analisis_json, '$.riesgo') = 'alto' THEN {$riesgoAltoW} ELSE 0 END";
