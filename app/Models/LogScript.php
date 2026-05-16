@@ -84,8 +84,42 @@ class LogScript extends Model
                 'estado' => 'interrumpido',
                 'fin' => now(),
                 'mensaje_error' => 'Proceso interrumpido: no se registró fin dentro del timeout.',
-                'duracion_segundos' => DB::raw('EXTRACT(EPOCH FROM (NOW() - inicio))::integer'),
+                'duracion_segundos' => DB::raw(self::epochSecondsSince('inicio')),
             ]);
+    }
+
+    /**
+     * Returns a driver-aware SQL expression for elapsed seconds since $column.
+     *
+     * Mirrors DashboardSummaryService::dateTruncDay() pattern: returns a raw
+     * string fragment; caller wraps with DB::raw() or whereRaw().
+     *
+     * SQLite note: datetimes are stored in the app timezone (America/La_Paz = UTC-4).
+     * julianday('now') is UTC, so we apply the inverse offset to the stored column
+     * to convert it to UTC before computing the difference.
+     */
+    private static function epochSecondsSince(string $column): string
+    {
+        return match (DB::getDriverName()) {
+            'pgsql' => "EXTRACT(EPOCH FROM (NOW() - {$column}))::integer",
+            'sqlite' => self::sqliteEpochSecondsSince($column),
+            default => throw new \RuntimeException('Unsupported DB driver: '.DB::getDriverName()),
+        };
+    }
+
+    /**
+     * SQLite-specific epoch-seconds expression with timezone correction.
+     *
+     * Stored datetimes are in the app timezone (e.g. America/La_Paz = UTC-4).
+     * SQLite's julianday('now') is always UTC. We shift the stored column by the
+     * inverse of the PHP timezone offset so both sides use the same reference.
+     */
+    private static function sqliteEpochSecondsSince(string $column): string
+    {
+        $offsetHours = (int) round(-now()->utcOffset() / 60);
+        $modifier = sprintf('%+d hours', $offsetHours);
+
+        return "CAST((julianday('now') - julianday({$column}, '{$modifier}')) * 86400 AS INTEGER)";
     }
 
     /**
@@ -96,6 +130,6 @@ class LogScript extends Model
      */
     public static function aplicarRetencion(): array
     {
-        return (new LogScriptRetentionService())->aplicarRetencion();
+        return (new LogScriptRetentionService)->aplicarRetencion();
     }
 }
