@@ -110,6 +110,15 @@ class LogScript extends Model
      * Mirrors DashboardSummaryService::dateTruncDay() pattern: returns a raw
      * string fragment; caller wraps with DB::raw() or whereRaw().
      *
+     * Session-timezone-agnostic (pgsql):
+     * The pgsql branch uses `col AT TIME ZONE config('app.timezone')` to interpret
+     * the unzoned column literal as being in the app timezone before subtracting from
+     * NOW() (which is always timestamptz). This makes the helper independent of the
+     * pgsql cluster's session timezone (`SET TIME ZONE`). Without this normalization,
+     * a postgres container running with session_tz=UTC (e.g. the postgres:17 Docker
+     * image default) would compute elapsed seconds offset by the UTC delta of the app
+     * timezone — for America/La_Paz (UTC-4) that is a 14400-second drift.
+     *
      * IMPORTANT — DB-server clock, NOT PHP/Carbon clock:
      * The returned SQL fragment computes elapsed seconds using the DATABASE SERVER
      * clock (pgsql: NOW(), sqlite: julianday('now')), NOT the PHP/Carbon clock.
@@ -128,7 +137,11 @@ class LogScript extends Model
     private static function epochSecondsSince(string $column): string
     {
         return match (DB::getDriverName()) {
-            'pgsql' => "EXTRACT(EPOCH FROM (NOW() - {$column}))::integer",
+            'pgsql' => sprintf(
+                "EXTRACT(EPOCH FROM (NOW() - (%s AT TIME ZONE '%s')))::integer",
+                $column,
+                addslashes((string) config('app.timezone'))
+            ),
             'sqlite' => self::sqliteEpochSecondsSince($column),
             default => throw new \RuntimeException('Unsupported DB driver: '.DB::getDriverName()),
         };

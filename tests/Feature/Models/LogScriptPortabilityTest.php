@@ -124,6 +124,59 @@ class LogScriptPortabilityTest extends TestCase
     }
 
     /**
+     * Regression test for the CI post-incident bug (2026-05-16):
+     * When the pgsql cluster session timezone differs from config('app.timezone')
+     * (e.g. postgres:17 container defaults to UTC, app uses America/La_Paz),
+     * the naive `NOW() - inicio` subtraction produces a 4-hour drift (14400 sec).
+     *
+     * This test forces session_tz=UTC on the pgsql connection to reproduce the CI
+     * environment on ANY developer machine, regardless of the local cluster timezone.
+     *
+     * NOTE: This test is pgsql-only because it tests pgsql-specific session-timezone
+     * semantics (`SET TIME ZONE`). This is NOT a "driver-portability skip" (which REQ-5
+     * prohibits) — it is a skip because the scenario (pgsql session_tz mismatch) literally
+     * does not exist on sqlite. The distinction is: we skip because sqlite lacks the
+     * FEATURE being tested, not because our code doesn't work on sqlite.
+     */
+    public function test_limpiar_huerfanos_works_when_pgsql_session_timezone_differs_from_app_timezone(): void
+    {
+        if (DB::getDriverName() !== 'pgsql') {
+            $this->markTestSkipped('pgsql-only: simulates cluster session timezone different from app timezone');
+        }
+
+        // Force session timezone to UTC — this is what the postgres:17 CI container does.
+        // On a developer machine whose cluster runs with America/La_Paz, this SET command
+        // creates the same mismatch that CI experiences, reproducing the failure locally.
+        DB::statement("SET TIME ZONE 'UTC'");
+
+        $now = Carbon::now();
+        $inicio = $now->copy()->subSeconds(120);
+
+        ConfigScript::create([
+            'script' => 'scraper',
+            'timeout_minutos' => 1,
+        ]);
+
+        LogScript::factory()->create([
+            'script' => 'scraper',
+            'estado' => 'iniciado',
+            'inicio' => $inicio,
+            'fin' => null,
+            'duracion_segundos' => null,
+        ]);
+
+        $affected = LogScript::limpiarHuerfanos('scraper');
+
+        $this->assertSame(1, $affected);
+
+        $row = LogScript::first();
+        $duracion = (int) $row->duracion_segundos;
+
+        $this->assertGreaterThanOrEqual(118, $duracion, "duracion_segundos debe ser >= 118, fue {$duracion}");
+        $this->assertLessThanOrEqual(122, $duracion, "duracion_segundos debe ser <= 122, fue {$duracion}");
+    }
+
+    /**
      * epochSecondsSince lanza RuntimeException cuando el driver no es pgsql ni sqlite.
      *
      * Coverage test: the default branch of the match in epochSecondsSince() MUST throw.
