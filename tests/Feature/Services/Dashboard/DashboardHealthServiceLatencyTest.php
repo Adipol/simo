@@ -10,6 +10,7 @@ use App\Services\Dashboard\DashboardCacheManager;
 use App\Services\Dashboard\DashboardHealthService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**
@@ -37,6 +38,13 @@ class DashboardHealthServiceLatencyTest extends TestCase
         config(['services.gemini.enabled' => false]);
         config(['services.dedupe.enabled' => false]);
         config(['dashboard.health_cache_ttl' => 0]); // disable cache for tests
+
+        // Force hostile session timezone on pgsql so any future asymmetric
+        // AT TIME ZONE wrap regression in computeLatencyPostgres() surfaces here.
+        // Safe no-op on sqlite (no session timezone concept).
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement("SET TIME ZONE 'UTC'");
+        }
 
         $this->service = new DashboardHealthService(new DashboardCacheManager);
     }
