@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\DB;
 
 class Cambio extends Model
 {
@@ -26,10 +27,10 @@ class Cambio extends Model
     ];
 
     protected $casts = [
-        'fecha'              => 'datetime',
-        'revisado'           => 'boolean',
-        'revisado_at'        => 'datetime',
-        'gemini_analyzed'    => 'boolean',
+        'fecha' => 'datetime',
+        'revisado' => 'boolean',
+        'revisado_at' => 'datetime',
+        'gemini_analyzed' => 'boolean',
         'gemini_analyzed_at' => 'datetime',
         'gemini_analisis_json' => 'array',
         'imagenes_cambio_json' => 'array',
@@ -54,7 +55,22 @@ class Cambio extends Model
     public function scopeMultimodal(Builder $query): Builder
     {
         return $query->whereNotNull('imagenes_cambio_json')
-            ->whereRaw("jsonb_array_length(imagenes_cambio_json::jsonb) > 0");
+            ->whereRaw($this->jsonArrayLength('imagenes_cambio_json').' > 0');
+    }
+
+    /**
+     * Returns a driver-aware SQL expression for JSON array length of $column.
+     *
+     * Mirrors DashboardSummaryService::dateTruncDay() pattern: returns a raw
+     * string fragment; caller concatenates comparison operator and wraps with whereRaw().
+     */
+    private function jsonArrayLength(string $column): string
+    {
+        return match (DB::getDriverName()) {
+            'pgsql' => "jsonb_array_length({$column}::jsonb)",
+            'sqlite' => "json_array_length({$column})",
+            default => throw new \RuntimeException('Unsupported DB driver: '.DB::getDriverName()),
+        };
     }
 
     public static function marcarComoRevisado(int $id): void
