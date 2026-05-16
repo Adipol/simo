@@ -1,28 +1,43 @@
 # SDD Configuration — SIMO Project
 # Generated: 2026-04-08
+# Re-init: 2026-05-16
 # Mode: engram (single developer, fast iteration)
 
 schema: spec-driven
 
 context: |
-  Tech stack: Laravel 12, Livewire 4, PHP 8.2, PostgreSQL 17, Python 3.12
-  Architecture: Clean Architecture (Services, DTOs, Observers, Jobs)
-  Testing: PHPUnit 11.5 (Unit + Feature, in-memory SQLite)
-  Style: Laravel Pint (PSR-12)
-  AI: Gemini (Flash filtering, Pro analysis)
+  Tech stack: Laravel 12, PHP 8.5, Livewire 4, Tailwind 3, Alpine.js 3, PostgreSQL 17 (prod)
+  Architecture: Clean Architecture (Services, DTOs, Observers, Jobs, Enums)
+  Testing: PHPUnit 11.5.55 — SQLite :memory: (local) + PostgreSQL 17 (CI pgsql job)
+  Style: Laravel Pint 1.27.1 (PSR-12)
+  AI: Gemini Flash (filtrado + análisis) — GeminiFiltroService, GeminiAnalisisService
+  CI: test-sqlite + test-pgsql jobs; Vite build required before feature tests
   
 strict_tdd: true
 
 testing:
   runner: php artisan test
-  framework: PHPUnit 11.5.3
+  runner_alt: vendor/bin/phpunit
+  runner_ci: php -d memory_limit=512M artisan test
+  framework: PHPUnit 11.5.55
   coverage: false
   
+  drivers:
+    sqlite: true      # Local default, :memory:, phpunit.xml
+    pgsql: true       # CI job: test-pgsql, PostgreSQL 17, pg_trgm required
+
   layers:
     unit: true
     feature: true
     integration: true
+    livewire: true    # Livewire::test() facade
     e2e: false
+
+  notes:
+    - "Vite build (npm run build) REQUIRED before feature tests"
+    - "DB_CONNECTION env toggles driver (sqlite / pgsql)"
+    - "External services (Gemini API) must be mocked"
+    - "GEMINI_NEGATIVE_EXAMPLES_ENABLED=false in phpunit.xml"
 
 quality:
   linter: ./vendor/bin/pint
@@ -50,10 +65,14 @@ rules:
   apply:
     - Follow existing code patterns
     - Load relevant coding skills
+    - tdd: true
+    - test_command: "php artisan test"
     
   verify:
     - Run tests if infrastructure exists
     - Compare against every spec scenario
+    - test_command: "php artisan test"
+    - build_command: "npm run build"
     
   archive:
     - Warn before destructive deltas
