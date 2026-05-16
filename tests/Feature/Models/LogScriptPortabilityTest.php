@@ -8,6 +8,7 @@ use App\Models\ConfigScript;
 use App\Models\LogScript;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class LogScriptPortabilityTest extends TestCase
@@ -120,5 +121,33 @@ class LogScriptPortabilityTest extends TestCase
         $row = LogScript::first();
         $this->assertSame('iniciado', $row->estado);
         $this->assertNull($row->fin);
+    }
+
+    /**
+     * epochSecondsSince lanza RuntimeException cuando el driver no es pgsql ni sqlite.
+     *
+     * Coverage test: the default branch of the match in epochSecondsSince() MUST throw.
+     * The helper code is correct; this test closes the REQ-1 "unknown driver" spec scenario.
+     *
+     * NOTE: Because epochSecondsSince is private static, we trigger it via limpiarHuerfanos.
+     * We mock DB::getDriverName() to return 'mysql' so the match hits the default arm.
+     * The RuntimeException fires before any query reaches the DB, so no DB state is needed.
+     */
+    public function test_it_throws_on_unknown_driver_for_epoch_seconds_since(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/mysql/');
+
+        // Stub the driver name so the match hits the default → throw branch.
+        DB::shouldReceive('getDriverName')->andReturn('mysql');
+
+        // We also need ConfigScript lookup to not explode before we reach the helper;
+        // DB::shouldReceive already stubs the facade, so we add a pass-through for the
+        // select query that ConfigScript::where('script')->value() issues.
+        DB::shouldReceive('select')->andReturn([]);
+
+        // limpiarHuerfanos calls epochSecondsSince internally; the exception fires
+        // when it tries to build the DB::raw() expression for duracion_segundos.
+        LogScript::limpiarHuerfanos('scraper');
     }
 }

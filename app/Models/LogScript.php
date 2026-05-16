@@ -70,6 +70,16 @@ class LogScript extends Model
     /**
      * Marca como 'interrumpido' todos los registros iniciados sin fin
      * cuyo inicio supera el timeout configurado.
+     *
+     * Clock sources: `fin` is set with the PHP/Carbon clock (now()), while
+     * `duracion_segundos` is computed by the DATABASE SERVER clock via
+     * epochSecondsSince() — see that helper's docblock for details.
+     * In production the two clocks coincide within the query round-trip
+     * (typically < 1 second). In tests that pin Carbon::setTestNow() to a
+     * distant past instant, `fin` would reflect the pinned time but
+     * `duracion_segundos` would still use the DB-server's real clock; the
+     * discrepancy can be large. If you need both values from the same clock,
+     * compute the delta in PHP and pass it as a bound parameter instead.
      */
     public static function limpiarHuerfanos(string $script): int
     {
@@ -82,6 +92,12 @@ class LogScript extends Model
             ->where('inicio', '<', now()->subMinutes($timeoutMin))
             ->update([
                 'estado' => 'interrumpido',
+                // `fin` uses the PHP/Carbon clock (Carbon-aware, affected by setTestNow).
+                // `duracion_segundos` uses the DB-server clock via epochSecondsSince() —
+                // see that helper's docblock. The two sources diverge only if
+                // Carbon::setTestNow() is pinned to a distant past instant; in that case
+                // `fin` reflects the pinned time while `duracion_segundos` uses DB NOW().
+                // Bounded by round-trip latency (< 1 sec) in production.
                 'fin' => now(),
                 'mensaje_error' => 'Proceso interrumpido: no se registró fin dentro del timeout.',
                 'duracion_segundos' => DB::raw(self::epochSecondsSince('inicio')),
@@ -94,9 +110,20 @@ class LogScript extends Model
      * Mirrors DashboardSummaryService::dateTruncDay() pattern: returns a raw
      * string fragment; caller wraps with DB::raw() or whereRaw().
      *
+     * IMPORTANT — DB-server clock, NOT PHP/Carbon clock:
+     * The returned SQL fragment computes elapsed seconds using the DATABASE SERVER
+     * clock (pgsql: NOW(), sqlite: julianday('now')), NOT the PHP/Carbon clock.
+     * Carbon::setTestNow() does NOT affect this calculation — the DB server always
+     * reads its own system clock at query execution time.
+     *
+     * If you need a Carbon-pinned elapsed time (e.g. for deterministic test
+     * assertions against a distant past instant), compute the delta in PHP:
+     *   $elapsed = (int) $pinnedNow->diffInSeconds($row->inicio);
+     * and pass it as a bound parameter instead of using this helper.
+     *
      * SQLite note: datetimes are stored in the app timezone (America/La_Paz = UTC-4).
      * julianday('now') is UTC, so we apply the inverse offset to the stored column
-     * to convert it to UTC before computing the difference.
+     * to convert it to UTC before computing the difference. See sqliteEpochSecondsSince().
      */
     private static function epochSecondsSince(string $column): string
     {
@@ -113,6 +140,20 @@ class LogScript extends Model
      * Stored datetimes are in the app timezone (e.g. America/La_Paz = UTC-4).
      * SQLite's julianday('now') is always UTC. We shift the stored column by the
      * inverse of the PHP timezone offset so both sides use the same reference.
+     *
+     * The offset is computed dynamically at query-build time via now()->utcOffset(),
+     * which reflects config('app.timezone') (resolved through APP_TIMEZONE env var).
+     * The default timezone for this application is America/La_Paz (UTC-4).
+     *
+     * ASSUMES: the configured app timezone has NO Daylight Saving Time (DST).
+     * America/La_Paz observes no DST, so the formula stays stable year-round.
+     * If this application is ever deployed with a DST-observing timezone, the
+     * offset must be recomputed per-query (which this method already does via
+     * now()->utcOffset() — so it is actually correct for DST zones too, as long
+     * as query build-time and execution time share the same offset window).
+     *
+     * Uses DB-server clock (julianday('now') = UTC at execution time).
+     * Carbon::setTestNow() does NOT affect julianday('now').
      */
     private static function sqliteEpochSecondsSince(string $column): string
     {

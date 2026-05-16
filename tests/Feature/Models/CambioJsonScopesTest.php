@@ -7,6 +7,7 @@ namespace Tests\Feature\Models;
 use App\Models\Cambio;
 use App\Models\Fuente;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class CambioJsonScopesTest extends TestCase
@@ -185,5 +186,29 @@ class CambioJsonScopesTest extends TestCase
         $this->assertSame(1, Cambio::conRiesgo('alto')->count());
         $this->assertSame(1, Cambio::conRiesgo('medio')->count());
         $this->assertSame(1, Cambio::conRiesgo('bajo')->count());
+    }
+
+    // =========================================================================
+    // Unknown driver guard — REQ-1 coverage
+    // =========================================================================
+
+    /**
+     * jsonExtract lanza RuntimeException cuando el driver no es pgsql ni sqlite.
+     *
+     * Coverage test: the default branch of the match in jsonExtract() MUST throw.
+     * Closes the REQ-1 "unknown driver" spec scenario for this helper.
+     * scopeConPersona is used as the trigger because it calls jsonExtract twice
+     * (persona_nueva + persona_removida), making it the most representative path.
+     */
+    public function test_it_throws_on_unknown_driver_for_json_extract(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/mysql/');
+
+        DB::shouldReceive('getDriverName')->andReturn('mysql');
+
+        // scopeConPersona invokes jsonExtract internally.
+        // The exception fires when building the whereRaw expression, before any DB hit.
+        Cambio::conPersona()->toSql();
     }
 }

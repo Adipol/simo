@@ -7,6 +7,7 @@ namespace Tests\Feature\Models;
 use App\Models\Cambio;
 use App\Models\Fuente;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class CambioMultimodalScopeTest extends TestCase
@@ -93,5 +94,23 @@ class CambioMultimodalScopeTest extends TestCase
 
         $this->assertCount(1, $results);
         $this->assertNotNull($results->first()->imagenes_cambio_json);
+    }
+
+    /**
+     * jsonArrayLength lanza RuntimeException cuando el driver no es pgsql ni sqlite.
+     *
+     * Coverage test: the default branch of the match in jsonArrayLength() MUST throw.
+     * Closes the REQ-1 "unknown driver" spec scenario for this helper.
+     */
+    public function test_it_throws_on_unknown_driver_for_json_array_length(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/mysql/');
+
+        DB::shouldReceive('getDriverName')->andReturn('mysql');
+
+        // scopeMultimodal invokes jsonArrayLength internally.
+        // The exception fires when building the whereRaw expression, before hitting the DB.
+        Cambio::multimodal()->toSql();
     }
 }
