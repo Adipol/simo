@@ -37,17 +37,43 @@ final class LogFuenteRun extends Model
     ];
 
     /**
-     * Valid estado values — app-level validation; no DB check constraint.
+     * All estado values the Python scraper (pep_monitor.py) can write.
+     * Order preserved + extended with the 3 missing healthy/ambiguous states
+     * (`no_change`, `no_content`, `first_snapshot`).
+     *
+     * Note: the predecessor spec also lists `exception` as an exit path; in
+     * the actual Python code this maps to the catch-all `other` branch
+     * (pep_monitor.py:1636). `exception` is a spec alias only — not a
+     * separate runtime value, so it is NOT added here.
      *
      * @var array<string>
      */
     public const VALID_ESTADOS = [
         'success',
+        'no_change',
+        'first_snapshot',
+        'no_content',
         'http_error',
         'timeout',
         'captcha',
         'parse_error',
         'other',
+    ];
+
+    /**
+     * Estado values that count as a healthy run (break the consecutive-failure
+     * streak and qualify as `last_ok_at`). Strict subset of VALID_ESTADOS.
+     *
+     * Single source of truth for healthy-estado semantics — referenced from
+     * DashboardSourceHealthService. Unknown/future states fail safe (counted
+     * as failure until explicitly whitelisted here).
+     *
+     * @var array<string>
+     */
+    public const HEALTHY_ESTADOS = [
+        'success',
+        'no_change',
+        'first_snapshot',
     ];
 
     public function fuente(): BelongsTo

@@ -77,7 +77,7 @@ final class DashboardSourceHealthService
         // Find last ok
         $lastOkAt = null;
         foreach ($runs as $run) {
-            if ($run->estado === 'success') {
+            if (in_array($run->estado, LogFuenteRun::HEALTHY_ESTADOS, true)) {
                 $lastOkAt = new \DateTimeImmutable((string) $run->started_at);
                 break;
             }
@@ -162,7 +162,7 @@ final class DashboardSourceHealthService
      * Falls back to a PHP-grouped approach on SQLite.
      *
      * @param  array<int>  $fuenteIds
-     * @return array<int, array<object>>  keyed by fuente_id
+     * @return array<int, array<object>> keyed by fuente_id
      */
     private function fetchRecentRunsPerFuente(array $fuenteIds, int $limit): array
     {
@@ -268,7 +268,7 @@ final class DashboardSourceHealthService
 
     /**
      * Counts consecutive failures from the tail (newest first).
-     * Stops at first success.
+     * Stops at first healthy estado (see LogFuenteRun::HEALTHY_ESTADOS).
      *
      * @param  array<object>  $runs  ordered newest-first
      */
@@ -277,7 +277,7 @@ final class DashboardSourceHealthService
         $failures = 0;
 
         foreach ($runs as $run) {
-            if ($run->estado === 'success') {
+            if (in_array($run->estado, LogFuenteRun::HEALTHY_ESTADOS, true)) {
                 break;
             }
 
