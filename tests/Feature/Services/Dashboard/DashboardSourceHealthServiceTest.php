@@ -320,6 +320,108 @@ class DashboardSourceHealthServiceTest extends TestCase
         $this->assertLessThan(10, $elapsed, "Warm cache took {$elapsed}ms — must be ≤10ms");
     }
 
+    // ─── T4.11–T4.16: Healthy-estado classification ───────────────────────────
+
+    public function test_single_no_change_run_is_zero_failures_and_status_ok(): void
+    {
+        $fuente = Fuente::factory()->create(['activo' => true]);
+        $now = now();
+
+        $this->createRun($fuente->id, 'no_change', $now->copy()->subMinutes(1));
+
+        $dto = $this->service->getPerSourceStatus($fuente->id);
+
+        $this->assertSame(0, $dto->consecutive_failures);
+        $this->assertSame('ok', $dto->status);
+
+        $summary = $this->service->getSummary();
+        $this->assertSame(1, $summary->ok);
+        $this->assertSame(0, $summary->muertas);
+    }
+
+    public function test_fifteen_consecutive_no_change_runs_remain_ok_not_muerto(): void
+    {
+        $fuente = Fuente::factory()->create(['activo' => true]);
+        $now = now();
+
+        for ($i = 15; $i >= 1; $i--) {
+            $this->createRun($fuente->id, 'no_change', $now->copy()->subMinutes($i));
+        }
+
+        $summary = $this->service->getSummary();
+
+        $this->assertSame(1, $summary->ok);
+        $this->assertSame(0, $summary->muertas);
+        $this->assertSame(0, $summary->degradadas);
+    }
+
+    public function test_first_snapshot_run_is_not_a_failure(): void
+    {
+        $fuente = Fuente::factory()->create(['activo' => true]);
+        $now = now();
+
+        $this->createRun($fuente->id, 'first_snapshot', $now->copy()->subMinutes(1));
+
+        $dto = $this->service->getPerSourceStatus($fuente->id);
+
+        $this->assertSame(0, $dto->consecutive_failures);
+        $this->assertSame('ok', $dto->status);
+    }
+
+    public function test_no_content_run_counts_as_failure(): void
+    {
+        $fuente = Fuente::factory()->create(['activo' => true]);
+        $now = now();
+
+        $this->createRun($fuente->id, 'no_content', $now->copy()->subMinutes(1));
+
+        $dto = $this->service->getPerSourceStatus($fuente->id);
+
+        $this->assertSame(1, $dto->consecutive_failures);
+        $this->assertSame('ok', $dto->status); // 1 < degraded threshold of 3
+    }
+
+    public function test_mixed_sequence_failure_streak_stops_at_first_healthy_estado(): void
+    {
+        $fuente = Fuente::factory()->create(['activo' => true]);
+        $now = now();
+
+        // Insert oldest-first so newest-first order is: http_error(-1m), timeout(-2m), no_change(-3m), http_error(-4m), parse_error(-5m)
+        $this->createRun($fuente->id, 'parse_error', $now->copy()->subMinutes(5));
+        $this->createRun($fuente->id, 'http_error', $now->copy()->subMinutes(4));
+        $this->createRun($fuente->id, 'no_change', $now->copy()->subMinutes(3));
+        $this->createRun($fuente->id, 'timeout', $now->copy()->subMinutes(2));
+        $this->createRun($fuente->id, 'http_error', $now->copy()->subMinutes(1));
+
+        $dto = $this->service->getPerSourceStatus($fuente->id);
+
+        // Algorithm stops at no_change (index 2 newest-first): counts http_error + timeout = 2
+        $this->assertSame(2, $dto->consecutive_failures);
+        $this->assertSame('ok', $dto->status); // 2 < degraded threshold of 3
+    }
+
+    public function test_last_ok_at_is_set_when_most_recent_run_is_no_change(): void
+    {
+        $fuente = Fuente::factory()->create(['activo' => true]);
+        $now = now();
+
+        $oldest = $now->copy()->subMinutes(3);
+        $middle = $now->copy()->subMinutes(2);
+        $newest = $now->copy()->subMinutes(1);
+
+        $this->createRun($fuente->id, 'no_change', $oldest);
+        $this->createRun($fuente->id, 'no_change', $middle);
+        $this->createRun($fuente->id, 'no_change', $newest);
+
+        $dto = $this->service->getPerSourceStatus($fuente->id);
+
+        $this->assertNotNull($dto->last_ok_at);
+        $this->assertSame(
+            $newest->format('Y-m-d H:i:s'),
+            $dto->last_ok_at->format('Y-m-d H:i:s'),
+        );
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
     private function createRun(
