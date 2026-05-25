@@ -264,6 +264,47 @@ class DashboardSummaryServiceTest extends TestCase
         $this->assertSame(3, $triage->pendientes_bajo);
     }
 
+    public function test_sin_leer_excluye_records_no_analizados_y_secundarios(): void
+    {
+        // 2 valid primaries — must count
+        ResultadoScraping::factory()->count(2)->create([
+            'leido'           => false,
+            'descartado'      => false,
+            'archivado_at'    => null,
+            'gemini_analyzed' => true,
+            'secundario_de'   => null,
+        ]);
+
+        // 1 unanalyzed — must NOT count
+        ResultadoScraping::factory()->sinAnalizar()->create([
+            'leido'           => false,
+            'descartado'      => false,
+            'archivado_at'    => null,
+            'secundario_de'   => null,
+        ]);
+
+        // 1 secondary — must NOT count (needs a real primary FK first)
+        $primaryForFk = ResultadoScraping::factory()->create([
+            'leido'           => false,
+            'descartado'      => false,
+            'archivado_at'    => null,
+            'gemini_analyzed' => true,
+            'secundario_de'   => null,
+        ]);
+        ResultadoScraping::factory()->create([
+            'leido'           => false,
+            'descartado'      => false,
+            'archivado_at'    => null,
+            'gemini_analyzed' => true,
+            'secundario_de'   => $primaryForFk->id,
+        ]);
+
+        $snapshot = $this->service->getSnapshot();
+
+        // Expected: 2 valid primaries + 1 primaryForFk (which is also valid) = 3
+        $this->assertSame(3, $snapshot->triage->sin_leer);
+    }
+
     public function test_triage_sparklines_have_exactly_7_elements(): void
     {
         $snapshot = $this->service->getSnapshot();

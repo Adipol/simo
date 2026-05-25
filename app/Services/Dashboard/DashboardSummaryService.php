@@ -179,16 +179,11 @@ final class DashboardSummaryService
             $sparklines[$name] = $this->buildSparkline($dayRows);
         }
 
-        // sin_leer: alineado con el filtro por defecto de la bandeja Resultados
-        // (esconde descartados y archivados — son trabajo ya descartado del usuario).
-        $counts['sin_leer'] = (int) ResultadoScraping::where('leido', false)
-            ->where('descartado', false)
-            ->noArchivado()
-            ->count();
+        // sin_leer: alineado con el filtro por defecto de la bandeja Resultados.
+        // Both count and sparkline derive from the same base query (SSOT).
+        $counts['sin_leer'] = (int) $this->sinLeerBaseQuery()->count();
 
-        $sinLeerRows = ResultadoScraping::where('leido', false)
-            ->where('descartado', false)
-            ->noArchivado()
+        $sinLeerRows = $this->sinLeerBaseQuery()
             ->where('fecha_encontrado', '>=', now()->subDays(7))
             ->selectRaw($this->dateTruncDay('fecha_encontrado').' AS day, COUNT(*) AS cnt')
             ->groupByRaw($this->dateTruncDay('fecha_encontrado'))
@@ -208,6 +203,25 @@ final class DashboardSummaryService
             sparkline_bajo: $sparklines['bajo'],
             sparkline_sin_leer: $sparklines['sin_leer'],
         );
+    }
+
+    /**
+     * Base query for "sin_leer" — mirrors the bandeja default view exactly
+     * (/scraper/resultados?filtroLeido=0 with all other filters at defaults).
+     *
+     * Filters: unread + not discarded + not archived + Gemini-processed + primary only.
+     *
+     * Single source of truth for both the count badge and the 7-day sparkline,
+     * preventing the cross-layer drift bug class (PR #5, PR #11, PR #13).
+     */
+    private function sinLeerBaseQuery(): \Illuminate\Database\Eloquent\Builder
+    {
+        return ResultadoScraping::query()
+            ->where('leido', false)
+            ->where('descartado', false)
+            ->noArchivado()
+            ->where('gemini_analyzed', true)
+            ->onlyPrimaries();
     }
 
     /**

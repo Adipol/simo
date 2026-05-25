@@ -255,6 +255,34 @@ class KpiBandejaConsistencyTest extends TestCase
             'secundario_de'   => null,
         ]);
 
+        // 2 should NOT count: unanalyzed (gemini_analyzed=false)
+        // KPI must exclude (new filter), bandeja default excludes (filtroGemini='')
+        ResultadoScraping::factory()->count(2)->sinAnalizar()->create([
+            'leido'           => false,
+            'descartado'      => false,
+            'archivado_at'    => null,
+            'secundario_de'   => null,
+        ]);
+
+        // 2 should NOT count: secondary articles (secundario_de IS NOT NULL)
+        // KPI must exclude (new filter), bandeja default excludes (filtroGemini='')
+        // Create a real primary first to satisfy the Postgres FK constraint.
+        // This primary IS valid and counts toward the KPI (+1 to expected count).
+        $primaryForFk = ResultadoScraping::factory()->create([
+            'leido'           => false,
+            'descartado'      => false,
+            'archivado_at'    => null,
+            'gemini_analyzed' => true,
+            'secundario_de'   => null,
+        ]);
+        ResultadoScraping::factory()->count(2)->create([
+            'leido'           => false,
+            'descartado'      => false,
+            'archivado_at'    => null,
+            'gemini_analyzed' => true,
+            'secundario_de'   => $primaryForFk->id,
+        ]);
+
         Cache::flush();
 
         $kpiCount = $this->service->getSnapshot()->triage->sin_leer;
@@ -273,7 +301,9 @@ class KpiBandejaConsistencyTest extends TestCase
             ->viewData('resultados')
             ->total();
 
-        $this->assertSame(3, $kpiCount, 'KPI sin_leer count mismatch from expected fixtures');
+        // Expected: 3 original + 1 new primary (FK parent for secondaries) = 4
+        // The 2 unanalyzed and 2 secondaries must be excluded by both KPI and bandeja.
+        $this->assertSame(4, $kpiCount, 'KPI sin_leer count mismatch from expected fixtures');
         $this->assertSame($kpiCount, $bandejaCount,
             'KPI Sin Leer no coincide con bandeja destino — este es el bug "filtroLeido=no era truthy"');
     }
