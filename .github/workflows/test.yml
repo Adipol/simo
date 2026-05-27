@@ -133,3 +133,34 @@ jobs:
       - env:
           APP_ENV: testing
         run: php -d memory_limit=512M artisan test
+
+  test-python:
+    name: test-python
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Pin 3.13 even though the dev host runs 3.14.x. The setup-python
+          # manifest can lag new micro releases and 3.14 wheels are not yet
+          # universal. The test suite is 100% mocked so the interpreter version
+          # is functionally irrelevant — bump this when 3.14 wheels stabilize.
+          python-version: '3.13'
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-py3.13-${{ hashFiles('scripts/website_monitor_pro/requirements.txt') }}
+          restore-keys: pip-${{ runner.os }}-py3.13-
+
+      - name: Install Python dependencies
+        # pytest + pytest-mock are CI-only and intentionally NOT in
+        # requirements.txt to keep production deps lean.
+        run: |
+          pip install -r scripts/website_monitor_pro/requirements.txt
+          pip install pytest pytest-mock
+
+      - name: Run Python tests
+        run: pytest scripts/website_monitor_pro/tests/ -v
