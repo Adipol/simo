@@ -14,11 +14,20 @@ use App\Services\Dashboard\DTOs\PepHighConfidence;
 use App\Services\Dashboard\DTOs\RecentDiscoveriesDTO;
 use App\Services\Dashboard\DTOs\TriageStripDTO;
 use App\Support\PgsqlTimezone;
+use App\Support\SinLeerFilters;
 use Illuminate\Support\Facades\DB;
 
 final class DashboardSummaryService
 {
     private const CACHE_KEY = 'dashboard:summary';
+
+    /**
+     * Riesgo bucket keys used in triageStrip().
+     * Must exactly match AnalisisCambioDTO::RIESGO_VALUES — Contract D guards this.
+     *
+     * @var array<string>
+     */
+    public const RIESGO_BUCKET_KEYS = ['alto', 'medio', 'bajo'];
 
     public function __construct(
         private readonly DashboardCacheManager $cache,
@@ -151,11 +160,10 @@ final class DashboardSummaryService
      */
     private function triageStrip(): TriageStripDTO
     {
-        $buckets = [
-            'alto' => $this->riesgoFilter('alto'),
-            'medio' => $this->riesgoFilter('medio'),
-            'bajo' => $this->riesgoFilter('bajo'),
-        ];
+        $buckets = [];
+        foreach (self::RIESGO_BUCKET_KEYS as $key) {
+            $buckets[$key] = $this->riesgoFilter($key);
+        }
 
         $counts = [];
         $sparklines = [];
@@ -209,19 +217,12 @@ final class DashboardSummaryService
      * Base query for "sin_leer" — mirrors the bandeja default view exactly
      * (/scraper/resultados?filtroLeido=0 with all other filters at defaults).
      *
-     * Filters: unread + not discarded + not archived + Gemini-processed + primary only.
-     *
-     * Single source of truth for both the count badge and the 7-day sparkline,
-     * preventing the cross-layer drift bug class (PR #5, PR #11, PR #13).
+     * Delegates to SinLeerFilters::apply() — the single source of truth for
+     * the 5 canonical filter conditions. Contract C asserts their shape.
      */
     private function sinLeerBaseQuery(): \Illuminate\Database\Eloquent\Builder
     {
-        return ResultadoScraping::query()
-            ->where('leido', false)
-            ->where('descartado', false)
-            ->noArchivado()
-            ->where('gemini_analyzed', true)
-            ->onlyPrimaries();
+        return SinLeerFilters::apply(ResultadoScraping::query());
     }
 
     /**

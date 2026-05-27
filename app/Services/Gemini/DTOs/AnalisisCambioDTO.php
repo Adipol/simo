@@ -8,7 +8,7 @@ use App\Exceptions\Gemini\GeminiInvalidResponseException;
 
 final readonly class AnalisisCambioDTO
 {
-    private const RIESGO_VALUES = ['alto', 'medio', 'bajo'];
+    public const RIESGO_VALUES = ['alto', 'medio', 'bajo'];
 
     /**
      * @param  array<int,array{nombre:string,cargo:?string}>  $personasDetectadas
