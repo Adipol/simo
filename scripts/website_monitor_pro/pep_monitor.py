@@ -20,7 +20,6 @@ import json
 import logging
 import argparse
 import re
-import socket
 import difflib
 import unicodedata
 from typing import Optional
@@ -907,7 +906,7 @@ def mostrar_alerta(fuente: dict, diff: dict, cambio_id: int) -> None:
     texto_alerta = "\n".join(lineas_alerta)
 
     # Imprimir en consola
-    print(texto_alerta)
+    logger.info(texto_alerta)
 
     # Guardar en alertas_cambios.log
     try:
@@ -2057,7 +2056,7 @@ Ejemplos:
                 f"{c['lineas_nuevas']:<10} {c['lineas_quitadas']:<12} "
                 f"{peps_resumen}"
             )
-        print(f"\nUsa 'python pep_monitor.py ver <ID>' para ver el diff completo")
+        print("\nUsa 'python pep_monitor.py ver <ID>' para ver el diff completo")
 
     elif args.command == "ver":
         db = DatabaseManager()
