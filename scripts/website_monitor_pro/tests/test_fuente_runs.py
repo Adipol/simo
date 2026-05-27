@@ -542,3 +542,26 @@ class TestProcesarFuenteTracking:
 
         # finished_at >= started_at (el tiempo avanza)
         assert finished_at >= started_at
+
+    # ── T45: ssl_error path ─────────────────────────────────────
+    def test_procesar_fuente_logs_ssl_error_path(self):
+        """
+        SSLError must be caught BEFORE ConnectionError.
+        Before fix: estado='timeout'. After: estado='ssl_error'.
+        """
+        import requests
+        monitor, db_mock = _make_pep_monitor_with_mock_db()
+        fuente = _make_fuente()
+
+        ssl_err = requests.exceptions.SSLError("CERTIFICATE_VERIFY_FAILED")
+
+        with patch.object(monitor, "_obtener_html_raw", side_effect=ssl_err):
+            monitor.procesar_fuente(fuente)
+
+        db_mock.registrar_fuente_run.assert_called_once()
+        call_kwargs = db_mock.registrar_fuente_run.call_args.kwargs
+        assert call_kwargs["estado"] == "ssl_error", (
+            "SSLError must yield estado='ssl_error', not 'timeout'. "
+            "Ensure SSLError is caught BEFORE ConnectionError."
+        )
+        assert call_kwargs["error_mensaje"] is not None

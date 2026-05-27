@@ -1427,6 +1427,10 @@ class PEPMonitor:
                     http_status = e.response.status_code
                 error_mensaje = str(e)
                 return
+            except requests.exceptions.SSLError as e:        # MUST be before ConnectionError
+                estado = "ssl_error"
+                error_mensaje = str(e)
+                return
             except requests.ConnectionError:
                 logger.warning(f"Sin conexion al verificar: {nombre}")
                 estado = "timeout"

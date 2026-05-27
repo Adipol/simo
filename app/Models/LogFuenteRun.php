@@ -57,6 +57,7 @@ final class LogFuenteRun extends Model
         'timeout',
         'captcha',
         'parse_error',
+        'ssl_error',
         'other',
     ];
 
