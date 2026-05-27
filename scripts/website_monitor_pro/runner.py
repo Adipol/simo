@@ -15,7 +15,6 @@ Para detener: Ctrl+C
 import os
 import sys
 import time
-import signal
 import subprocess
 import logging
 from datetime import datetime, timedelta

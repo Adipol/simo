@@ -16,7 +16,6 @@ Salida tipo:
     SSL_VERIFY_SKIP_HOSTS=www.aetn.gob.bo,cajacordes.org.bo
 """
 import os
-import sys
 from urllib.parse import urlparse
 
 import psycopg2
@@ -61,7 +60,7 @@ def main() -> None:
             )
             status = "OK"
             mensaje = f"HTTP {resp.status_code}"
-        except requests.exceptions.SSLError as e:
+        except requests.exceptions.SSLError:
             status = "FAIL"
             mensaje = "SSL inválido"
             fallidos.append(host)
