@@ -199,6 +199,17 @@ REGLAS DE CLASIFICACIÓN — solo clasificar como PEP si se cumplen TODAS:
 ✓ La persona es el SUJETO ACTIVO del rol público (no fuente, no mencionada de paso)
 Si alguna regla no se cumple → NO incluir esa persona en el array 'personas'.
 NO inventar cargos que el texto no menciona, pero SÍ interpretar descripciones funcionales como cargos (ej: "asume la dirección de ABEN" = Director de ABEN).
+✗ NO clasificar como PEP cuando el cambio de cargo NO se haya concretado, es decir cuando sea:
+  - Demanda de terceros: "piden/exigen/solicitan/promueven la renuncia de [cargo]"
+  - Negación de demanda: "NO piden la renuncia", "rechazan el pedido de renuncia"
+  - Rumor o desmentido: "desmiente rumores sobre su renuncia", "niega que vaya a renunciar"
+  - Hipótesis o debate: "la renuncia del presidente no es la solución"
+  - Falso match semántico: "renuncia" no referida a un cargo público ("renuncia a su comida")
+REGLA ESENCIAL: el evento debe ser CONSUMADO o un acto oficial en curso. Incluí al PEP solo si
+el hecho OCURRIÓ —ya sea expresado como acción propia ("renuncia al cargo", "asumió", "fue
+designado") o como hecho ya sucedido referido en el texto ("tras la renuncia de X"). Si la
+renuncia/designación/cese solo es demandada, rumoreada, negada o hipotética, el cambio NO
+ocurrió: NO incluir a esa persona.
 RULES;
     }
 
@@ -280,6 +291,12 @@ RULES;
 
 [PEP+] "René Soria asume la dirección de ABEN en reemplazo de Hortensia Jiménez"
 → {"personas":[{"nombre":"René Soria","cargo":"Director de ABEN","categoria":"PEP","entidad_tipo":"publica","confianza":90,"evento":"designacion","motivo":"Asume la dirección de agencia estatal"},{"nombre":"Hortensia Jiménez","cargo":"Director de ABEN","categoria":"PEP","entidad_tipo":"publica","confianza":85,"evento":"renuncia","motivo":"Reemplazada en la dirección de agencia estatal"}],"motivo_general":"Cambio de autoridades en agencia estatal ABEN"}
+
+[NEG] "COB y campesinos exigen la renuncia del presidente Rodrigo Paz"
+→ {"personas":[],"motivo_general":"Demanda de renuncia por parte de terceros. El cambio de cargo no se concretó: solo es exigido."}
+
+[NEG] "COD de Tarija no pide la renuncia del presidente Rodrigo Paz"
+→ {"personas":[],"motivo_general":"Negación de un pedido de renuncia. Ningún cambio de cargo efectivo ocurrió."}
 
 NEGATIVES;
     }
