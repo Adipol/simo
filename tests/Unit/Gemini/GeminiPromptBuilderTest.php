@@ -840,4 +840,108 @@ class GeminiPromptBuilderTest extends TestCase
 
         config(['services.gemini.negative_examples_enabled' => null]);
     }
+
+    // ============================================
+    // gemini-pep-effective-change — Consummated Event Rule
+    // ============================================
+
+    /**
+     * buildReglasClasificacion() must contain the CONSUMADO anchor keyword
+     * (4th disqualifying rule — consummated-event gate).
+     * Triangulation skipped: pure string-presence assertion on static prompt content — one possible output.
+     */
+    public function test_reglas_contienen_exclusion_evento_consumado(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test text', 'Bolivia', 'PEP');
+
+        $this->assertStringContainsString('CONSUMADO', $prompt);
+    }
+
+    /**
+     * buildReglasClasificacion() must explicitly list third-party demand as disqualifier.
+     * Triangulation skipped: pure string-presence on static content.
+     */
+    public function test_reglas_contienen_exclusion_demanda_terceros(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test text', 'Bolivia', 'PEP');
+
+        $this->assertStringContainsString('exigen', $prompt);
+        $this->assertStringContainsString('Demanda', $prompt);
+    }
+
+    /**
+     * buildReglasClasificacion() must explicitly list negated demand as disqualifier.
+     * Triangulation skipped: pure string-presence on static content.
+     */
+    public function test_reglas_contienen_exclusion_negacion_pedido(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test text', 'Bolivia', 'PEP');
+
+        $this->assertStringContainsString('NO piden', $prompt);
+    }
+
+    /**
+     * buildReglasClasificacion() must explicitly list rumor/denial as disqualifier.
+     * Triangulation skipped: pure string-presence on static content.
+     */
+    public function test_reglas_contienen_exclusion_rumor_desmentido(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test text', 'Bolivia', 'PEP');
+
+        $this->assertStringContainsString('Rumor', $prompt);
+        $this->assertStringContainsString('desmiente', $prompt);
+    }
+
+    /**
+     * buildReglasClasificacion() must explicitly list hypothesis/debate as disqualifier.
+     * Triangulation skipped: pure string-presence on static content.
+     */
+    public function test_reglas_contienen_exclusion_hipotesis(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test text', 'Bolivia', 'PEP');
+
+        $this->assertStringContainsString('Hipótesis', $prompt);
+    }
+
+    /**
+     * Recall guard: [MULTI] example must remain intact — Carlos Álvarez confirmed resignation
+     * (noun-phrase form, already CONSUMADO) must stay classified as PEP.
+     * Run → expected GREEN at baseline (the [MULTI] block already exists in production).
+     */
+    public function test_multi_guard_carlos_alvarez_remains_pep(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test text', 'Bolivia', 'PEP');
+
+        $this->assertStringContainsString('Carlos Álvarez', $prompt);
+        $this->assertStringContainsString('"evento":"renuncia"', $prompt);
+        $this->assertStringContainsString('"categoria":"PEP"', $prompt);
+    }
+
+    /**
+     * Hardcoded examples must include a [NEG] for the third-party demand pattern
+     * (dominant FP pattern 1): COB/campesinos exigen la renuncia.
+     * Triangulates with test_prompt_contiene_neg_negacion_pedido (different NEG block).
+     */
+    public function test_prompt_contiene_neg_demanda_renuncia(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test text', 'Bolivia', 'PEP');
+
+        $this->assertStringContainsString('[NEG]', $prompt);
+        $this->assertStringContainsString('exigen la renuncia', $prompt);
+        $this->assertStringContainsString('"personas":[]', $prompt);
+    }
+
+    /**
+     * Hardcoded examples must include a [NEG] for the negated-demand pattern
+     * (dominant FP pattern 2): COD de Tarija no pide la renuncia.
+     * Triangulates with test_prompt_contiene_neg_demanda_renuncia (different NEG block).
+     */
+    public function test_prompt_contiene_neg_negacion_pedido(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test text', 'Bolivia', 'PEP');
+
+        $this->assertStringContainsString('[NEG]', $prompt);
+        $this->assertStringContainsString('no pide la renuncia', $prompt);
+        $this->assertStringContainsString('"personas":[]', $prompt);
+    }
 }
