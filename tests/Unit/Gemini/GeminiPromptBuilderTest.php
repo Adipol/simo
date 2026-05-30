@@ -904,17 +904,32 @@ class GeminiPromptBuilderTest extends TestCase
     }
 
     /**
+     * buildReglasClasificacion() must explicitly list false semantic match as disqualifier.
+     * FP pattern 5: "renuncia" not referring to a public office ("renuncia a su comida").
+     * Triangulation skipped: pure string-presence on static content.
+     */
+    public function test_reglas_contienen_exclusion_falso_match(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test text', 'Bolivia', 'PEP');
+
+        $this->assertStringContainsString('Falso match', $prompt);
+        $this->assertStringContainsString('renuncia a su comida', $prompt);
+    }
+
+    /**
      * Recall guard: [MULTI] example must remain intact — Carlos Álvarez confirmed resignation
      * (noun-phrase form, already CONSUMADO) must stay classified as PEP.
-     * Run → expected GREEN at baseline (the [MULTI] block already exists in production).
+     * Asserts the full co-located JSON block for Carlos Álvarez to catch block-level corruption,
+     * not just scattered substrings. Run → expected GREEN at baseline.
      */
     public function test_multi_guard_carlos_alvarez_remains_pep(): void
     {
         $prompt = $this->builder->filtroPEP('Test text', 'Bolivia', 'PEP');
 
-        $this->assertStringContainsString('Carlos Álvarez', $prompt);
-        $this->assertStringContainsString('"evento":"renuncia"', $prompt);
-        $this->assertStringContainsString('"categoria":"PEP"', $prompt);
+        $this->assertStringContainsString(
+            '{"nombre":"Carlos Álvarez","cargo":"Ministro de Economía","categoria":"PEP","entidad_tipo":"publica","confianza":90,"evento":"renuncia","motivo":"Renuncia al cargo de ministro"}',
+            $prompt
+        );
     }
 
     /**
