@@ -586,4 +586,105 @@ class GeminiFiltroServiceTest extends TestCase
         $this->assertTrue($record->gemini_analyzed);
         $this->assertFalse($record->gemini_is_pep);
     }
+
+    // ─── SLP-1: contexto/titulo mismatch fix ─────────────────────────────────
+
+    public function test_contexto_nulo_titulo_con_pep_envia_titulo_en_prompt_a_gemini(): void
+    {
+        config(['services.gemini.api_key' => 'test-key']);
+
+        $record = $this->createRecord([
+            'contexto' => null,
+            'titulo' => 'Viceministro de Economía fue designado',
+            'keyword' => 'viceministro',
+            'pais' => 'BO',
+        ]);
+
+        $capturedPrompt = null;
+
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => function ($request) use (&$capturedPrompt) {
+                $body = $request->data();
+                $capturedPrompt = $body['contents'][0]['parts'][0]['text'] ?? null;
+
+                return Http::response(json_encode([
+                    'candidates' => [[
+                        'content' => [
+                            'parts' => [[
+                                'text' => json_encode([
+                                    'personas' => [],
+                                    'motivo_general' => 'Test',
+                                ]),
+                            ]],
+                        ],
+                    ]],
+                ]), 200);
+            },
+        ]);
+
+        $this->makeService()->analizarLote(collect([$record]));
+
+        $this->assertNotNull($capturedPrompt, 'Http should have been called and prompt captured');
+        $this->assertStringContainsString('Viceministro de Economía', (string) $capturedPrompt);
+    }
+
+    public function test_contexto_presente_usa_contexto_e_ignora_titulo_en_prompt(): void
+    {
+        config(['services.gemini.api_key' => 'test-key']);
+
+        $record = $this->createRecord([
+            'contexto' => 'El ministro firmó el decreto',
+            'titulo' => 'SENTINEL_TITULO',
+            'pais' => 'BO',
+        ]);
+
+        $capturedPrompt = null;
+
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => function ($request) use (&$capturedPrompt) {
+                $body = $request->data();
+                $capturedPrompt = $body['contents'][0]['parts'][0]['text'] ?? null;
+
+                return Http::response(json_encode([
+                    'candidates' => [[
+                        'content' => [
+                            'parts' => [[
+                                'text' => json_encode([
+                                    'personas' => [],
+                                    'motivo_general' => 'Test',
+                                ]),
+                            ]],
+                        ],
+                    ]],
+                ]), 200);
+            },
+        ]);
+
+        $this->makeService()->analizarLote(collect([$record]));
+
+        $this->assertNotNull($capturedPrompt, 'Http should have been called');
+        $this->assertStringContainsString('El ministro firmó el decreto', (string) $capturedPrompt);
+        $this->assertStringNotContainsString('SENTINEL_TITULO', (string) $capturedPrompt);
+    }
+
+    public function test_contexto_nulo_titulo_sin_pep_bloquea_prefiltro_sin_llamar_gemini(): void
+    {
+        config(['services.gemini.api_key' => 'test-key']);
+
+        $record = $this->createRecord([
+            'contexto' => null,
+            'titulo' => 'Partido de fútbol del fin de semana',
+            'pais' => 'BO',
+        ]);
+
+        Http::fake();
+
+        $this->makeService()->analizarLote(collect([$record]));
+
+        Http::assertNothingSent();
+
+        $record->refresh();
+        $this->assertTrue($record->gemini_analyzed);
+        $this->assertFalse($record->gemini_is_pep);
+    }
 }
