@@ -53,7 +53,7 @@ class GeminiFiltroService
 
         try {
             $prompt = $this->builder->filtroPEP(
-                $record->contexto ?? '',
+                $record->contexto ?? $record->titulo ?? '',
                 $record->pais ?? '',
                 $record->categoria ?? '',
             );
