@@ -248,7 +248,12 @@ class AnalizarCambioConProTest extends TestCase
         $this->assertSame([5, 25, 125], $job->backoff);
     }
 
-    public function test_failed_marks_batch_as_analyzed(): void
+    /**
+     * After failed() the records MUST remain gemini_analyzed=false so the
+     * next scheduler dispatch reprocesses them (log-only behaviour, mirroring Flash).
+     * The old implementation stranded records (set analyzed=true without analyzed_at).
+     */
+    public function test_failed_does_not_mutate_records(): void
     {
         config([
             'services.gemini.enabled' => true,
@@ -265,11 +270,14 @@ class AnalizarCambioConProTest extends TestCase
         $c1->refresh();
         $c2->refresh();
 
-        $this->assertTrue($c1->gemini_analyzed);
-        $this->assertTrue($c2->gemini_analyzed);
+        // Records must stay pending — NOT stranded
+        $this->assertFalse($c1->gemini_analyzed, 'failed() must NOT set gemini_analyzed=true');
+        $this->assertFalse($c2->gemini_analyzed, 'failed() must NOT set gemini_analyzed=true');
 
-        // gemini_analisis_json should remain null (no API data)
+        // No Gemini columns mutated
+        $this->assertNull($c1->gemini_analyzed_at);
         $this->assertNull($c1->gemini_analisis_json);
+        $this->assertNull($c2->gemini_analyzed_at);
         $this->assertNull($c2->gemini_analisis_json);
     }
 

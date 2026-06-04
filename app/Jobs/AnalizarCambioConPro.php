@@ -52,15 +52,12 @@ class AnalizarCambioConPro implements ShouldQueue
 
     public function failed(\Throwable $e): void
     {
-        $count = $this->pendingQuery()->limit(10)
-            ->pluck('id')
-            ->tap(fn ($ids) => Cambio::whereIn('id', $ids)->update(['gemini_analyzed' => true]))
-            ->count();
-
+        // Log-only: do NOT mutate records. Records stay gemini_analyzed=false so the
+        // next scheduler dispatch reprocesses them. Mutating here causes stranding
+        // (analyzed=true without analyzed_at), which the Pro recovery command exists to fix.
         Log::channel('gemini')->error('Job AnalizarCambioConPro failed', [
             'exception' => $e::class,
-            'message' => $e->getMessage(),
-            'records_marked' => $count,
+            'message'   => $e->getMessage(),
         ]);
     }
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Gemini;
 
 use App\Exceptions\Gemini\GeminiBadRequestException;
+use App\Exceptions\Gemini\GeminiImageReadException;
 use App\Exceptions\Gemini\GeminiInvalidResponseException;
 use App\Exceptions\Gemini\GeminiPayloadTooLargeException;
 use App\Models\Cambio;
@@ -145,7 +146,9 @@ class GeminiAnalisisService
                 'es_mae' => $dto->esMae,
                 'riesgo' => $dto->riesgo,
             ]);
-        } catch (GeminiInvalidResponseException|GeminiBadRequestException|GeminiPayloadTooLargeException $e) {
+        } catch (GeminiInvalidResponseException|GeminiBadRequestException|GeminiPayloadTooLargeException|GeminiImageReadException $e) {
+            // Tier-1 permanent per-record errors: mark this record failed and continue the loop.
+            // GeminiImageReadException covers TOCTOU image disappearance inside buildRequestBodyMultimodal.
             $this->marcarFallido($cambio, $e);
         }
     }
@@ -242,14 +245,18 @@ class GeminiAnalisisService
 
     private function marcarFallido(Cambio $cambio, \Throwable $e): void
     {
+        // Set gemini_analyzed_at so this record is distinguishable from a failed()-stranded
+        // row (which has analyzed=true but analyzed_at=null). This makes the Stranded predicate
+        // (analyzed=true AND analyzed_at IS NULL) precise: only failed()-stranded rows match.
         $cambio->update([
-            'gemini_analyzed' => true,
+            'gemini_analyzed'    => true,
+            'gemini_analyzed_at' => now(),
         ]);
 
         Log::channel('gemini')->warning('AnalisisCambio fallido, registro marcado', [
             'cambio_id' => $cambio->id,
             'exception' => $e::class,
-            'message' => $e->getMessage(),
+            'message'   => $e->getMessage(),
         ]);
     }
 }
