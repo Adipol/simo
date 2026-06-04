@@ -6,6 +6,7 @@ namespace App\Services\Gemini;
 
 use App\Exceptions\Gemini\GeminiApiKeyMissingException;
 use App\Exceptions\Gemini\GeminiBadRequestException;
+use App\Exceptions\Gemini\GeminiConnectionException;
 use App\Exceptions\Gemini\GeminiException;
 use App\Exceptions\Gemini\GeminiImageReadException;
 use App\Exceptions\Gemini\GeminiInvalidResponseException;
@@ -13,6 +14,7 @@ use App\Exceptions\Gemini\GeminiPayloadTooLargeException;
 use App\Exceptions\Gemini\GeminiRateLimitException;
 use App\Exceptions\Gemini\GeminiServerException;
 use App\Services\Gemini\DTOs\GeminiResponseDTO;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -20,13 +22,30 @@ class GeminiService
 {
     private string $baseUrl;
 
+    /**
+     * HTTP timeout (seconds) for text-only requests (send, sendWithMetadata).
+     * Reads gemini.timeout config — default 45s.
+     */
+    private int $textTimeout;
+
+    /**
+     * HTTP timeout (seconds) for multimodal requests (sendMultimodal, sendMultimodalWithMetadata).
+     * Reads gemini.multimodal_timeout config — default 60s.
+     * Larger because base64-encoded vision payloads are heavier than text prompts.
+     */
+    private int $multimodalTimeout;
+
     public function __construct(
         private ?string $apiKey = null,
-        private ?int $timeout = null,
+        ?int $timeout = null,
     ) {
         $this->apiKey = $apiKey ?? config('services.gemini.api_key');
         $this->baseUrl = config('services.gemini.base_url', 'https://generativelanguage.googleapis.com/v1beta/models/');
-        $this->timeout = $timeout ?? (int) config('services.gemini.timeout', 90);
+
+        // Split timeouts: text vs multimodal.
+        // The legacy $timeout constructor parameter overrides both (test compatibility).
+        $this->textTimeout = $timeout ?? (int) config('services.gemini.timeout', 45);
+        $this->multimodalTimeout = $timeout ?? (int) config('services.gemini.multimodal_timeout', 60);
     }
 
     /**
@@ -39,7 +58,8 @@ class GeminiService
      * @throws GeminiApiKeyMissingException If API key is not configured
      * @throws GeminiRateLimitException On HTTP 429
      * @throws GeminiBadRequestException On HTTP 400
-     * @throws GeminiServerException On HTTP 500+ or connection timeout
+     * @throws GeminiServerException On HTTP 500+
+     * @throws GeminiConnectionException On HTTP connection timeout (Tier-2 transient)
      * @throws GeminiInvalidResponseException If response is not valid JSON
      */
     public function send(string $prompt, string $model): array
@@ -50,9 +70,13 @@ class GeminiService
 
         $url = "{$this->baseUrl}{$model}:generateContent?key={$this->apiKey}";
 
-        $response = Http::timeout($this->timeout)
-            ->when(app()->environment('local'), fn ($http) => $http->withoutVerifying())
-            ->post($url, $this->buildRequestBody($prompt));
+        try {
+            $response = Http::timeout($this->textTimeout)
+                ->when(app()->environment('local'), fn ($http) => $http->withoutVerifying())
+                ->post($url, $this->buildRequestBody($prompt));
+        } catch (ConnectionException $e) {
+            throw $this->wrapConnectionException($e);
+        }
 
         if ($response->failed()) {
             $this->handleError($response->status(), $response->body());
@@ -100,7 +124,8 @@ class GeminiService
      * @throws GeminiPayloadTooLargeException If total payload size exceeds configured limit
      * @throws GeminiRateLimitException On HTTP 429
      * @throws GeminiBadRequestException On HTTP 400
-     * @throws GeminiServerException On HTTP 500+ or connection timeout
+     * @throws GeminiServerException On HTTP 500+
+     * @throws GeminiConnectionException On HTTP connection timeout (Tier-2 transient)
      * @throws GeminiInvalidResponseException If response is not valid JSON
      */
     public function sendMultimodal(string $prompt, array $imagenes, string $model): array
@@ -122,9 +147,13 @@ class GeminiService
 
         $url = "{$this->baseUrl}{$model}:generateContent?key={$this->apiKey}";
 
-        $response = Http::timeout($this->timeout)
-            ->when(app()->environment('local'), fn ($http) => $http->withoutVerifying())
-            ->post($url, $this->buildRequestBodyMultimodal($prompt, $imagenes));
+        try {
+            $response = Http::timeout($this->multimodalTimeout)
+                ->when(app()->environment('local'), fn ($http) => $http->withoutVerifying())
+                ->post($url, $this->buildRequestBodyMultimodal($prompt, $imagenes));
+        } catch (ConnectionException $e) {
+            throw $this->wrapConnectionException($e);
+        }
 
         if ($response->failed()) {
             $this->handleError($response->status(), $response->body());
@@ -174,6 +203,7 @@ class GeminiService
      * @throws GeminiRateLimitException
      * @throws GeminiBadRequestException
      * @throws GeminiServerException
+     * @throws GeminiConnectionException On HTTP connection timeout (Tier-2 transient)
      * @throws GeminiInvalidResponseException
      */
     public function sendWithMetadata(string $prompt, string $model): GeminiResponseDTO
@@ -184,9 +214,13 @@ class GeminiService
 
         $url = "{$this->baseUrl}{$model}:generateContent?key={$this->apiKey}";
 
-        $response = Http::timeout($this->timeout)
-            ->when(app()->environment('local'), fn ($http) => $http->withoutVerifying())
-            ->post($url, $this->buildRequestBody($prompt));
+        try {
+            $response = Http::timeout($this->textTimeout)
+                ->when(app()->environment('local'), fn ($http) => $http->withoutVerifying())
+                ->post($url, $this->buildRequestBody($prompt));
+        } catch (ConnectionException $e) {
+            throw $this->wrapConnectionException($e);
+        }
 
         if ($response->failed()) {
             $this->handleError($response->status(), $response->body());
@@ -234,6 +268,7 @@ class GeminiService
      * @throws GeminiRateLimitException
      * @throws GeminiBadRequestException
      * @throws GeminiServerException
+     * @throws GeminiConnectionException On HTTP connection timeout (Tier-2 transient)
      * @throws GeminiInvalidResponseException
      */
     public function sendMultimodalWithMetadata(string $prompt, array $imagenes, string $model): GeminiResponseDTO
@@ -255,9 +290,13 @@ class GeminiService
 
         $url = "{$this->baseUrl}{$model}:generateContent?key={$this->apiKey}";
 
-        $response = Http::timeout($this->timeout)
-            ->when(app()->environment('local'), fn ($http) => $http->withoutVerifying())
-            ->post($url, $this->buildRequestBodyMultimodal($prompt, $imagenes));
+        try {
+            $response = Http::timeout($this->multimodalTimeout)
+                ->when(app()->environment('local'), fn ($http) => $http->withoutVerifying())
+                ->post($url, $this->buildRequestBodyMultimodal($prompt, $imagenes));
+        } catch (ConnectionException $e) {
+            throw $this->wrapConnectionException($e);
+        }
 
         if ($response->failed()) {
             $this->handleError($response->status(), $response->body());
@@ -373,6 +412,18 @@ class GeminiService
             $status >= 500 => new GeminiServerException("Gemini server error ({$status}): {$body}"),
             default => new GeminiException("Gemini API error ({$status}): {$body}"),
         };
+    }
+
+    /**
+     * Wrap a raw ConnectionException into a typed GeminiConnectionException (Tier-2).
+     *
+     * Preserves the original exception as `$previous` for traceability.
+     * The caller re-throws the wrapped exception so it propagates up to the job,
+     * triggering a retry via the configured backoff schedule.
+     */
+    private function wrapConnectionException(ConnectionException $e): GeminiConnectionException
+    {
+        return new GeminiConnectionException($e->getMessage(), $e);
     }
 
     /**
