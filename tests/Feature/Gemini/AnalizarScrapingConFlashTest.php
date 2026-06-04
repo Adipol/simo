@@ -11,6 +11,7 @@ use App\Models\ResultadoScraping;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
@@ -254,33 +255,67 @@ class AnalizarScrapingConFlashTest extends TestCase
         $this->assertSame([5, 25, 125], $job->backoff);
     }
 
-    public function test_failed_marks_batch_as_analyzed(): void
+    public function test_failed_handler_does_not_strand_records(): void
     {
-        config([
-            'services.gemini.enabled' => true,
-            'services.gemini.api_key' => 'test-key',
-        ]);
-
         $r1 = $this->createRecord();
         $r2 = $this->createRecord();
         $r3 = $this->createRecord();
 
         $job = new AnalizarScrapingConFlash;
-        $job->failed(new \RuntimeException('Simulated failure'));
+        $job->failed(new \RuntimeException('Simulated batch failure'));
 
         $r1->refresh();
         $r2->refresh();
         $r3->refresh();
 
-        // After failed(), ALL pending records should be marked as analyzed
-        // (to prevent infinite re-queue)
-        $this->assertTrue($r1->gemini_analyzed);
-        $this->assertTrue($r2->gemini_analyzed);
-        $this->assertTrue($r3->gemini_analyzed);
+        // After failed(), rows MUST stay gemini_analyzed=false so the pipeline
+        // retries them. The old behavior (setting true) stranded records.
+        $this->assertFalse($r1->gemini_analyzed);
+        $this->assertFalse($r2->gemini_analyzed);
+        $this->assertFalse($r3->gemini_analyzed);
 
-        // But gemini_is_pep should remain null (no API data)
+        // All gemini_* columns must remain NULL (no API data written)
+        $this->assertNull($r1->gemini_analyzed_at);
         $this->assertNull($r1->gemini_is_pep);
+        $this->assertNull($r1->gemini_error_motivo);
+
+        $this->assertNull($r2->gemini_analyzed_at);
         $this->assertNull($r2->gemini_is_pep);
+        $this->assertNull($r2->gemini_error_motivo);
+
+        $this->assertNull($r3->gemini_analyzed_at);
+        $this->assertNull($r3->gemini_is_pep);
+        $this->assertNull($r3->gemini_error_motivo);
+
+        // Rows must still appear in pendingQuery (gemini_analyzed=false)
+        $pendingCount = ResultadoScraping::where('gemini_analyzed', false)->count();
+        $this->assertSame(3, $pendingCount);
+    }
+
+    public function test_failed_handler_logs_exception(): void
+    {
+        $exception = new \RuntimeException('Gemini 429 rate limit');
+
+        $logMock = \Mockery::mock(\Psr\Log\LoggerInterface::class);
+        $logMock->shouldReceive('error')
+            ->once()
+            ->withArgs(function (string $message, array $context) use ($exception): bool {
+                // Must log the full exception object (Laravel serializes it with class+message+trace).
+                // Must NOT log a raw 'trace' string or a plain 'error' string.
+                return str_contains($message, 'AnalizarScrapingConFlash')
+                    && isset($context['exception'])
+                    && $context['exception'] === $exception
+                    && ! isset($context['trace'])
+                    && ! isset($context['error']);
+            });
+
+        Log::shouldReceive('channel')
+            ->with('gemini')
+            ->once()
+            ->andReturn($logMock);
+
+        $job = new AnalizarScrapingConFlash;
+        $job->failed($exception);
     }
 
     public function test_rate_limit_exception_propagates_for_retry(): void

@@ -50,17 +50,10 @@ class AnalizarScrapingConFlash implements ShouldQueue
         }
     }
 
-    public function failed(\Throwable $e): void
+    public function failed(\Throwable $exception): void
     {
-        $count = $this->pendingQuery()->limit(50)
-            ->pluck('id')
-            ->tap(fn ($ids) => ResultadoScraping::whereIn('id', $ids)->update(['gemini_analyzed' => true]))
-            ->count();
-
-        Log::channel('gemini')->error('Job AnalizarScrapingConFlash failed', [
-            'exception' => $e::class,
-            'message' => $e->getMessage(),
-            'records_marked' => $count,
+        Log::channel('gemini')->error('AnalizarScrapingConFlash batch failed', [
+            'exception' => $exception,
         ]);
     }
 
