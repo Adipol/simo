@@ -138,6 +138,26 @@ class Cambio extends Model
     }
 
     /**
+     * Scope: failed()-stranded Cambio records.
+     *
+     * Predicate: gemini_analyzed=true AND gemini_analyzed_at IS NULL.
+     * These rows were marked by the old buggy AnalizarCambioConPro::failed() handler
+     * which set gemini_analyzed=true without setting gemini_analyzed_at, leaving them
+     * permanently excluded from the pending query but never actually processed.
+     *
+     * With the fixed failed() (log-only), new stranded rows are no longer created.
+     * This scope is used only by ProStrandedRecoveryService to reset existing ones.
+     *
+     * Note: terminal-failed rows (from marcarFallido) set BOTH gemini_analyzed=true
+     * AND gemini_analyzed_at=now(), so they do NOT match this predicate.
+     */
+    public function scopeStranded(Builder $query): Builder
+    {
+        return $query->where('gemini_analyzed', true)
+            ->whereNull('gemini_analyzed_at');
+    }
+
+    /**
      * Scope: cambios con persona detectada.
      *
      * Regla:
