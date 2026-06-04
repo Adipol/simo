@@ -294,14 +294,19 @@ class AnalizarScrapingConFlashTest extends TestCase
 
     public function test_failed_handler_logs_exception(): void
     {
+        $exception = new \RuntimeException('Gemini 429 rate limit');
+
         $logMock = \Mockery::mock(\Psr\Log\LoggerInterface::class);
         $logMock->shouldReceive('error')
             ->once()
-            ->withArgs(function (string $message, array $context): bool {
+            ->withArgs(function (string $message, array $context) use ($exception): bool {
+                // Must log the full exception object (Laravel serializes it with class+message+trace).
+                // Must NOT log a raw 'trace' string or a plain 'error' string.
                 return str_contains($message, 'AnalizarScrapingConFlash')
-                    && isset($context['error'])
-                    && $context['error'] === 'Gemini 429 rate limit'
-                    && isset($context['trace']);
+                    && isset($context['exception'])
+                    && $context['exception'] === $exception
+                    && ! isset($context['trace'])
+                    && ! isset($context['error']);
             });
 
         Log::shouldReceive('channel')
@@ -309,7 +314,6 @@ class AnalizarScrapingConFlashTest extends TestCase
             ->once()
             ->andReturn($logMock);
 
-        $exception = new \RuntimeException('Gemini 429 rate limit');
         $job = new AnalizarScrapingConFlash;
         $job->failed($exception);
     }

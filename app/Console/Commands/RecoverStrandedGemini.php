@@ -11,18 +11,38 @@ class RecoverStrandedGemini extends Command
 {
     protected $signature = 'gemini:recover-stranded
                             {--execute : Reset stranded rows and dispatch for re-analysis (default: dry-run)}
-                            {--limit= : Cap the number of rows processed per run}';
+                            {--force  : Skip the production confirmation prompt (for scheduled/non-interactive use)}
+                            {--limit= : Cap the number of rows processed per run (must be a positive integer)}';
 
     protected $description = 'Recover SLP-4 stranded Gemini records (analyzed=true but never processed)';
 
     public function handle(StrandedRecoveryService $service): int
     {
         $execute = (bool) $this->option('execute');
-        $limit = $this->option('limit') !== null
-            ? (int) $this->option('limit')
-            : null;
+        $limitRaw = $this->option('limit');
 
-        if ($execute && app()->isProduction()) {
+        // Validate --limit when provided.
+        $limit = null;
+        if ($limitRaw !== null) {
+            if (! ctype_digit((string) $limitRaw) || (int) $limitRaw < 1) {
+                $this->error('--limit must be a positive integer (>= 1).');
+
+                return self::FAILURE;
+            }
+
+            $limit = (int) $limitRaw;
+        }
+
+        // Guard: warn if Gemini integration is disabled.
+        if ($execute && ! config('services.gemini.enabled')) {
+            $this->warn('Gemini integration is disabled (services.gemini.enabled=false). Rows will NOT be reset.');
+            $this->info('Enable Gemini first, then re-run with --execute.');
+
+            return self::SUCCESS;
+        }
+
+        // Production confirmation gate (skipped by --force for scheduled use).
+        if ($execute && app()->isProduction() && ! $this->option('force')) {
             if (! $this->confirm('This will reset stranded rows and re-queue them for Gemini analysis. Continue?')) {
                 $this->info('Aborted.');
 

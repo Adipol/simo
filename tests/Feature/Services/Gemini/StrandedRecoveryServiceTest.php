@@ -9,6 +9,7 @@ use App\Models\ResultadoScraping;
 use App\Services\Gemini\DTOs\RecoveryReportDTO;
 use App\Services\Gemini\StrandedRecoveryService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
@@ -125,6 +126,7 @@ class StrandedRecoveryServiceTest extends TestCase
     public function test_execute_resets_and_dispatches(): void
     {
         Queue::fake();
+        Config::set('services.gemini.enabled', true);
 
         $s1 = $this->createStranded();
         $s2 = $this->createStranded();
@@ -167,6 +169,7 @@ class StrandedRecoveryServiceTest extends TestCase
     public function test_idempotent_second_run_finds_zero(): void
     {
         Queue::fake();
+        Config::set('services.gemini.enabled', true);
 
         $this->createStranded();
         $this->createStranded();
@@ -197,5 +200,115 @@ class StrandedRecoveryServiceTest extends TestCase
 
         $this->assertSame(2, $report->scanned);
         $this->assertSame(1, $report->relevante);
+    }
+
+    /**
+     * FIX A regression: with a --limit and mixed relevante values the reported
+     * relevante count must correspond to the SAME batch of IDs that are reset,
+     * not a second independently-evaluated LIMIT query (which could return a
+     * different row set on PostgreSQL without ORDER BY).
+     */
+    public function test_limit_with_mixed_relevante_batch_correspondence(): void
+    {
+        Queue::fake();
+        Config::set('services.gemini.enabled', true);
+
+        // Create 4 stranded rows: IDs will be ascending.
+        // The first 2 (lowest IDs) will have relevante=true.
+        $r1 = $this->createStranded(['relevante' => true]);
+        $r2 = $this->createStranded(['relevante' => true]);
+        $r3 = $this->createStranded(['relevante' => false]);
+        $r4 = $this->createStranded(['relevante' => false]);
+
+        $service = new StrandedRecoveryService();
+
+        // Dry-run with limit=2: must report relevante=2 (both rows in the
+        // deterministic batch by ascending ID are relevante=true).
+        $dryReport = $service->recover(execute: false, limit: 2);
+
+        $this->assertSame(2, $dryReport->scanned);
+        $this->assertSame(0, $dryReport->reset);
+        $this->assertSame(0, $dryReport->dispatched);
+        $this->assertSame(2, $dryReport->relevante, 'Dry-run relevante must match the deterministic 2-row batch');
+
+        // Execute with limit=2: the two lowest-ID rows are reset;
+        // relevante in the report must still be 2 (same batch).
+        $execReport = $service->recover(execute: true, limit: 2);
+
+        $this->assertSame(2, $execReport->scanned);
+        $this->assertSame(2, $execReport->reset);
+        $this->assertSame(1, $execReport->dispatched);
+        $this->assertSame(2, $execReport->relevante, 'Execute relevante must match the batch that was actually reset');
+
+        // r1 and r2 were reset; r3 and r4 remain stranded.
+        $r1->refresh();
+        $r2->refresh();
+        $r3->refresh();
+        $r4->refresh();
+        $this->assertFalse($r1->gemini_analyzed, 'Row 1 should be reset');
+        $this->assertFalse($r2->gemini_analyzed, 'Row 2 should be reset');
+        $this->assertTrue($r3->gemini_analyzed, 'Row 3 should remain stranded');
+        $this->assertTrue($r4->gemini_analyzed, 'Row 4 should remain stranded');
+
+        Queue::assertPushed(AnalizarScrapingConFlash::class, 1);
+    }
+
+    /**
+     * FIX B: when the conditional UPDATE resets 0 rows (concurrent drain),
+     * dispatched must be 0 and the job must NOT be pushed.
+     */
+    public function test_execute_with_zero_reset_skips_dispatch(): void
+    {
+        Queue::fake();
+        Config::set('services.gemini.enabled', true);
+
+        // Create a stranded record so scanned > 0 ...
+        $s = $this->createStranded();
+
+        // Simulate concurrent drain: reset the row to non-stranded BEFORE the
+        // service executes (i.e. the UPDATE will match 0 rows).
+        $s->update([
+            'gemini_analyzed'    => false,
+            'gemini_analyzed_at' => null,
+        ]);
+
+        $service = new StrandedRecoveryService();
+        // scanned=0 because the record is no longer stranded.
+        $report = $service->recover(execute: true);
+
+        $this->assertSame(0, $report->scanned);
+        $this->assertSame(0, $report->reset);
+        $this->assertSame(0, $report->dispatched);
+
+        Queue::assertNothingPushed();
+    }
+
+    /**
+     * FIX B (limited path): concurrent drain during the limited path must also
+     * result in dispatched=0.
+     */
+    public function test_execute_limit_with_zero_reset_skips_dispatch(): void
+    {
+        Queue::fake();
+        Config::set('services.gemini.enabled', true);
+
+        // Create a stranded record, then drain it before the service runs.
+        $s = $this->createStranded();
+
+        // Manually force the row out of the stranded state after it will be
+        // plucked as a candidate but before the UPDATE re-checks.
+        // We do this by directly updating to a non-stranded state:
+        $s->update(['gemini_analyzed_at' => now()]);
+
+        $service = new StrandedRecoveryService();
+
+        // The $batchIds pluck will find 0 rows (already not stranded) → reset=0.
+        $report = $service->recover(execute: true, limit: 5);
+
+        $this->assertSame(0, $report->scanned);
+        $this->assertSame(0, $report->reset);
+        $this->assertSame(0, $report->dispatched);
+
+        Queue::assertNothingPushed();
     }
 }

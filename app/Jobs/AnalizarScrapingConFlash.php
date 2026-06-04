@@ -53,8 +53,7 @@ class AnalizarScrapingConFlash implements ShouldQueue
     public function failed(\Throwable $exception): void
     {
         Log::channel('gemini')->error('AnalizarScrapingConFlash batch failed', [
-            'error' => $exception->getMessage(),
-            'trace' => $exception->getTraceAsString(),
+            'exception' => $exception,
         ]);
     }
 
