@@ -151,7 +151,7 @@ class GeminiAnalisisServiceUsageLogTest extends TestCase
     }
 
     // =========================================================================
-    // T65 — Error path: no timestamp, no usage_log row
+    // T65 — Error path: marcarFallido sets timestamp (distinguishes from stranded), no usage_log row
     // =========================================================================
 
     public function test_error_path_does_not_write_timestamp_or_usage_log(): void
@@ -170,10 +170,13 @@ class GeminiAnalisisServiceUsageLogTest extends TestCase
 
         $cambio->refresh();
 
-        // Timestamp must NOT be set
-        $this->assertNull($cambio->gemini_analyzed_at);
+        // Timestamp MUST be set: marcarFallido now sets gemini_analyzed_at=now() so that
+        // terminal-failed rows (analyzed=true + analyzed_at≠null) are distinguishable from
+        // failed()-stranded rows (analyzed=true + analyzed_at IS NULL).
+        // The Pro stranded recovery scope relies on this distinction.
+        $this->assertNotNull($cambio->gemini_analyzed_at, 'marcarFallido must set gemini_analyzed_at');
 
-        // No usage_log row
+        // No usage_log row (no API call succeeded)
         $count = \Illuminate\Support\Facades\DB::table('gemini_usage_log')
             ->where('cambio_id', $cambio->id)
             ->count();
