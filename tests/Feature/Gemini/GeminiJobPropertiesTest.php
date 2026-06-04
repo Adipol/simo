@@ -63,7 +63,7 @@ class GeminiJobPropertiesTest extends TestCase
     }
 
     // =========================================================================
-    // Task 4.3 — Pro: $timeout=300, batch=4
+    // Task 4.3 — Pro: $timeout=300, batch=3
     // =========================================================================
 
     public function test_pro_job_has_timeout_300(): void
@@ -72,7 +72,7 @@ class GeminiJobPropertiesTest extends TestCase
         $this->assertSame(300, $job->timeout);
     }
 
-    public function test_pro_job_batch_processes_max_4_records(): void
+    public function test_pro_job_batch_processes_max_3_records(): void
     {
         config([
             'services.gemini.enabled' => true,
@@ -95,9 +95,9 @@ class GeminiJobPropertiesTest extends TestCase
 
         (new AnalizarCambioConPro)->handle();
 
-        // Batch cap: exactly 4 processed, 6 remain
-        $this->assertSame(4, Cambio::where('gemini_analyzed', true)->count());
-        $this->assertSame(6, Cambio::where('gemini_analyzed', false)->count());
+        // Batch cap: exactly 3 processed, 7 remain
+        $this->assertSame(3, Cambio::where('gemini_analyzed', true)->count());
+        $this->assertSame(7, Cambio::where('gemini_analyzed', false)->count());
 
         Queue::assertPushed(AnalizarCambioConPro::class);
     }

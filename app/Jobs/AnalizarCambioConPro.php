@@ -28,11 +28,19 @@ class AnalizarCambioConPro implements ShouldQueue
      * Job-level PCNTL timeout (seconds). Per Laravel Worker::timeoutForJob this
      * property WINS over the worker --timeout flag.
      *
-     * Timeout pyramid invariant:
-     *   max HTTP call (60s multimodal) < job $timeout (300s) < retry_after (360s, infra)
+     * Per-record worst case: a SINGLE HTTP call — either multimodal (≤60s) OR text-only (≤45s).
+     * The degrade-to-text branch in procesarCambioMultimodal() runs procesarCambio() and returns
+     * immediately (no images path), mutually exclusive with the multimodal HTTP call. A failed
+     * multimodal call is caught and marked as failed with no text retry.
+     * 3-record aggregate worst case: 3 × 60s = 180s, comfortably within this 300s timeout.
      *
-     * Batch math: 4 mixed calls × ceiling 60s = 240s worst-case, 60s headroom.
-     * All-multimodal realistic: 4 × 30-50s ≈ 120-200s. Reduce batch to 3 if P99 > 50s.
+     * This timeout is a non-destructive safety net. On SIGKILL the job retries via the exponential
+     * backoff schedule; failed() is log-only so no records are stranded (they stay
+     * gemini_analyzed=false and are reprocessed on the next scheduler dispatch).
+     * Completed records have gemini_analyzed=true and are excluded by pendingQuery(), so
+     * re-dispatching never reprocesses already-analyzed rows. The gemini_analyzed_at timestamp
+     * is the service-level idempotency guard in analizarLote — both columns are set together
+     * on success.
      *
      * Infra note: DB_QUEUE_RETRY_AFTER=360 MUST be set in the VPS .env — without it the
      * DB queue driver re-releases the running job at 90s causing duplicate dispatch.
@@ -50,8 +58,9 @@ class AnalizarCambioConPro implements ShouldQueue
             return;
         }
 
-        // Batch cap: 4 calls × 60s max = 240s worst-case, within the 300s job timeout.
-        $records = $this->pendingQuery()->limit(4)->get();
+        // Batch cap: 3 records. Per-record worst case is a single HTTP call (≤60s multimodal
+        // or ≤45s text-only); 3-record aggregate worst case ≈ 180s, within the 300s job timeout.
+        $records = $this->pendingQuery()->limit(3)->get();
 
         if ($records->isEmpty()) {
             return;

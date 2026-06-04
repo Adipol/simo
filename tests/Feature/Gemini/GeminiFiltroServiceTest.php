@@ -687,4 +687,63 @@ class GeminiFiltroServiceTest extends TestCase
         $this->assertTrue($record->gemini_analyzed);
         $this->assertFalse($record->gemini_is_pep);
     }
+
+    // ─── FIX 1: marcarFallido must set gemini_analyzed_at ────────────────────
+
+    /**
+     * A Tier-1 terminal failure (GeminiBadRequestException / GeminiInvalidResponseException)
+     * must set gemini_analyzed_at so that:
+     *   1. The idempotency guard in analizarLote skips the record on re-runs.
+     *   2. scopeStranded() (analyzed=true AND analyzed_at IS NULL) never matches it.
+     */
+    public function test_marcarFallido_sets_gemini_analyzed_at(): void
+    {
+        config(['services.gemini.api_key' => 'test-key']);
+
+        $record = $this->createRecord([
+            'gemini_analyzed'    => false,
+            'gemini_analyzed_at' => null,
+        ]);
+
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response(['error' => 'Invalid prompt'], 400),
+        ]);
+
+        $this->makeService()->analizarLote(collect([$record]));
+
+        $record->refresh();
+
+        $this->assertTrue($record->gemini_analyzed, 'gemini_analyzed must be true after Tier-1 failure');
+        $this->assertNotNull($record->gemini_analyzed_at, 'gemini_analyzed_at must be set after Tier-1 failure');
+        $this->assertFalse($record->gemini_is_pep);
+    }
+
+    public function test_marcarFallido_does_not_match_scopeStranded(): void
+    {
+        config(['services.gemini.api_key' => 'test-key']);
+
+        $record = $this->createRecord([
+            'gemini_analyzed'    => false,
+            'gemini_analyzed_at' => null,
+        ]);
+
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response(['error' => 'Invalid prompt'], 400),
+        ]);
+
+        $this->makeService()->analizarLote(collect([$record]));
+
+        $record->refresh();
+
+        // A terminally-failed record must NOT match scopeStranded (which is for recovery only).
+        // scopeStranded predicate: gemini_analyzed=true AND gemini_analyzed_at IS NULL
+        //   AND gemini_is_pep IS NULL AND gemini_error_motivo IS NULL.
+        // After marcarFallido: analyzed_at is set, so it can never match.
+        $strandedIds = ResultadoScraping::stranded()->pluck('id');
+        $this->assertNotContains(
+            $record->id,
+            $strandedIds,
+            'A Tier-1-failed record must not appear in scopeStranded()'
+        );
+    }
 }

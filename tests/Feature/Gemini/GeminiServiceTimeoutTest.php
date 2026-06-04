@@ -16,24 +16,35 @@ use Tests\TestCase;
 class GeminiServiceTimeoutTest extends TestCase
 {
     // -------------------------------------------------------------------------
-    // Task 2.1 — text methods use gemini.timeout (45s)
+    // Task 2.2 — Swap detection: text vs multimodal timeout on the actual HTTP call
+    //
+    // These tests capture the resolved Guzzle 'timeout' option from the Http::fake
+    // callback. Laravel's buildStubHandler passes the full merged options (including
+    // 'timeout') as the second argument to each stub closure, so $options['timeout']
+    // reflects exactly what Http::timeout($n) set. A swap of textTimeout/multimodalTimeout
+    // in either method body will make the captured value fail the assertSame below.
     // -------------------------------------------------------------------------
 
-    public function test_send_uses_text_timeout(): void
+    /**
+     * Verify send() passes the text timeout (45s) as the Guzzle 'timeout' option.
+     *
+     * The Http::fake callback receives ($request, $options) where $options['timeout']
+     * is the resolved value from Http::timeout($this->textTimeout). If a developer
+     * swaps textTimeout/multimodalTimeout in send(), the captured value becomes 60
+     * and this test fails — genuine swap detection without reflection.
+     */
+    public function test_send_applies_textTimeout_not_multimodalTimeout(): void
     {
         config([
-            'services.gemini.api_key'          => 'test-key',
-            'services.gemini.timeout'          => 45,
+            'services.gemini.api_key'            => 'test-key',
+            'services.gemini.timeout'            => 45,
             'services.gemini.multimodal_timeout' => 60,
         ]);
 
         $capturedTimeout = null;
 
-        Http::fake(function ($request) use (&$capturedTimeout) {
-            // The timeout is set on the Guzzle options, not on the HTTP request itself.
-            // We verify it indirectly: if the service sends the request at all it means
-            // it picked up the right config. We also confirm via the service constructor.
-            $capturedTimeout = 'called';
+        Http::fake(function ($request, array $options) use (&$capturedTimeout) {
+            $capturedTimeout = $options['timeout'] ?? null;
 
             return Http::response(json_encode([
                 'candidates' => [[
@@ -50,23 +61,65 @@ class GeminiServiceTimeoutTest extends TestCase
         });
 
         $service = new GeminiService(apiKey: 'test-key');
-        // Verify text timeout is 45 (the config value).
-        $this->assertSame(45, $this->getPrivateProperty($service, 'textTimeout'));
-        // Multimodal timeout must differ.
-        $this->assertSame(60, $this->getPrivateProperty($service, 'multimodalTimeout'));
+        $service->send('test prompt', 'gemini-test-model');
+
+        // The real Guzzle timeout must be the text timeout (45s), not the multimodal (60s).
+        // A swap of $this->textTimeout and $this->multimodalTimeout in send() makes this RED.
+        $this->assertSame(45, $capturedTimeout,
+            'send() must pass textTimeout (45s) to Http::timeout() — got ' . var_export($capturedTimeout, true));
+        Http::assertSentCount(1);
     }
 
-    public function test_send_multimodal_uses_multimodal_timeout(): void
+    /**
+     * Verify sendMultimodal() passes the multimodal timeout (60s) as the Guzzle 'timeout' option.
+     *
+     * A swap of textTimeout/multimodalTimeout in sendMultimodal() causes the captured
+     * value to be 45 instead of 60, making this test fail — genuine swap detection.
+     */
+    public function test_sendMultimodal_applies_multimodalTimeout_not_textTimeout(): void
     {
         config([
-            'services.gemini.api_key'          => 'test-key',
-            'services.gemini.timeout'          => 45,
+            'services.gemini.api_key'            => 'test-key',
+            'services.gemini.timeout'            => 45,
             'services.gemini.multimodal_timeout' => 60,
         ]);
 
-        $service = new GeminiService(apiKey: 'test-key');
-        $this->assertSame(60, $this->getPrivateProperty($service, 'multimodalTimeout'));
-        $this->assertSame(45, $this->getPrivateProperty($service, 'textTimeout'));
+        $capturedTimeout = null;
+
+        Http::fake(function ($request, array $options) use (&$capturedTimeout) {
+            $capturedTimeout = $options['timeout'] ?? null;
+
+            return Http::response(json_encode([
+                'candidates' => [[
+                    'content' => ['parts' => [['text' => json_encode([
+                        'persona_removida' => null,
+                        'persona_nueva'    => null,
+                        'cargo'            => null,
+                        'es_mae'           => false,
+                        'riesgo'           => 'bajo',
+                        'analisis'         => 'ok',
+                    ])]]],
+                ]],
+            ]), 200);
+        });
+
+        $tmpFile = tempnam(sys_get_temp_dir(), 'simo_swap_');
+        file_put_contents($tmpFile, str_repeat('X', 100));
+
+        try {
+            $service = new GeminiService(apiKey: 'test-key');
+            $service->sendMultimodal('test prompt', [
+                ['path' => $tmpFile, 'mime_type' => 'image/png'],
+            ], 'gemini-test-model');
+        } finally {
+            @unlink($tmpFile);
+        }
+
+        // The real Guzzle timeout must be the multimodal timeout (60s), not the text (45s).
+        // A swap of $this->textTimeout and $this->multimodalTimeout in sendMultimodal() makes this RED.
+        $this->assertSame(60, $capturedTimeout,
+            'sendMultimodal() must pass multimodalTimeout (60s) to Http::timeout() — got ' . var_export($capturedTimeout, true));
+        Http::assertSentCount(1);
     }
 
     // -------------------------------------------------------------------------
@@ -162,16 +215,4 @@ class GeminiServiceTimeoutTest extends TestCase
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Helper
-    // -------------------------------------------------------------------------
-
-    private function getPrivateProperty(object $object, string $property): mixed
-    {
-        $reflection = new \ReflectionClass($object);
-        $prop = $reflection->getProperty($property);
-        $prop->setAccessible(true);
-
-        return $prop->getValue($object);
-    }
 }

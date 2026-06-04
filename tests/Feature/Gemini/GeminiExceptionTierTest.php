@@ -112,21 +112,8 @@ class GeminiExceptionTierTest extends TestCase
      * When one multimodal record has an unreadable image (GeminiImageReadException),
      * only THAT record is marked failed; sibling records still process; batch completes.
      *
-     * The unreadable image MUST be passed through resolverImagenes (is_readable=false)
-     * so it never gets into the imagenes list — the cambio degrades to text-only.
-     * But if ALL images pass is_readable but file_get_contents fails inside buildRequestBodyMultimodal,
-     * GeminiImageReadException is thrown and must be caught as Tier-1.
-     *
-     * For this test we simulate the Tier-1 path by creating a cambio whose images
-     * pass is_readable but a fake Http response carries GeminiImageReadException
-     * by mocking the service instead.
-     *
-     * Simpler approach: create a file that IS readable but then remove it after
-     * resolverImagenes runs, simulating a TOCTOU file disappearance.
-     * This triggers the file_get_contents → false → GeminiImageReadException path.
-     *
-     * Record 1: image file deleted between is_readable and file_get_contents → GeminiImageReadException
-     * Record 2: normal text-only cambio → success
+     * GeminiService is mocked to throw GeminiImageReadException on the multimodal call
+     * (Tier-1). The sibling text-only cambio must still complete — the batch does not abort.
      */
     public function test_image_read_exception_marks_record_siblings_continue(): void
     {
@@ -137,25 +124,7 @@ class GeminiExceptionTierTest extends TestCase
 
         $fuente = $this->createFuente();
 
-        // Cambio 1: images pointing to a path that is readable NOW but will fail
-        // during file_get_contents inside buildRequestBodyMultimodal.
-        // We use a path with unreadable permissions instead of TOCTOU (more reliable in CI).
-        $relPath = 'img_cambios/unreadable_test_' . uniqid() . '.png';
-        $absPath = storage_path('app/' . $relPath);
-        @mkdir(dirname($absPath), 0777, true);
-        // Write a file with NO read permissions to trigger file_get_contents=false.
-        file_put_contents($absPath, str_repeat('U', 100));
-        chmod($absPath, 0000);  // no permissions → is_readable=false → skipped by resolverImagenes
-        $this->tempFiles[] = $absPath;
-
-        // With all images skipped by resolverImagenes (unreadable → filtered out), the cambio
-        // degrades gracefully to text-only — this exercises a different path.
-        // To actually test the GeminiImageReadException Tier-1 catch, we need the file to
-        // pass is_readable but then fail file_get_contents. We achieve this by creating a
-        // second image file that IS readable and pair it with an Http::fake that throws.
-        // The cleanest test is to mock GeminiService directly.
-
-        // We mock GeminiService to throw GeminiImageReadException on the first sendMultimodalWithMetadata call.
+        // Mock GeminiService to throw GeminiImageReadException (Tier-1) on the multimodal call.
         $imageReadThrown = false;
         $geminiMock = $this->createMock(GeminiService::class);
         $callCount = 0;

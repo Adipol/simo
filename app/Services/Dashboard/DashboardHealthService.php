@@ -190,6 +190,7 @@ final class DashboardHealthService
                 COUNT(*) AS sample_size
              FROM cambios
              WHERE gemini_analyzed_at IS NOT NULL
+               AND gemini_analisis_json IS NOT NULL
                AND {$fechaTz} >= NOW() - INTERVAL '24 hours'"
         );
 
@@ -222,6 +223,7 @@ final class DashboardHealthService
             "SELECT (julianday(gemini_analyzed_at) - julianday(fecha)) * 86400 AS diff_seconds
              FROM cambios
              WHERE gemini_analyzed_at IS NOT NULL
+               AND gemini_analisis_json IS NOT NULL
                AND fecha >= datetime('now', '-24 hours')
              ORDER BY diff_seconds ASC"
         );

@@ -141,10 +141,14 @@ class GeminiFiltroServiceUsageLogTest extends TestCase
     }
 
     // =========================================================================
-    // T69 — Error path: no timestamp, no usage_log row
+    // T69 — Error path: gemini_analyzed_at IS set (FIX 1), no usage_log row
+    //
+    // FIX 1: marcarFallido now sets gemini_analyzed_at=now() so the idempotency
+    // guard skips the record on re-runs and scopeStranded() never matches it.
+    // The usage_log must still NOT be written on error.
     // =========================================================================
 
-    public function test_error_path_does_not_write_timestamp_or_usage_log(): void
+    public function test_error_path_sets_timestamp_but_does_not_write_usage_log(): void
     {
         config(['services.gemini.api_key' => 'test-key']);
 
@@ -159,9 +163,13 @@ class GeminiFiltroServiceUsageLogTest extends TestCase
 
         $record->refresh();
 
-        // Timestamp must NOT be set
-        $this->assertNull($record->gemini_analyzed_at);
+        // FIX 1: Timestamp MUST be set so the idempotency guard can skip this record.
+        $this->assertNotNull($record->gemini_analyzed_at,
+            'gemini_analyzed_at must be set by marcarFallido (FIX 1: idempotency guard parity)');
+        $this->assertTrue($record->gemini_analyzed);
+        $this->assertFalse($record->gemini_is_pep);
 
+        // usage_log must NOT be written — no successful Gemini response was obtained.
         $count = \Illuminate\Support\Facades\DB::table('gemini_usage_log')
             ->where('resultado_scraping_id', $record->id)
             ->count();

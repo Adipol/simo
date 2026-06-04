@@ -46,6 +46,8 @@ class ProStrandedRecoveryService
                 'scanned'    => $scanned,
                 'reset'      => 0,
                 'dispatched' => 0,
+                // relevante is a Flash-only concept (ResultadoScraping has a relevante column;
+                // Cambio does not). Always 0 here; RecoverStrandedGeminiPro does not display it.
                 'relevante'  => 0,
             ]);
         }
@@ -55,7 +57,7 @@ class ProStrandedRecoveryService
                 'scanned'    => $scanned,
                 'reset'      => 0,
                 'dispatched' => 0,
-                'relevante'  => 0,
+                'relevante'  => 0, // Flash-only field; unused on the Pro path.
             ]);
         }
 
@@ -82,7 +84,7 @@ class ProStrandedRecoveryService
                 'scanned'    => $scanned,
                 'reset'      => 0,
                 'dispatched' => 0,
-                'relevante'  => 0,
+                'relevante'  => 0, // Flash-only field; unused on the Pro path.
             ]);
         }
 
@@ -93,7 +95,7 @@ class ProStrandedRecoveryService
             'scanned'    => $scanned,
             'reset'      => $reset,
             'dispatched' => 1,
-            'relevante'  => 0,
+            'relevante'  => 0, // Flash-only field; unused on the Pro path.
         ]);
     }
 }
