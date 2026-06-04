@@ -102,6 +102,18 @@ class ResultadoScraping extends Model
     }
 
     /**
+     * Stranded records: marked as analyzed by the old buggy failed() handler
+     * but never actually processed by Gemini (all terminal columns NULL).
+     */
+    public function scopeStranded(Builder $query): void
+    {
+        $query->where('gemini_analyzed', true)
+            ->whereNull('gemini_analyzed_at')
+            ->whereNull('gemini_is_pep')
+            ->whereNull('gemini_error_motivo');
+    }
+
+    /**
      * Filter to only secondary (duplicate) articles.
      * Includes articles that have been linked to a primary (secundario_de IS NOT NULL).
      *
