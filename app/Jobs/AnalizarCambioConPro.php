@@ -24,6 +24,21 @@ class AnalizarCambioConPro implements ShouldQueue
 
     public array $backoff = [5, 25, 125];
 
+    /**
+     * Job-level PCNTL timeout (seconds). Per Laravel Worker::timeoutForJob this
+     * property WINS over the worker --timeout flag.
+     *
+     * Timeout pyramid invariant:
+     *   max HTTP call (60s multimodal) < job $timeout (300s) < retry_after (360s, infra)
+     *
+     * Batch math: 4 mixed calls × ceiling 60s = 240s worst-case, 60s headroom.
+     * All-multimodal realistic: 4 × 30-50s ≈ 120-200s. Reduce batch to 3 if P99 > 50s.
+     *
+     * Infra note: DB_QUEUE_RETRY_AFTER=360 MUST be set in the VPS .env — without it the
+     * DB queue driver re-releases the running job at 90s causing duplicate dispatch.
+     */
+    public int $timeout = 300;
+
     public function __construct()
     {
         $this->onQueue('gemini');
@@ -35,7 +50,8 @@ class AnalizarCambioConPro implements ShouldQueue
             return;
         }
 
-        $records = $this->pendingQuery()->limit(10)->get();
+        // Batch cap: 4 calls × 60s max = 240s worst-case, within the 300s job timeout.
+        $records = $this->pendingQuery()->limit(4)->get();
 
         if ($records->isEmpty()) {
             return;

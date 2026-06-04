@@ -24,6 +24,18 @@ class AnalizarScrapingConFlash implements ShouldQueue
 
     public array $backoff = [5, 25, 125];
 
+    /**
+     * Job-level PCNTL timeout (seconds). Per Laravel Worker::timeoutForJob this
+     * property WINS over the worker --timeout flag.
+     *
+     * Timeout pyramid invariant:
+     *   max HTTP call (60s) < job $timeout (300s) < retry_after (360s, set via DB_QUEUE_RETRY_AFTER in infra)
+     *
+     * Infra note: DB_QUEUE_RETRY_AFTER=360 MUST be set in the VPS .env — without it the
+     * DB queue driver re-releases the running job at 90s causing duplicate dispatch.
+     */
+    public int $timeout = 300;
+
     public function __construct()
     {
         $this->onQueue('gemini');
@@ -35,7 +47,8 @@ class AnalizarScrapingConFlash implements ShouldQueue
             return;
         }
 
-        $records = $this->pendingQuery()->limit(50)->get();
+        // Batch cap: 10×~5-10s HTTP calls ≈ 50-100s, well within the 300s job timeout.
+        $records = $this->pendingQuery()->limit(10)->get();
 
         if ($records->isEmpty()) {
             return;

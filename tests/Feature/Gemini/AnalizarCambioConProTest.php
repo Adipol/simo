@@ -111,7 +111,7 @@ class AnalizarCambioConProTest extends TestCase
         $this->assertFalse($c2->gemini_analisis_json['es_mae']);
     }
 
-    public function test_batch_limit_processes_max_10_records(): void
+    public function test_batch_limit_processes_max_4_records(): void
     {
         config([
             'services.gemini.enabled' => true,
@@ -120,8 +120,8 @@ class AnalizarCambioConProTest extends TestCase
 
         $fuente = $this->createFuente();
 
-        // Create 15 pending cambios
-        for ($i = 0; $i < 15; $i++) {
+        // Create 10 pending cambios — only 4 should be processed per batch
+        for ($i = 0; $i < 10; $i++) {
             $this->createCambio($fuente, ['diff_texto' => "-Persona {$i}\n+Nueva {$i}"]);
         }
 
@@ -144,10 +144,10 @@ class AnalizarCambioConProTest extends TestCase
         $job = new AnalizarCambioConPro;
         $job->handle();
 
-        // 10 records should have been processed
-        $this->assertSame(10, Cambio::where('gemini_analyzed', true)->count());
-        // 5 should remain pending
-        $this->assertSame(5, Cambio::where('gemini_analyzed', false)->count());
+        // 4 records should have been processed (batch cap)
+        $this->assertSame(4, Cambio::where('gemini_analyzed', true)->count());
+        // 6 should remain pending
+        $this->assertSame(6, Cambio::where('gemini_analyzed', false)->count());
 
         // Self-dispatch should have been queued
         Queue::assertPushed(AnalizarCambioConPro::class);
