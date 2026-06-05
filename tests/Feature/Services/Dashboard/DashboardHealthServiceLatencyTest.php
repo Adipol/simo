@@ -60,7 +60,11 @@ class DashboardHealthServiceLatencyTest extends TestCase
     }
 
     /**
-     * Create a cambio with a controlled latency between fecha and gemini_analyzed_at.
+     * Create a successfully-analyzed cambio with a controlled latency.
+     *
+     * Sets gemini_analisis_json to a non-null value to mark this as a successful
+     * analysis (same as persistirAnalisis does). The latency query now requires
+     * gemini_analisis_json IS NOT NULL to exclude terminal-failed rows.
      */
     private function createAnalyzedCambio(Fuente $fuente, int $latencySeconds): Cambio
     {
@@ -69,11 +73,12 @@ class DashboardHealthServiceLatencyTest extends TestCase
         $fecha = now()->subSeconds($latencySeconds + 100); // ensure it's within 24h
 
         return Cambio::create([
-            'fuente_id'          => $fuente->id,
-            'fecha'              => $fecha,
-            'diff_texto'         => 'test diff',
-            'gemini_analyzed'    => true,
-            'gemini_analyzed_at' => $fecha->copy()->addSeconds($latencySeconds),
+            'fuente_id'            => $fuente->id,
+            'fecha'                => $fecha,
+            'diff_texto'           => 'test diff',
+            'gemini_analyzed'      => true,
+            'gemini_analyzed_at'   => $fecha->copy()->addSeconds($latencySeconds),
+            'gemini_analisis_json' => ['riesgo' => 'bajo', 'es_mae' => false, 'analisis' => 'ok'],
         ]);
     }
 
@@ -176,5 +181,49 @@ class DashboardHealthServiceLatencyTest extends TestCase
 
         $this->assertTrue($health->latency->available);
         $this->assertSame(10, $health->latency->sample_size);
+    }
+
+    // =========================================================================
+    // FIX 3 — Terminal-failed rows (gemini_analisis_json IS NULL) must be
+    //          excluded from the latency query so failure timing never
+    //          pollutes P50/P95.
+    // =========================================================================
+
+    /**
+     * When Pro's marcarFallido() sets gemini_analyzed_at=now() but leaves
+     * gemini_analisis_json=null, those rows must NOT contribute to the
+     * latency metric. Only rows with gemini_analisis_json IS NOT NULL are
+     * counted (i.e., rows that went through persistirAnalisis successfully).
+     */
+    public function test_pipeline_latency_excludes_terminal_failed_rows(): void
+    {
+        $fuente = $this->createFuente();
+
+        // Create 10 successful cambios with latency ~30s each.
+        for ($i = 1; $i <= 10; $i++) {
+            $this->createAnalyzedCambio($fuente, 30);
+        }
+
+        // Create 5 terminal-failed cambios: gemini_analyzed_at set, but
+        // gemini_analisis_json IS NULL (this is what Pro's marcarFallido produces).
+        for ($i = 0; $i < 5; $i++) {
+            Cambio::flushEventListeners();
+            $fecha = now()->subSeconds(3600 + $i * 10); // within 24h
+            Cambio::create([
+                'fuente_id'            => $fuente->id,
+                'fecha'                => $fecha,
+                'diff_texto'           => 'failed diff',
+                'gemini_analyzed'      => true,
+                'gemini_analyzed_at'   => $fecha->copy()->addSeconds(3), // very short — would skew stats down
+                'gemini_analisis_json' => null,
+            ]);
+        }
+
+        $health = $this->service->getHealth();
+
+        // The 5 failed rows must NOT be counted in the sample.
+        $this->assertTrue($health->latency->available, 'latency must be available (10 successful rows)');
+        $this->assertSame(10, $health->latency->sample_size,
+            'sample_size must count only successful rows (gemini_analisis_json IS NOT NULL)');
     }
 }

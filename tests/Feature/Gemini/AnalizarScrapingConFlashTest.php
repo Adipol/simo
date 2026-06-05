@@ -118,27 +118,23 @@ class AnalizarScrapingConFlashTest extends TestCase
         $this->assertFalse($r3->gemini_is_pep);
     }
 
-    public function test_batch_limit_processes_max_50_records(): void
+    public function test_batch_limit_processes_max_10_records(): void
     {
         config([
             'services.gemini.enabled' => true,
             'services.gemini.api_key' => 'test-key',
         ]);
 
-        // Create 55 pending records
-        for ($i = 0; $i < 55; $i++) {
+        // Create 15 pending records — only 10 should be processed per batch
+        for ($i = 0; $i < 15; $i++) {
             $this->createRecord(['contexto' => "Record {$i}"]);
         }
 
         Http::fake([
             'generativelanguage.googleapis.com/*' => Http::response(
                 $this->fakeGeminiResponse([
-                    'is_pep' => false,
-                    'nombre' => null,
-                    'cargo' => null,
-                    'categoria' => null,
-                    'confianza' => 5,
-                    'motivo' => 'No relevante',
+                    'personas' => [],
+                    'motivo_general' => 'No PEP detected.',
                 ]),
                 200
             ),
@@ -149,15 +145,13 @@ class AnalizarScrapingConFlashTest extends TestCase
         $job = new AnalizarScrapingConFlash;
         $job->handle();
 
-        // 50 records should have been processed
-        $this->assertSame(50, ResultadoScraping::where('gemini_analyzed', true)->count());
+        // 10 records should have been processed (batch cap)
+        $this->assertSame(10, ResultadoScraping::where('gemini_analyzed', true)->count());
         // 5 should remain pending
         $this->assertSame(5, ResultadoScraping::where('gemini_analyzed', false)->count());
 
         // Self-dispatch should have been queued
-        Queue::assertPushed(AnalizarScrapingConFlash::class, function ($job) {
-            return true; // any instance counts
-        });
+        Queue::assertPushed(AnalizarScrapingConFlash::class);
     }
 
     public function test_no_self_dispatch_when_no_more_pending(): void

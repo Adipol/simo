@@ -86,16 +86,19 @@ class DashboardPortabilityTest extends TestCase
 
         $fuente = $this->createFuente();
 
-        // Create 10 cambios with fecha = 20h ago — inside the 24h window in any tz
+        // Create 10 cambios with fecha = 20h ago — inside the 24h window in any tz.
+        // gemini_analisis_json must be non-null to be counted by the latency query
+        // (which excludes terminal-failed rows via AND gemini_analisis_json IS NOT NULL).
         for ($i = 0; $i < 10; $i++) {
             Cambio::flushEventListeners();
             $fecha = Carbon::now()->subHours(20);
             Cambio::create([
-                'fuente_id' => $fuente->id,
-                'fecha' => $fecha,
-                'diff_texto' => 'portability test diff '.$i,
-                'gemini_analyzed' => true,
-                'gemini_analyzed_at' => $fecha->copy()->addMinutes(5),
+                'fuente_id'            => $fuente->id,
+                'fecha'                => $fecha,
+                'diff_texto'           => 'portability test diff '.$i,
+                'gemini_analyzed'      => true,
+                'gemini_analyzed_at'   => $fecha->copy()->addMinutes(5),
+                'gemini_analisis_json' => ['riesgo' => 'bajo', 'es_mae' => false, 'analisis' => 'ok'],
             ]);
         }
 

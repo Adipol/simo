@@ -175,9 +175,13 @@ class GeminiFiltroService
 
     private function marcarFallido(ResultadoScraping $record, \Throwable $e, ?string $motivo = null): void
     {
+        // Set gemini_analyzed_at so the idempotency guard (analizarLote) skips this row
+        // on re-runs, and so scopeStranded() (which requires analyzed_at IS NULL) never
+        // matches a terminally-failed record.
         $record->update([
-            'gemini_analyzed' => true,
-            'gemini_is_pep' => false,
+            'gemini_analyzed'    => true,
+            'gemini_analyzed_at' => now(),
+            'gemini_is_pep'      => false,
             'gemini_error_motivo' => $motivo !== null ? Str::limit($motivo, 500, '') : null,
         ]);
 

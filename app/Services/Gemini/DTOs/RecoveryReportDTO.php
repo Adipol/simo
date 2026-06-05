@@ -10,6 +10,10 @@ final readonly class RecoveryReportDTO
         public int $scanned,
         public int $reset,
         public int $dispatched,
+        /**
+         * Flash-only field. ResultadoScraping has a relevante column; Cambio does not.
+         * Always 0 on the Pro recovery path. RecoverStrandedGeminiPro does not display it.
+         */
         public int $relevante,
     ) {}
 
