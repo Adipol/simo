@@ -200,11 +200,15 @@ REGLAS DE CLASIFICACIÓN — solo clasificar como PEP si se cumplen TODAS:
 Si alguna regla no se cumple → NO incluir esa persona en el array 'personas'.
 NO inventar cargos que el texto no menciona, pero SÍ interpretar descripciones funcionales como cargos (ej: "asume la dirección de ABEN" = Director de ABEN).
 ✗ NO clasificar como PEP cuando el cambio de cargo NO se haya concretado, es decir cuando sea:
-  - Demanda de terceros: "piden/exigen/solicitan/promueven la renuncia de [cargo]"
+  - Demanda de terceros: "piden/exigen/solicitan/promueven la renuncia de [cargo]", o cuando un tercero "demanda la renuncia" del funcionario sin que el cambio ocurra
   - Negación de demanda: "NO piden la renuncia", "rechazan el pedido de renuncia"
+  - Descarte o negación de cambio de estatus: "descarta los rumores de renuncia", "no va a renunciar", "desmiente su cambio de cargo"
   - Rumor o desmentido: "desmiente rumores sobre su renuncia", "niega que vaya a renunciar"
   - Hipótesis o debate: "la renuncia del presidente no es la solución"
   - Falso match semántico: "renuncia" no referida a un cargo público ("renuncia a su comida")
+  - Designación para tarea específica: "designar/nombrar PARA [investigar/fiscalizar/tarea]" ≠ nombramiento a cargo PEP permanente; solo "designado COMO [cargo]" o "asume el cargo de" califica
+  - Asuntos internacionales sin evento local: mención de jefe de estado extranjero sin un evento de cambio de cargo en el país analizado → NO clasificar
+  - "Asume que" figurativo: "asume que el funcionario renunciará" = supone; solo "asume el cargo de" es evento consumado
 REGLA ESENCIAL: el evento debe ser CONSUMADO o un acto oficial en curso. Incluí al PEP solo si
 el hecho OCURRIÓ —ya sea expresado como acción propia ("renuncia al cargo", "asumió", "fue
 designado") o como hecho ya sucedido referido en el texto ("tras la renuncia de X"). Si la
@@ -297,6 +301,27 @@ RULES;
 
 [NEG] "COD de Tarija no pide la renuncia del presidente Rodrigo Paz"
 → {"personas":[],"motivo_general":"Negación de un pedido de renuncia. Ningún cambio de cargo efectivo ocurrió."}
+
+[NEG] "El ministro descartó los rumores de su renuncia y confirmó que continuará en el cargo."
+→ {"personas":[],"motivo_general":"Negación de cambio de cargo. El funcionario descarta la renuncia; no ocurrió ningún cambio."}
+
+[NEG] "La organización sindical demanda la renuncia del ministro de Trabajo por el incumplimiento del acuerdo salarial."
+→ {"personas":[],"motivo_general":"Demanda de terceros. El cambio de cargo no se concretó; solo es exigido por la organización."}
+
+[NEG] "El gobierno designó a la viceministra para investigar las irregularidades detectadas en la licitación pública."
+→ {"personas":[],"motivo_general":"Designación para tarea específica, no nombramiento a un cargo PEP permanente."}
+
+[NEG] "El presidente de Venezuela declaró su apoyo a Bolivia en el conflicto diplomático con Chile."
+→ {"personas":[],"motivo_general":"Declaración internacional. Se menciona un jefe de estado extranjero sin evento de cambio de cargo en el país analizado."}
+
+[NEG] "El analista asume que el gobernador renunciará antes de que finalice el año fiscal."
+→ {"personas":[],"motivo_general":"\"Asume que\" es figurativo (supone). No hay evento consumado de cambio de cargo."}
+
+[PEP+] "Designan a Juan López como viceministro de Medioambiente en reemplazo del titular saliente."
+→ {"personas":[{"nombre":"Juan López","cargo":"Viceministro de Medioambiente","categoria":"PEP","entidad_tipo":"publica","confianza":95,"evento":"designacion","motivo":"Designado formalmente como viceministro"}],"motivo_general":"Nombramiento a cargo PEP de viceministro confirmado"}
+
+[PEP+] "Posesionan al nuevo ministro de Obras Públicas, Carlos Vera, quien asume el cargo en reemplazo de Pedro Ríos. Renuncia el ministro de Economía, Ana Torres, confirmando su salida del gobierno."
+→ {"personas":[{"nombre":"Carlos Vera","cargo":"Ministro de Obras Públicas","categoria":"PEP","entidad_tipo":"publica","confianza":95,"evento":"designacion","motivo":"Posesionado como nuevo ministro"},{"nombre":"Pedro Ríos","cargo":"Ministro de Obras Públicas","categoria":"PEP","entidad_tipo":"publica","confianza":90,"evento":"renuncia","motivo":"Reemplazado en el cargo"},{"nombre":"Ana Torres","cargo":"Ministra de Economía","categoria":"PEP","entidad_tipo":"publica","confianza":92,"evento":"renuncia","motivo":"Renuncia efectiva confirmada al cargo"}],"motivo_general":"Cambios ministeriales consumados: nueva designación y renuncia efectiva"}
 
 NEGATIVES;
     }
