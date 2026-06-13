@@ -53,10 +53,10 @@ class PromptReglasTest extends TestCase
         $this->assertStringContainsString('hospital', $prompt);
     }
 
-    public function test_prompt_tiene_minimo_cuatro_neg(): void
+    public function test_prompt_tiene_minimo_nueve_neg(): void
     {
         $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'PEP-designacion');
-        $this->assertGreaterThanOrEqual(4, substr_count($prompt, '[NEG]'));
+        $this->assertGreaterThanOrEqual(9, substr_count($prompt, '[NEG]'));
     }
 
     public function test_contexto_categoria_crimen(): void
@@ -82,5 +82,67 @@ class PromptReglasTest extends TestCase
     {
         $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'otra');
         $this->assertStringNotContainsString('CONTEXTO DE BÚSQUEDA', $prompt);
+    }
+
+    // --- Phase 1: Recall guard + leak tests (RED until Phase 2/3) ---
+
+    public function test_prompt_contiene_regla_negacion_cambio_estatus(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'PEP-designacion');
+        $this->assertStringContainsString('descarta', $prompt);
+    }
+
+    public function test_prompt_contiene_regla_demandas_pedidos(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'PEP-designacion');
+        $this->assertStringContainsString('demanda la renuncia', $prompt);
+    }
+
+    public function test_prompt_contiene_regla_designar_para_tarea(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'PEP-designacion');
+        $this->assertStringContainsString('designar/nombrar PARA', $prompt);
+    }
+
+    public function test_prompt_contiene_regla_internacional_sin_evento(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'PEP-designacion');
+        $this->assertStringContainsString('jefe de estado extranjero', $prompt);
+    }
+
+    public function test_prompt_contiene_regla_asume_figurativo(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'PEP-designacion');
+        $this->assertStringContainsString('asume que', $prompt);
+    }
+
+    public function test_prompt_recall_guard_designacion_real(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'PEP-designacion');
+        $this->assertStringContainsString('viceministro', $prompt);
+    }
+
+    public function test_prompt_recall_guard_posesion_real(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'PEP-designacion');
+        $this->assertStringContainsString('Posesionan', $prompt);
+    }
+
+    public function test_prompt_recall_guard_renuncia_real(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'PEP-designacion');
+        $this->assertStringContainsString('Renuncia el ministro', $prompt);
+    }
+
+    public function test_prompt_recall_guard_asume_cargo(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'PEP-designacion');
+        $this->assertStringContainsString('asume el cargo', $prompt);
+    }
+
+    public function test_prompt_tiene_minimo_dos_pep_positivos(): void
+    {
+        $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'PEP-designacion');
+        $this->assertGreaterThanOrEqual(2, substr_count($prompt, '[PEP+]'));
     }
 }
