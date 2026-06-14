@@ -655,3 +655,132 @@ class TestMainFlow:
                 runner.main()
 
         mock_ejecutar.assert_not_called()
+
+
+# ════════════════════════════════════════════════════════════════
+# FASE 8: leer_ultimo_ciclo
+# ════════════════════════════════════════════════════════════════
+
+class TestLeerUltimoCiclo:
+
+    def test_returns_most_recent_inicio(self):
+        """leer_ultimo_ciclo returns the inicio datetime from the most recent row."""
+        inicio_dt = datetime(2026, 6, 14, 10, 0, 0)
+        conn = _make_db_mock(row={"inicio": inicio_dt})
+        resultado = runner.leer_ultimo_ciclo(conn)
+        assert resultado == inicio_dt
+
+    def test_returns_none_when_no_rows(self):
+        """leer_ultimo_ciclo returns None when log_scripts has no scraper rows."""
+        conn = _make_db_mock(row=None)
+        resultado = runner.leer_ultimo_ciclo(conn)
+        assert resultado is None
+
+    def test_returns_none_on_db_exception(self):
+        """leer_ultimo_ciclo returns None and does not raise on DB error."""
+        conn = MagicMock()
+        conn.cursor.side_effect = psycopg2.OperationalError("BD caída")
+        resultado = runner.leer_ultimo_ciclo(conn)
+        assert resultado is None
+
+
+# ════════════════════════════════════════════════════════════════
+# FASE 9: startup seed en main()
+# ════════════════════════════════════════════════════════════════
+
+class TestStartupSeed:
+
+    def test_seed_skips_run_when_recent_cycle_in_db(self):
+        """If seed returns a recent run, debe_ejecutar → False; scraper not called."""
+
+        class _Stop(BaseException):
+            pass
+
+        seed_time = datetime.now() - timedelta(minutes=30)
+        cfg = _make_cfg(intervalo_minutos=120, habilitado=True)
+        mock_conn = MagicMock()
+
+        def mock_sleep(_: float) -> None:
+            raise _Stop()
+
+        with patch.object(runner, "get_db_connection", return_value=mock_conn), \
+             patch.object(runner, "leer_config_scraper", return_value=cfg), \
+             patch.object(runner, "leer_ultimo_ciclo", return_value=seed_time), \
+             patch.object(runner, "dia_activo", return_value=True), \
+             patch.object(runner, "en_ventana_horaria", return_value=True), \
+             patch.object(runner, "ejecutar_scraper") as mock_ejecutar, \
+             patch("time.sleep", side_effect=mock_sleep):
+            with pytest.raises(_Stop):
+                runner.main()
+
+        mock_ejecutar.assert_not_called()
+
+    def test_seed_runs_immediately_when_no_history(self):
+        """If seed returns None, debe_ejecutar → True; scraper is called."""
+
+        class _Stop(BaseException):
+            pass
+
+        cfg = _make_cfg(intervalo_minutos=120, habilitado=True)
+        mock_conn = MagicMock()
+        resultado_scraper = {
+            "estado": "ok",
+            "returncode": 0,
+            "duracion": 1.0,
+            "mensaje_error": None,
+        }
+
+        def mock_sleep(_: float) -> None:
+            raise _Stop()
+
+        with patch.object(runner, "get_db_connection", return_value=mock_conn), \
+             patch.object(runner, "leer_config_scraper", return_value=cfg), \
+             patch.object(runner, "leer_ultimo_ciclo", return_value=None), \
+             patch.object(runner, "dia_activo", return_value=True), \
+             patch.object(runner, "en_ventana_horaria", return_value=True), \
+             patch.object(runner, "lock_existe_y_activo", return_value=False), \
+             patch.object(runner, "escribir_lock"), \
+             patch.object(runner, "registrar_log_scripts"), \
+             patch.object(runner, "limpiar_lock"), \
+             patch.object(runner, "ejecutar_scraper", return_value=resultado_scraper) as mock_ejecutar, \
+             patch("time.sleep", side_effect=mock_sleep):
+            with pytest.raises(_Stop):
+                runner.main()
+
+        mock_ejecutar.assert_called_once()
+
+    def test_db_down_at_startup_falls_back_to_none(self):
+        """If DB raises at seed time, runner sets ultimo_ciclo=None and does not crash."""
+
+        class _Stop(BaseException):
+            pass
+
+        cfg = _make_cfg(habilitado=True)
+        mock_conn = MagicMock()
+        call_count = [0]
+
+        def mock_get_db() -> MagicMock:
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise psycopg2.OperationalError("DB down at startup")
+            return mock_conn
+
+        def mock_sleep(_: float) -> None:
+            raise _Stop()
+
+        with patch.object(runner, "get_db_connection", side_effect=mock_get_db), \
+             patch.object(runner, "leer_config_scraper", return_value=cfg), \
+             patch.object(runner, "dia_activo", return_value=True), \
+             patch.object(runner, "en_ventana_horaria", return_value=True), \
+             patch.object(runner, "lock_existe_y_activo", return_value=False), \
+             patch.object(runner, "escribir_lock"), \
+             patch.object(runner, "registrar_log_scripts"), \
+             patch.object(runner, "limpiar_lock"), \
+             patch.object(runner, "ejecutar_scraper", return_value={
+                 "estado": "ok", "returncode": 0, "duracion": 1.0, "mensaje_error": None,
+             }), \
+             patch("time.sleep", side_effect=mock_sleep):
+            with pytest.raises(_Stop):
+                runner.main()
+
+        # Reaching _Stop means no crash — runner survived DB being down at startup

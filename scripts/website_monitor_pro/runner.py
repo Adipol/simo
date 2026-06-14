@@ -294,6 +294,33 @@ def leer_config_scraper(conn: psycopg2.extensions.connection) -> Optional[dict]:
         return None
 
 
+def leer_ultimo_ciclo(conn: psycopg2.extensions.connection) -> Optional[datetime]:
+    """
+    Retorna el inicio más reciente del script 'scraper' desde log_scripts.
+
+    Consulta cualquier estado (ok, error, timeout) para recuperar el último
+    ciclo registrado. Retorna None si no hay filas o si ocurre un error.
+
+    ACOPLE TZ: depende de que log_scripts.inicio sea TIMESTAMP sin zona
+    (naïve), igual que el datetime.now() naïve de debe_ejecutar(). Si una
+    futura migración lo pasa a TIMESTAMPTZ, normalizar acá antes de retornar
+    (de lo contrario la resta en debe_ejecutar lanza TypeError naïve-vs-aware).
+    """
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT inicio FROM log_scripts WHERE script = 'scraper' "
+                "ORDER BY inicio DESC LIMIT 1"
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            return row["inicio"]
+    except Exception as exc:
+        log.error(f"Error leyendo ultimo_ciclo desde log_scripts: {exc}")
+        return None
+
+
 # ════════════════════════════════════════════════════════════════
 # SUBPROCESS EXECUTION
 # ════════════════════════════════════════════════════════════════
@@ -444,6 +471,23 @@ def main() -> None:
     log.info("=" * 60)
 
     ultimo_ciclo: Optional[datetime] = None
+
+    # Seed ultimo_ciclo from log_scripts so the interval survives restarts.
+    try:
+        conn_seed = get_db_connection()
+        try:
+            ultimo_ciclo = leer_ultimo_ciclo(conn_seed)
+            if ultimo_ciclo:
+                log.info(f"Último ciclo recuperado de BD: {ultimo_ciclo}")
+            else:
+                log.info("Sin historial previo — primera ejecución inmediata")
+        finally:
+            conn_seed.close()
+    except Exception as exc:
+        log.warning(
+            f"No se pudo leer ultimo_ciclo al arrancar: {exc} — empezando en None"
+        )
+        ultimo_ciclo = None
 
     while True:
         conn: Optional[psycopg2.extensions.connection] = None
