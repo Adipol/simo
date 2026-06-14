@@ -480,12 +480,12 @@ class TestRegistrarLogScripts:
 
         # Verificar que la SQL tiene INSERT (comparar case-insensitive)
         assert "INSERT INTO LOG_SCRIPTS" in sql.upper().replace("\n", " ")
-        # Verificar parámetros
-        assert params[0] == "scraper"   # script
-        assert params[1] == inicio      # inicio
-        assert params[2] == fin         # fin
-        assert params[3] == "ok"        # estado
-        assert params[4] == 90.0        # duracion_segundos
+        # Verificar parámetros — 'ok' se traduce a 'completado' antes del INSERT
+        assert params[0] == "scraper"      # script
+        assert params[1] == inicio         # inicio
+        assert params[2] == fin            # fin
+        assert params[3] == "completado"   # estado ('ok' → 'completado')
+        assert params[4] == 90.0           # duracion_segundos
 
     # 6.3/6.4 — duración calculada correctamente
     def test_duracion_calculada(self):
@@ -520,6 +520,33 @@ class TestRegistrarLogScripts:
         fin = datetime(2024, 1, 15, 10, 1, 0)
         # No debe lanzar
         runner.registrar_log_scripts(conn, "scraper", inicio, fin, "error")
+
+    # ── Estado mapping tests (log_scripts_estado_check constraint) ──────────
+
+    def _get_inserted_estado(self, runner_estado: str) -> str:
+        """Helper: call registrar_log_scripts with runner_estado, return the estado passed to SQL."""
+        conn, cursor = self._make_cursor_mock()
+        inicio = datetime(2024, 1, 15, 10, 0, 0)
+        fin = datetime(2024, 1, 15, 10, 1, 0)
+        runner.registrar_log_scripts(conn, "scraper", inicio, fin, runner_estado)
+        params = cursor.execute.call_args[0][1]
+        return params[3]  # estado is the 4th parameter
+
+    def test_estado_ok_inserts_completado(self):
+        """Runner estado 'ok' must be mapped to DB-allowed 'completado'."""
+        assert self._get_inserted_estado("ok") == "completado"
+
+    def test_estado_timeout_inserts_interrumpido(self):
+        """Runner estado 'timeout' must be mapped to DB-allowed 'interrumpido'."""
+        assert self._get_inserted_estado("timeout") == "interrumpido"
+
+    def test_estado_error_inserts_error(self):
+        """Runner estado 'error' is already valid; must pass through unchanged."""
+        assert self._get_inserted_estado("error") == "error"
+
+    def test_estado_unknown_inserts_error(self):
+        """Any unknown runner estado must fall back to 'error' (defensive guard)."""
+        assert self._get_inserted_estado("unknown_value") == "error"
 
 
 # ════════════════════════════════════════════════════════════════

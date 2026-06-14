@@ -409,6 +409,16 @@ def ejecutar_scraper(cfg: dict) -> dict:
 # LOG_SCRIPTS
 # ════════════════════════════════════════════════════════════════
 
+
+# Mapping from runner's internal estado values to DB-allowed CHECK constraint values.
+# DB allows: 'iniciado', 'completado', 'error', 'interrumpido'
+_ESTADO_DB_MAP: dict[str, str] = {
+    "ok": "completado",
+    "timeout": "interrumpido",
+    "error": "error",
+}
+
+
 def registrar_log_scripts(
     conn: psycopg2.extensions.connection,
     script: str,
@@ -425,8 +435,13 @@ def registrar_log_scripts(
 
     El runner registra solo inicio/fin/estado/duracion (counts=0).
     El scraper main.py inserta su propia fila con counts reales.
+
+    El estado interno del runner ('ok', 'timeout', 'error') se traduce al
+    vocabulario permitido por log_scripts_estado_check antes del INSERT.
     """
     duracion_segundos = (fin - inicio).total_seconds()
+    # Translate to DB-allowed values; unknown states fall back to 'error'
+    estado_db = _ESTADO_DB_MAP.get(estado, "error")
 
     try:
         with conn.cursor() as cur:
@@ -442,7 +457,7 @@ def registrar_log_scripts(
                     script,
                     inicio,
                     fin,
-                    estado,
+                    estado_db,
                     duracion_segundos,
                     items_procesados,
                     items_resultado,
