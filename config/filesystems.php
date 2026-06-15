@@ -56,6 +56,17 @@ return [
             'report' => false,
         ],
 
+        // seam — OFF by default, never main VPS
+        // Disk for archiving Gaceta Oficial decree PDFs.
+        // PDF download is disabled in Slice 1 (config/gaceta.php pdf.enabled = false).
+        // Driver is env-driven so a future slice can switch to 's3' without code changes.
+        'gaceta_pdf' => [
+            'driver' => env('GACETA_PDF_DRIVER', 'local'),
+            'root'   => storage_path('app/gaceta_pdf'),
+            'throw'  => false,
+            'report' => false,
+        ],
+
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),
