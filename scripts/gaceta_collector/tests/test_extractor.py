@@ -311,3 +311,60 @@ class TestExtractorAllowlistGoverningVerb:
 
         assert result.estado_extraccion == "procesado"
         assert len(result.eventos) == 1
+
+
+class TestExtractorIncisoUppercaseOnly:
+    """_RE_INCISO must NOT split on lowercase roman tokens embedded mid-sumario.
+
+    Real Gaceta incisos are always uppercase (I., II., III.). A lowercase 'v.'
+    that appears as part of a district name (e.g. 'Distrito v. de La Paz') must
+    NOT trigger the inciso splitter, which would cut the segment before the
+    terminating period and cause the first appointment to be silently dropped.
+
+    These tests FAIL before the fix because _RE_INCISO uses re.IGNORECASE, so
+    lowercase 'v.' is treated as a roman numeral separator.
+    """
+
+    def test_lowercase_roman_mid_sumario_extracts_both_appointments(self) -> None:
+        """
+        Lowercase 'v.' embedded in a district name must NOT split the sumario.
+        Both ANA PEREZ and LUIS ROCHA must be extracted as two separate eventos.
+
+        RED: currently only LUIS ROCHA is extracted because the spurious split
+        on 'v.' leaves ANA PEREZ's segment without a terminating '.', so
+        _RE_APPOINTMENT fails to match it.
+        """
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        sumario = (
+            "Designa a la ciudadana ANA PEREZ como Directora del Distrito v. de La Paz, "
+            "y al ciudadano LUIS ROCHA como Director."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 2
+        nombres = {ev["persona_nombre"] for ev in result.eventos}
+        assert "ANA PEREZ" in nombres
+        assert "LUIS ROCHA" in nombres
+
+    def test_uppercase_incisos_still_split_correctly_no_regression(self) -> None:
+        """
+        Regression guard: uppercase I./II. incisos must still produce two eventos
+        after the IGNORECASE fix. Verifies the fix does not break the core
+        multi-appointment flow.
+        """
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        sumario = (
+            "Designa a las siguientes personas: "
+            "I. A la ciudadana ANA MARIA FLORES VEGA como Ministra de Salud. "
+            "II. Al ciudadano CARLOS ANTONIO MENDEZ PEREZ como Ministro de Economía."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 2
+        names = [ev["persona_nombre"] for ev in result.eventos]
+        assert any("ANA MARIA FLORES VEGA" in n for n in names)
+        assert any("CARLOS ANTONIO MENDEZ PEREZ" in n for n in names)

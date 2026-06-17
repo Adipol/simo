@@ -230,6 +230,36 @@ class TestRunCycleErrorBranch:
         # The cycle surfaces the error (existing outer-catch behavior preserved)
         assert result.estado == "error"
         assert "mid-norma" in (result.mensaje_error or "")
+        # ITEM 1: autocommit must be restored to its pre-call value after rollback
+        assert mock_conn.autocommit == True  # noqa: E712
+        # ITEM 3: normas_nuevas must NOT be incremented when commit never happens
+        assert result.normas_nuevas == 0
+
+    def test_duplicate_norma_restores_autocommit(self) -> None:
+        """
+        ITEM 1: When upsert_norma returns None (duplicate-skip path), autocommit
+        must be restored to its pre-call value.  Guards against a regression where
+        conn.autocommit stays False after the rollback+continue branch.
+        """
+        from main import run_cycle
+
+        mock_conn = MagicMock()
+        mock_conn.autocommit = True  # matches what main() sets
+
+        mock_repo = MagicMock()
+        mock_repo.get_ultimo_gaceta_id.return_value = None
+        mock_repo.upsert_norma.return_value = None  # all duplicates → skip path
+
+        mock_client = MagicMock()
+        mock_client.get.return_value = FIXTURE_HTML
+
+        with patch("main.GacetaRepository", return_value=mock_repo), \
+             patch("main.GacetaClient", return_value=mock_client), \
+             patch("main._log_run"):
+            run_cycle(conn=mock_conn, pais="BO", max_pages=1)
+
+        # autocommit must be back to the value it had before run_cycle touched it
+        assert mock_conn.autocommit == True  # noqa: E712
 
     def test_partial_failure_still_logs(self) -> None:
         """Repo error mid-cycle: result.estado='error', _log_run called with error result."""

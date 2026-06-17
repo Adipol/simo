@@ -153,8 +153,6 @@ def run_cycle(
                         log.debug(f"Norma {gid} duplicate — skipping events")
                         continue
 
-                    result.normas_nuevas += 1
-
                     if extract_result.eventos:
                         n_inserted = repo.insert_eventos(
                             norma_id=norma_id,
@@ -165,6 +163,9 @@ def run_cycle(
 
                     repo.update_estado_extraccion(norma_id, extract_result.estado_extraccion)
                     conn.commit()
+                    # Increment only after a successful commit — ensures the counter
+                    # never over-reports when the per-norma transaction is rolled back.
+                    result.normas_nuevas += 1
                     conn.autocommit = prev_autocommit
 
                 except Exception:

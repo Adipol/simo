@@ -55,9 +55,13 @@ _RE_APPOINTMENT = re.compile(
 )
 
 # Roman numeral inciso separator: I. / II. / III. etc.
+# Uppercase only — real Gaceta incisos are always uppercase.
+# Dropping re.IGNORECASE prevents lowercase tokens embedded in names or
+# district designations (e.g. "Distrito v. de La Paz") from being mistaken
+# for inciso separators, which would split the segment before the terminating
+# period and silently drop the preceding appointment.
 _RE_INCISO = re.compile(
     r"\b(I{1,3}V?|VI{0,3}|IX|IV|V|X)\.\s+",
-    re.IGNORECASE,
 )
 
 # INTERINO detection (anywhere in the sumario)
@@ -121,13 +125,17 @@ def _extract_appointments(sumario: str) -> list:
     Handles:
     - Single appointment (no incisos)
     - Multiple appointments separated by roman numeral incisos (I./II./III.)
+    - Multiple appointments within the same inciso segment (e.g. co-appointments
+      joined by conjunction without a dedicated inciso for each name)
+
+    Uses finditer on _RE_APPOINTMENT per segment so that every matching
+    appointment is captured, not just the first one found by search().
     """
-    # Try splitting by incisos first
     segments = _split_by_incisos(sumario)
     eventos = []
     for segment in segments:
-        ev = _parse_single_appointment(segment, sumario)
-        if ev is not None:
+        for match in _RE_APPOINTMENT.finditer(segment):
+            ev = _build_evento_from_match(match, sumario)
             eventos.append(ev)
     return eventos
 
@@ -149,20 +157,17 @@ def _split_by_incisos(sumario: str) -> list:
     return segments if segments else [sumario]
 
 
-def _parse_single_appointment(segment: str, full_sumario: str) -> Optional[dict]:
+def _build_evento_from_match(match, full_sumario: str) -> dict:
     """
-    Parse a single appointment from a text segment.
-    Returns a dict or None if no appointment is found.
-    """
-    match = _RE_APPOINTMENT.search(segment)
-    if match is None:
-        return None
+    Build an appointment event dict from a regex match object.
 
+    Shared by _extract_appointments (via finditer) and _parse_single_appointment.
+    INTERINO is resolved against the full sumario so it applies to every
+    appointment regardless of which inciso segment the match came from.
+    """
     persona_nombre = match.group("nombre").strip()
     cargo = match.group("cargo").strip()
     entidad = (match.group("entidad") or "").strip() or None
-
-    # INTERINO is detected in the full sumario (applies to any segment)
     interino = bool(_RE_INTERINO.search(full_sumario))
 
     return {
@@ -175,6 +180,21 @@ def _parse_single_appointment(segment: str, full_sumario: str) -> Optional[dict]
         "interino": interino,
         "estado_revision": "pendiente",
     }
+
+
+def _parse_single_appointment(segment: str, full_sumario: str) -> Optional[dict]:
+    """
+    Parse the first appointment from a text segment.
+    Returns a dict or None if no appointment is found.
+
+    Note: _extract_appointments uses finditer (not this function) to capture
+    all appointments in a segment. This function is kept for callers that
+    need only the first match.
+    """
+    match = _RE_APPOINTMENT.search(segment)
+    if match is None:
+        return None
+    return _build_evento_from_match(match, full_sumario)
 
 
 def _normalize_name(name: str) -> str:
