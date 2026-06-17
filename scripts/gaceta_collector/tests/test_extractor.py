@@ -116,6 +116,169 @@ class TestExtractorMultipleIncisos:
         assert any("CARLOS ANTONIO MENDEZ PEREZ" in n for n in names)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# FIX A1 — Completeness guard (JD Round 4)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestExtractorCompletenessGuard:
+    """FIX A1: Incomplete extraction routes to requiere_revision, not procesado.
+
+    Contract: when the sumario has more ciudadano/ciudadana singular references
+    than extracted eventos, return eventos=[], estado=requiere_revision so that
+    PR3 (human review queue) can re-extract from scratch.
+
+    This closes the silent-drop class: a partial extraction that marks procesado
+    makes the dropped appointment invisible to operators.
+    """
+
+    def test_partial_name_breaks_regex_routes_to_requiere_revision(self) -> None:
+        """
+        JUAN P. PEREZ has a middle initial ('P.') that breaks _RE_APPOINTMENT.
+        Only ANA ROCHA extracts → 1 evento, but 2 ciudadano/ciudadana refs.
+        Incomplete → requiere_revision, eventos=[].
+        RED: currently returns procesado with 1 evento (silent drop).
+        """
+        from core.extractor import extract_eventos, ESTADO_REQUIERE_REVISION
+
+        sumario = (
+            "Designa al ciudadano JUAN P. PEREZ como Ministro de Salud, "
+            "y a la ciudadana ANA ROCHA como Ministra de Economía."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == ESTADO_REQUIERE_REVISION
+        assert result.eventos == []
+
+    def test_two_clean_appointments_both_parse_returns_procesado(self) -> None:
+        """
+        Both names parse cleanly (no middle initial). 2 refs, 2 extracted → procesado.
+        Regression guard: the completeness check must NOT break valid multi-extraction.
+        """
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        sumario = (
+            "Designa al ciudadano JUAN PEREZ como Ministro de Salud, "
+            "y a la ciudadana ANA ROCHA como Ministra de Economía."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 2
+        names = {ev["persona_nombre"] for ev in result.eventos}
+        assert any("JUAN PEREZ" in n for n in names)
+        assert any("ANA ROCHA" in n for n in names)
+
+    def test_single_clean_appointment_returns_procesado_no_regression(self) -> None:
+        """Single clean appointment: 1 ref, 1 extracted → procesado (no regression)."""
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        result = extract_eventos(
+            "Designa al ciudadano PEDRO QUISPE como Ministro de Educación."
+        )
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 1
+        assert "PEDRO QUISPE" in result.eventos[0]["persona_nombre"]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FIX A2 — Per-appointment INTERINO (JD Round 4)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestExtractorPerAppointmentInterino:
+    """FIX A2: INTERINO must be scoped to the appointment that carries it.
+
+    Root cause: _build_evento_from_match computes interino from the full sumario
+    via _RE_INTERINO, so in a multi-appointment decree where only one person is
+    INTERINO, ALL appointments incorrectly receive interino=True.
+
+    Fix: capture INTERINO via a named group in _RE_APPOINTMENT; resolve per match.
+    """
+
+    def test_mixed_interino_inciso_first_interino_second_not(self) -> None:
+        """
+        I. JUAN PEREZ is INTERINO Ministro. II. ANA ROCHA is plain Ministra.
+        After fix: JUAN interino=True, ANA interino=False.
+        RED: currently BOTH get interino=True because full-sumario scan hits INTERINO.
+        """
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        sumario = (
+            "Designa: "
+            "I. Al ciudadano JUAN PEREZ como INTERINO Ministro de Salud. "
+            "II. A la ciudadana ANA ROCHA como Ministra de Economía."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 2
+
+        by_name = {ev["persona_nombre"]: ev for ev in result.eventos}
+        assert by_name["JUAN PEREZ"]["interino"] is True
+        assert by_name["ANA ROCHA"]["interino"] is False
+
+    def test_single_interino_appointment_still_true(self) -> None:
+        """Single INTERINO appointment → interino=True (no regression)."""
+        from core.extractor import extract_eventos
+
+        result = extract_eventos(
+            "Designa al ciudadano LUIS MAMANI como INTERINO Viceministro de Obras."
+        )
+
+        assert result.estado_extraccion == "procesado"
+        assert result.eventos[0]["interino"] is True
+
+    def test_both_appointments_non_interino_both_false(self) -> None:
+        """Two clean appointments, neither INTERINO → both interino=False."""
+        from core.extractor import extract_eventos
+
+        sumario = (
+            "Designa: "
+            "I. Al ciudadano CARLOS MENDEZ como Ministro de Economía. "
+            "II. A la ciudadana ROSA VEGA como Ministra de Salud."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == "procesado"
+        assert all(ev["interino"] is False for ev in result.eventos)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FIX A3 — finditer over-extraction safety (JD Round 4)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestExtractorFinditerNoOverExtraction:
+    """FIX A3: finditer must not produce duplicates or phantom/partial names.
+
+    Verifies that the finditer-based extraction in _extract_appointments emits
+    exactly the correct distinct eventos for a multi-appointment same-segment
+    sumario — no duplicates, no phantom names from partial regex matches.
+    """
+
+    def test_two_appointments_same_segment_no_duplicates_no_phantoms(self) -> None:
+        """
+        Two appointments in the same segment (no incisos), joined by conjunction.
+        Must produce exactly 2 distinct eventos with the correct full names.
+        """
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        sumario = (
+            "Designa al ciudadano ABEL MAMANI QUISPE como Director Regional, "
+            "y al ciudadano CARLOS VEGA PEREZ como Subdirector Nacional."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 2
+
+        names = [ev["persona_nombre"] for ev in result.eventos]
+        # No duplicates
+        assert len(set(names)) == 2
+        # Correct full names, no partial captures
+        assert any("ABEL MAMANI QUISPE" in n for n in names)
+        assert any("CARLOS VEGA PEREZ" in n for n in names)
+
+
 class TestExtractorBulkRequireDetalle:
     """Bulk sumarios without individual names → requiere_detalle."""
 

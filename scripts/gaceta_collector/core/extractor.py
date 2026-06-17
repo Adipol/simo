@@ -19,7 +19,6 @@ Design decisions (from SDD design artifact):
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 # ── Estado constants ──────────────────────────────────────────────────────────
@@ -45,14 +44,23 @@ _RE_DESIGNA_TRIGGER = re.compile(
 )
 
 # Core extraction pattern (from design doc).
-# Groups: nombre, cargo, entidad (optional)
+# Groups: nombre, interino (per-appointment capture), cargo, entidad (optional)
+# FIX A2: capture INTERINO as a named group so it is resolved per-match, not
+# against the full sumario. This prevents a leading INTERINO in one inciso from
+# propagating to subsequent appointments that do not carry the flag.
 _RE_APPOINTMENT = re.compile(
     r"(?:al?)\s+ciudadan[oa]\s+"
     r"(?P<nombre>[A-ZÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ][A-ZÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕ\s]+?)"
-    r"\s+como\s+(?:INTERINO\s+)?(?P<cargo>[A-ZÁÉÍÓÚÑÜA-Za-záéíóúñ][^\.,\n;]+?)"
+    r"\s+como\s+(?P<interino>INTERINO\s+)?(?P<cargo>[A-ZÁÉÍÓÚÑÜA-Za-záéíóúñ][^\.,\n;]+?)"
     r"(?:\s+de\s+(?P<entidad>[^\.,\n;]+?))?[,\.]",
     re.IGNORECASE | re.UNICODE,
 )
+
+# Singular ciudadano/ciudadana reference counter for the completeness guard.
+# Matches ONLY singular forms; plural 'ciudadanos'/'ciudadanas' are already
+# handled as bulk signals and must not be counted as individual references.
+# FIX A1: used by _count_appointment_refs().
+_RE_APPOINTMENT_REF = re.compile(r"\bciudadan[oa]\b", re.IGNORECASE | re.UNICODE)
 
 # Roman numeral inciso separator: I. / II. / III. etc.
 # Uppercase only — real Gaceta incisos are always uppercase.
@@ -113,6 +121,16 @@ def extract_eventos(sumario: str) -> ExtractorResult:
         # Could not extract names — bulk or unstructured summary.
         return ExtractorResult(eventos=[], estado_extraccion=ESTADO_REQUIERE_DETALLE)
 
+    # FIX A1: completeness guard.
+    # Count singular ciudadano/ciudadana references in the sumario.  If fewer
+    # eventos were extracted than references found, at least one appointment was
+    # silently dropped (e.g. a name with a middle initial that breaks the regex).
+    # Route to requiere_revision so PR3 can re-extract from scratch — never
+    # mark procesado when an appointment reference was not extracted.
+    ref_count = _count_appointment_refs(sumario)
+    if len(eventos) < ref_count:
+        return ExtractorResult(eventos=[], estado_extraccion=ESTADO_REQUIERE_REVISION)
+
     return ExtractorResult(eventos=eventos, estado_extraccion=ESTADO_PROCESADO)
 
 
@@ -161,14 +179,16 @@ def _build_evento_from_match(match, full_sumario: str) -> dict:
     """
     Build an appointment event dict from a regex match object.
 
-    Shared by _extract_appointments (via finditer) and _parse_single_appointment.
-    INTERINO is resolved against the full sumario so it applies to every
-    appointment regardless of which inciso segment the match came from.
+    FIX A2: INTERINO is now resolved from the per-match named group 'interino'
+    captured by _RE_APPOINTMENT.  This ensures that only the appointment whose
+    cargo is preceded by 'INTERINO' receives interino=True.  The full-sumario
+    scan via _RE_INTERINO was removed from this path to prevent cross-appointment
+    contamination in multi-appointment decrees.
     """
     persona_nombre = match.group("nombre").strip()
     cargo = match.group("cargo").strip()
     entidad = (match.group("entidad") or "").strip() or None
-    interino = bool(_RE_INTERINO.search(full_sumario))
+    interino = bool(match.group("interino"))
 
     return {
         "persona_nombre": persona_nombre,
@@ -182,19 +202,16 @@ def _build_evento_from_match(match, full_sumario: str) -> dict:
     }
 
 
-def _parse_single_appointment(segment: str, full_sumario: str) -> Optional[dict]:
+def _count_appointment_refs(sumario: str) -> int:
     """
-    Parse the first appointment from a text segment.
-    Returns a dict or None if no appointment is found.
+    Count singular ciudadano/ciudadana references in the sumario.
 
-    Note: _extract_appointments uses finditer (not this function) to capture
-    all appointments in a segment. This function is kept for callers that
-    need only the first match.
+    FIX A1: used by the completeness guard in extract_eventos.
+    Only singular forms are counted; plural 'ciudadanos'/'ciudadanas' are
+    already handled as bulk signals (requiere_detalle path) and are NOT
+    individual appointment references.
     """
-    match = _RE_APPOINTMENT.search(segment)
-    if match is None:
-        return None
-    return _build_evento_from_match(match, full_sumario)
+    return len(_RE_APPOINTMENT_REF.findall(sumario))
 
 
 def _normalize_name(name: str) -> str:
