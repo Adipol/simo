@@ -15,6 +15,16 @@ Design decisions (from SDD design artifact):
 - Multiple appointments via roman numeral incisos (I./II./III.) → multiple eventos.
 - Never silently drops a norma — every case is classified.
 - Pure function; no I/O.
+
+Completeness guard (Round 5 — JD remediation):
+- The guard counts appointment-structure markers ('como <Cargo>') rather than
+  'ciudadano/ciudadana' tokens, making it independent of the appointee's prefix.
+  A co-appointment phrased without 'ciudadano' is now detected by the clause
+  counter even though _RE_APPOINTMENT cannot extract it.
+- When eventos is empty (no names parsed — bulk or raw), the guard is not
+  reached; the decree returns requiere_detalle (human review for detail).
+  This is intentional: requiere_detalle signals "could not extract any detail",
+  while requiere_revision signals "extracted some but incomplete".
 """
 import re
 import unicodedata
@@ -56,11 +66,24 @@ _RE_APPOINTMENT = re.compile(
     re.IGNORECASE | re.UNICODE,
 )
 
-# Singular ciudadano/ciudadana reference counter for the completeness guard.
-# Matches ONLY singular forms; plural 'ciudadanos'/'ciudadanas' are already
-# handled as bulk signals and must not be counted as individual references.
-# FIX A1: used by _count_appointment_refs().
-_RE_APPOINTMENT_REF = re.compile(r"\bciudadan[oa]\b", re.IGNORECASE | re.UNICODE)
+# Appointment-clause counter for the completeness guard (Round 5).
+# Counts 'como [INTERINO] <Cargo-start>' occurrences, independent of whether
+# each appointee is preceded by the 'ciudadano/ciudadana' prefix token.
+# This closes the Round-4 residual gap where a co-appointment phrased without
+# the prefix token escaped both the extractor and the old ciudadano counter.
+#
+# Design choices:
+# - NO re.IGNORECASE: cargo titles always start with an uppercase letter in
+#   official Gaceta text; requiring an uppercase start avoids false matches on
+#   colloquial 'como <lowercase>' constructs (e.g. "actuó como facilitador").
+# - Bias to safety (over-count preferred over under-count): a false positive
+#   (extra clause counted) routes to requiere_revision, which is safe — human
+#   review queue. A false negative (missed clause) would silently mark procesado,
+#   which is NOT acceptable.
+_RE_APPOINTMENT_CLAUSE = re.compile(
+    r"\bcomo\s+(?:INTERINO\s+)?[A-ZÁÉÍÓÚÑÜ]",
+    re.UNICODE,
+)
 
 # Roman numeral inciso separator: I. / II. / III. etc.
 # Uppercase only — real Gaceta incisos are always uppercase.
@@ -71,9 +94,6 @@ _RE_APPOINTMENT_REF = re.compile(r"\bciudadan[oa]\b", re.IGNORECASE | re.UNICODE
 _RE_INCISO = re.compile(
     r"\b(I{1,3}V?|VI{0,3}|IX|IV|V|X)\.\s+",
 )
-
-# INTERINO detection (anywhere in the sumario)
-_RE_INTERINO = re.compile(r"\bINTERINO\b", re.IGNORECASE)
 
 # Indicator of bulk sumario (no individual proper name extractable)
 _RE_BULK_KEYWORDS = re.compile(
@@ -121,14 +141,16 @@ def extract_eventos(sumario: str) -> ExtractorResult:
         # Could not extract names — bulk or unstructured summary.
         return ExtractorResult(eventos=[], estado_extraccion=ESTADO_REQUIERE_DETALLE)
 
-    # FIX A1: completeness guard.
-    # Count singular ciudadano/ciudadana references in the sumario.  If fewer
-    # eventos were extracted than references found, at least one appointment was
-    # silently dropped (e.g. a name with a middle initial that breaks the regex).
-    # Route to requiere_revision so PR3 can re-extract from scratch — never
-    # mark procesado when an appointment reference was not extracted.
-    ref_count = _count_appointment_refs(sumario)
-    if len(eventos) < ref_count:
+    # Round-5 completeness guard.
+    # Count 'como <Cargo>' appointment clauses instead of 'ciudadano' tokens.
+    # This is independent of whether each appointee was introduced by the
+    # 'ciudadano/ciudadana' prefix, so a co-appointment phrased without the
+    # prefix is detected here even though _RE_APPOINTMENT cannot extract it.
+    # If fewer eventos were extracted than clauses found, at least one
+    # appointment was silently dropped — route to requiere_revision so the
+    # human-review queue can re-extract from scratch.
+    clause_count = _count_appointment_clauses(sumario)
+    if len(eventos) < clause_count:
         return ExtractorResult(eventos=[], estado_extraccion=ESTADO_REQUIERE_REVISION)
 
     return ExtractorResult(eventos=eventos, estado_extraccion=ESTADO_PROCESADO)
@@ -202,16 +224,20 @@ def _build_evento_from_match(match, full_sumario: str) -> dict:
     }
 
 
-def _count_appointment_refs(sumario: str) -> int:
+def _count_appointment_clauses(sumario: str) -> int:
     """
-    Count singular ciudadano/ciudadana references in the sumario.
+    Count 'como [INTERINO] <Cargo-start>' appointment clauses in the sumario.
 
-    FIX A1: used by the completeness guard in extract_eventos.
-    Only singular forms are counted; plural 'ciudadanos'/'ciudadanas' are
-    already handled as bulk signals (requiere_detalle path) and are NOT
-    individual appointment references.
+    Round-5 completeness guard: counts appointment-structure markers that are
+    independent of the 'ciudadano/ciudadana' prefix token.  Each occurrence of
+    'como' followed by an optional 'INTERINO' and an uppercase letter represents
+    a distinct appointment clause, regardless of how the appointee was introduced.
+
+    Bias to safety: the pattern over-counts rather than under-counts.  A false
+    positive routes to requiere_revision (human review — safe); a false negative
+    would silently mark procesado (not acceptable).
     """
-    return len(_RE_APPOINTMENT_REF.findall(sumario))
+    return len(_RE_APPOINTMENT_CLAUSE.findall(sumario))
 
 
 def _normalize_name(name: str) -> str:

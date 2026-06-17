@@ -531,3 +531,110 @@ class TestExtractorIncisoUppercaseOnly:
         names = [ev["persona_nombre"] for ev in result.eventos]
         assert any("ANA MARIA FLORES VEGA" in n for n in names)
         assert any("CARLOS ANTONIO MENDEZ PEREZ" in n for n in names)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FIX Round 5 — Completeness guard counts appointment clauses (JD Round 5)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestExtractorRound5ClauseGuard:
+    """JD Round 5: completeness guard counts 'como <Cargo>' clauses, not ciudadano tokens.
+
+    Root cause (Round 4 residual): a co-appointment phrased WITHOUT 'ciudadano/ciudadana'
+    escapes BOTH _RE_APPOINTMENT (extractor) AND _count_appointment_refs (counter),
+    so the guard sees len(eventos)==ref_count and wrongly marks it procesado while
+    silently dropping the un-prefixed appointee.
+
+    Fix: replace the ciudadano counter with a 'como <uppercase-cargo-start>' clause
+    counter that is independent of the appointee's prefix token.
+
+    Guard contract (unchanged for existing behaviour):
+    - no designa                                   → requiere_revision
+    - designa, zero parseable names (bulk/raw)     → requiere_detalle
+    - designa, some extracted but fewer than clauses → requiere_revision (never silent drop)
+    - designa, all clauses extracted               → procesado
+    """
+
+    def test_co_appointment_no_ciudadana_prefix_routes_to_requiere_revision(self) -> None:
+        """
+        'y a MARIA ROCHA como Ministra' has no 'ciudadana' prefix.
+        _RE_APPOINTMENT cannot extract her; but the clause counter sees 2 clauses.
+        1 evento extracted < 2 clauses → requiere_revision, eventos=[].
+
+        RED: currently returns procesado with [JUAN PEREZ] (silent drop of MARIA ROCHA).
+        """
+        from core.extractor import extract_eventos, ESTADO_REQUIERE_REVISION
+
+        result = extract_eventos(
+            "Designa al ciudadano JUAN PEREZ como Ministro de Salud, "
+            "y a MARIA ROCHA como Ministra de Economía."
+        )
+
+        assert result.estado_extraccion == ESTADO_REQUIERE_REVISION
+        assert result.eventos == []
+
+    def test_round4_initial_case_still_requiere_revision(self) -> None:
+        """
+        Round-4 regression guard: middle-initial JUAN P. PEREZ + ciudadana ANA ROCHA.
+        2 clauses, 1 extracted → requiere_revision (must keep passing after Round-5 fix).
+        """
+        from core.extractor import extract_eventos, ESTADO_REQUIERE_REVISION
+
+        result = extract_eventos(
+            "Designa al ciudadano JUAN P. PEREZ como Ministro de Salud, "
+            "y a la ciudadana ANA ROCHA como Ministra de Economía."
+        )
+
+        assert result.estado_extraccion == ESTADO_REQUIERE_REVISION
+        assert result.eventos == []
+
+    def test_single_clean_appointment_procesado(self) -> None:
+        """Single clean appointment: 1 clause, 1 extracted → procesado (no regression)."""
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        result = extract_eventos(
+            "Designa al ciudadano PEDRO QUISPE como Ministro de Educación."
+        )
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 1
+        assert "PEDRO QUISPE" in result.eventos[0]["persona_nombre"]
+
+    def test_clean_multi_both_ciudadana_prefix_procesado(self) -> None:
+        """
+        Both appointees have 'ciudadana/ciudadano' prefix.
+        2 clauses, 2 extracted → procesado (regression guard: ciudadano-counter used to handle this).
+        """
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        result = extract_eventos(
+            "Designa al ciudadano JUAN PEREZ como Ministro de Salud, "
+            "y a la ciudadana ANA ROCHA como Ministra de Economía."
+        )
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 2
+        names = {ev["persona_nombre"] for ev in result.eventos}
+        assert any("JUAN PEREZ" in n for n in names)
+        assert any("ANA ROCHA" in n for n in names)
+
+    def test_bulk_sumario_still_requiere_detalle(self) -> None:
+        """Bulk sumario without individual names: no clauses, no eventos → requiere_detalle (no regression)."""
+        from core.extractor import extract_eventos, ESTADO_REQUIERE_DETALLE
+
+        result = extract_eventos("Designación de Ministros de Estado y Alto Mando Militar.")
+
+        assert result.estado_extraccion == ESTADO_REQUIERE_DETALLE
+        assert result.eventos == []
+
+    def test_interino_clause_counted_correctly(self) -> None:
+        """'como INTERINO Viceministro' is still counted as one clause."""
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        result = extract_eventos(
+            "Designa al ciudadano LUIS MAMANI como INTERINO Viceministro de Obras."
+        )
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 1
+        assert result.eventos[0]["interino"] is True
