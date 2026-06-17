@@ -638,3 +638,133 @@ class TestExtractorRound5ClauseGuard:
         assert result.estado_extraccion == ESTADO_PROCESADO
         assert len(result.eventos) == 1
         assert result.eventos[0]["interino"] is True
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FIX Round 6 — Clause counter charclass aligned with extractor (JD Round 6)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestExtractorRound6LowercaseCargoClause:
+    """JD Round 6: _RE_APPOINTMENT_CLAUSE must count lowercase-start cargo clauses.
+
+    Root cause (Round 5 residual): _RE_APPOINTMENT_CLAUSE required an uppercase
+    cargo-start character ([A-ZÁÉÍÓÚÑÜ]).  But _RE_APPOINTMENT accepts lowercase-start
+    cargo too ([A-ZÁÉÍÓÚÑÜA-Za-záéíóúñ], re.IGNORECASE).  So a co-appointee whose
+    'como <cargo>' clause starts with a lowercase letter AND who lacks the
+    'ciudadano/ciudadana' prefix is:
+      - NOT extracted by _RE_APPOINTMENT (no prefix)
+      - NOT counted by _RE_APPOINTMENT_CLAUSE (lowercase cargo-start)
+    → clause_count under-counts → 1 evento == 1 clause → procesado (silent drop).
+
+    Fix: include lowercase in the cargo-start charclass of _RE_APPOINTMENT_CLAUSE
+    so it mirrors _RE_APPOINTMENT.  Over-count remains the safe direction
+    (false positive → requiere_revision; false negative → silent procesado, unsafe).
+    """
+
+    def test_lowercase_cargo_no_ciudadana_routes_to_requiere_revision(self) -> None:
+        """
+        RED: 'y a MARIA ROCHA como ministra de Economía' — lowercase cargo, no prefix.
+        _RE_APPOINTMENT_CLAUSE (before fix) only counts uppercase cargo-start:
+          sees 1 clause ('como Ministro'), extracts 1 evento (JUAN PEREZ).
+          1 == 1 → procesado  ← BUG: MARIA ROCHA silently dropped.
+        After fix: lowercase counted → sees 2 clauses.
+          1 evento < 2 clauses → requiere_revision, eventos=[].
+        """
+        from core.extractor import extract_eventos, ESTADO_REQUIERE_REVISION
+
+        result = extract_eventos(
+            "Designa al ciudadano JUAN PEREZ como Ministro de Salud, "
+            "y a MARIA ROCHA como ministra de Economía."
+        )
+
+        assert result.estado_extraccion == ESTADO_REQUIERE_REVISION
+        assert result.eventos == []
+
+    def test_both_ciudadana_one_lowercase_cargo_still_procesado(self) -> None:
+        """
+        Triangulation: both appointees have 'ciudadano/ciudadana' prefix; second cargo
+        is lowercase ('ministra').  _RE_APPOINTMENT (IGNORECASE) extracts both.
+        After fix, _RE_APPOINTMENT_CLAUSE also counts both.
+        2 extracted == 2 clauses → procesado.
+        """
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        result = extract_eventos(
+            "Designa al ciudadano JUAN PEREZ como Ministro de Salud, "
+            "y a la ciudadana ANA ROCHA como ministra de Economía."
+        )
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 2
+        names = {ev["persona_nombre"] for ev in result.eventos}
+        assert any("JUAN PEREZ" in n for n in names)
+        assert any("ANA ROCHA" in n for n in names)
+
+    def test_uppercase_cargo_no_ciudadana_still_requiere_revision(self) -> None:
+        """
+        Regression guard: uppercase cargo + no prefix case (Round 5 base case)
+        must remain requiere_revision after the lowercase extension.
+        """
+        from core.extractor import extract_eventos, ESTADO_REQUIERE_REVISION
+
+        result = extract_eventos(
+            "Designa al ciudadano JUAN PEREZ como Ministro de Salud, "
+            "y a MARIA ROCHA como Ministra de Economía."
+        )
+
+        assert result.estado_extraccion == ESTADO_REQUIERE_REVISION
+        assert result.eventos == []
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# V1 Accepted Limitations — regression anchors (JD Round 6)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestExtractorV1AcceptedLimitations:
+    """Regression anchors for accepted V1 limitations.
+
+    These tests pin CURRENT, INTENTIONAL behavior for patterns that V1 does not
+    handle.  A future refactor changing these outcomes will cause a test failure,
+    prompting the developer to confirm the change is deliberate.
+
+    DO NOT modify these assertions silently.  Each one has a docstring that
+    explains the limitation and what a V2 fix would require.
+    """
+
+    def test_comma_style_co_appointment_v1_accepted_silent_drop(self) -> None:
+        """
+        ACCEPTED V1 LIMITATION: comma-style co-appointment with NEITHER
+        'ciudadano/ciudadana' prefix NOR a 'como <Cargo>' clause is silently
+        dropped.  The decree returns procesado with only the first appointee.
+
+        Pattern: "Designa al ciudadano JUAN PEREZ como Ministro de Salud,
+                  y a MARIA ROCHA, Ministra de Economía."
+
+        Why this is accepted in V1:
+        - _RE_APPOINTMENT cannot extract MARIA ROCHA: no 'ciudadano/ciudadana' prefix.
+        - _RE_APPOINTMENT_CLAUSE cannot count her: no 'como <Cargo>' clause —
+          the comma style uses 'ROCHA, Ministra', not 'ROCHA como Ministra'.
+        - Completeness guard: 1 clause counted, 1 evento extracted → 1 == 1 → procesado.
+          MARIA ROCHA is invisible to both the extractor and the counter.
+
+        V2 requirement to fix: add a comma-style clause counter that recognises
+        '<NAME>, <Cargo>' as an appointment structure, then route through the guard.
+
+        DO NOT change this assertion without a V2 design decision for comma-style
+        parsing.  If a future change causes this test to return requiere_revision,
+        that is the desired new behavior — update this test and the docstring.
+        """
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        sumario = (
+            "Designa al ciudadano JUAN PEREZ como Ministro de Salud, "
+            "y a MARIA ROCHA, Ministra de Economía."
+        )
+        result = extract_eventos(sumario)
+
+        # V1 accepted: MARIA ROCHA is dropped because no 'ciudadano' prefix
+        # and no 'como <Cargo>' clause — the counter sees only 1 clause,
+        # which matches the 1 extracted evento, so the guard passes as procesado.
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 1
+        assert "JUAN PEREZ" in result.eventos[0]["persona_nombre"]

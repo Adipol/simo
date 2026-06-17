@@ -16,11 +16,15 @@ Design decisions (from SDD design artifact):
 - Never silently drops a norma — every case is classified.
 - Pure function; no I/O.
 
-Completeness guard (Round 5 — JD remediation):
+Completeness guard (Round 5/6 — JD remediation):
 - The guard counts appointment-structure markers ('como <Cargo>') rather than
   'ciudadano/ciudadana' tokens, making it independent of the appointee's prefix.
   A co-appointment phrased without 'ciudadano' is now detected by the clause
   counter even though _RE_APPOINTMENT cannot extract it.
+- Round 6 fix: _RE_APPOINTMENT_CLAUSE charclass aligned with _RE_APPOINTMENT to
+  include lowercase-start cargo letters.  Previously the counter used uppercase-
+  only [A-ZÁÉÍÓÚÑÜ], missing 'como ministra'-style clauses and causing silent
+  under-counts that wrongly routed decrees to procesado.
 - When eventos is empty (no names parsed — bulk or raw), the guard is not
   reached; the decree returns requiere_detalle (human review for detail).
   This is intentional: requiere_detalle signals "could not extract any detail",
@@ -66,22 +70,28 @@ _RE_APPOINTMENT = re.compile(
     re.IGNORECASE | re.UNICODE,
 )
 
-# Appointment-clause counter for the completeness guard (Round 5).
+# Appointment-clause counter for the completeness guard (Round 5/6).
 # Counts 'como [INTERINO] <Cargo-start>' occurrences, independent of whether
 # each appointee is preceded by the 'ciudadano/ciudadana' prefix token.
 # This closes the Round-4 residual gap where a co-appointment phrased without
 # the prefix token escaped both the extractor and the old ciudadano counter.
 #
 # Design choices:
-# - NO re.IGNORECASE: cargo titles always start with an uppercase letter in
-#   official Gaceta text; requiring an uppercase start avoids false matches on
-#   colloquial 'como <lowercase>' constructs (e.g. "actuó como facilitador").
+# - Charclass aligned with _RE_APPOINTMENT (Round 6 fix): includes both
+#   uppercase AND lowercase cargo-start letters.  _RE_APPOINTMENT accepts
+#   lowercase-start cargo (re.IGNORECASE, charclass [A-ZÁÉÍÓÚÑÜA-Za-záéíóúñ]);
+#   the counter must mirror this so a 'como ministra' clause is not missed.
+#   The previous uppercase-only [A-ZÁÉÍÓÚÑÜ] caused the counter to under-count
+#   when a co-appointee's cargo started with a lowercase letter, silently
+#   routing the decree to procesado instead of requiere_revision.
+# - NO re.IGNORECASE flag (still kept): the charclass is already explicit for
+#   both cases; the flag is not needed and omitting it keeps the intent clear.
 # - Bias to safety (over-count preferred over under-count): a false positive
 #   (extra clause counted) routes to requiere_revision, which is safe — human
 #   review queue. A false negative (missed clause) would silently mark procesado,
 #   which is NOT acceptable.
 _RE_APPOINTMENT_CLAUSE = re.compile(
-    r"\bcomo\s+(?:INTERINO\s+)?[A-ZÁÉÍÓÚÑÜ]",
+    r"\bcomo\s+(?:INTERINO\s+)?[A-ZÁÉÍÓÚÑÜA-Za-záéíóúñ]",
     re.UNICODE,
 )
 
