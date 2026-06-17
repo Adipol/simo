@@ -197,6 +197,40 @@ class TestRunCycleErrorBranch:
         assert "Network unreachable" in result.mensaje_error
         mock_log.assert_called_once()
 
+    def test_insert_eventos_failure_triggers_rollback_not_partial_commit(self) -> None:
+        """
+        FIX B — atomicity: when insert_eventos raises mid-norma, conn.rollback() is
+        called and no partial writes are committed.  The cycle reflects the error.
+
+        This test FAILS before FIX B because run_cycle has no explicit transaction
+        wrapping — there is no conn.rollback() call anywhere in the pre-fix code.
+        """
+        from main import run_cycle
+
+        mock_conn = MagicMock()
+        mock_conn.autocommit = True  # matches what main() sets
+
+        mock_repo = MagicMock()
+        mock_repo.get_ultimo_gaceta_id.return_value = None
+        mock_repo.upsert_norma.return_value = 42  # norma inserted OK
+        mock_repo.insert_eventos.side_effect = Exception("DB write failed mid-norma")
+
+        mock_client = MagicMock()
+        mock_client.get.return_value = FIXTURE_HTML
+
+        with patch("main.GacetaRepository", return_value=mock_repo), \
+             patch("main.GacetaClient", return_value=mock_client), \
+             patch("main._log_run"):  # suppress log_run so commit not called there
+            result = run_cycle(conn=mock_conn, pais="BO", max_pages=1)
+
+        # Atomicity evidence: rollback must have been called (no partial norma persisted)
+        mock_conn.rollback.assert_called()
+        # commit must NOT be called (no partial writes committed; _log_run is patched out)
+        mock_conn.commit.assert_not_called()
+        # The cycle surfaces the error (existing outer-catch behavior preserved)
+        assert result.estado == "error"
+        assert "mid-norma" in (result.mensaje_error or "")
+
     def test_partial_failure_still_logs(self) -> None:
         """Repo error mid-cycle: result.estado='error', _log_run called with error result."""
         from main import run_cycle

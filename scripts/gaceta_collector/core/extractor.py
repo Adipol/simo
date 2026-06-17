@@ -4,6 +4,12 @@ V1 extractor for Gaceta Oficial decree summaries.
 Design decisions (from SDD design artifact):
 - Extensible verb lexicon; V1 auto-extracts ONLY 'designa/designación' verb.
   All other verbs → requiere_revision (human review queue).
+- ALLOWLIST (not denylist): the sumario must be GOVERNED by the Designa verb,
+  i.e. the verb leads the sumario (optionally preceded only by a decree-number
+  prefix such as 'Decreto Supremo Nº 549 —'). Any other governing verb such as
+  Aprueba, Modifica, Complementa, Confirma, Reincorpora, Ratifica, Deroga, etc.
+  → requiere_revision. This is V1 conservative policy: err safe, never
+  auto-confirm an ambiguous decree.
 - Bulk summaries without individual names → requiere_detalle.
 - INTERINO keyword in sumario → interino=True.
 - Multiple appointments via roman numeral incisos (I./II./III.) → multiple eventos.
@@ -25,15 +31,16 @@ ESTADO_REQUIERE_REVISION = "requiere_revision"
 
 # ── Regex patterns ────────────────────────────────────────────────────────────
 
-# V1 trigger verb — only 'designa' (case-insensitive) triggers auto-extraction.
+# V1 trigger — ALLOWLIST anchored to the leading governing position.
+# Matches ONLY when the sumario is LED by a Designa-family verb, optionally
+# preceded by a decree-number prefix (e.g. "Decreto Supremo Nº 549 — ").
+# This guarantees that decrees governed by any other verb (Aprueba, Modifica,
+# Complementa, Confirma, Ratifica, Deroga, …) do NOT match, even when the
+# phrase "designación de" appears later in the sumario as an object.
 _RE_DESIGNA_TRIGGER = re.compile(
-    r"\b(designa|designaci[oó]n\s+de(?!\s+cargo))\b",
-    re.IGNORECASE | re.UNICODE,
-)
-
-# Non-V1 verbs (recognizable but not auto-extracted in V1).
-_RE_OTHER_VERB = re.compile(
-    r"\b(rat[ií]fica|des[ií]gnese|se\s+designa|deroga|revoca|acepta\s+la\s+renuncia)\b",
+    r"^\s*"
+    r"(?:Decreto\s+Supremo\s+N[°ºo]?\.?\s*[\d\.\-/]+\s*[–—\-]\s*)?"
+    r"(Des[íi]gnase|Designa|Designaci[oó]n\s+de(?!\s+cargo))\b",
     re.IGNORECASE | re.UNICODE,
 )
 
@@ -80,29 +87,26 @@ def extract_eventos(sumario: str) -> ExtractorResult:
     Extract appointment events from a decree summary string.
 
     V1 behaviour:
-    - 'Designa/Designación' verb present:
+    - Sumario LED by 'Designa / Desígnase / Designación de':
         * If individual name extracted → ExtractorResult(eventos=[...], estado='procesado')
         * If bulk / no name found      → ExtractorResult(eventos=[], estado='requiere_detalle')
-    - Other verbs or no verb           → ExtractorResult(eventos=[], estado='requiere_revision')
+    - Any other governing verb or no verb → ExtractorResult(eventos=[], estado='requiere_revision')
+
+    The trigger is an ALLOWLIST anchored to the start of the sumario.  Only
+    decrees whose first meaningful token is a Designa-family verb are
+    auto-extracted.  All other decrees — including those that merely reference
+    'designación de' as an object of another verb — are routed to human review.
     """
     has_designa = bool(_RE_DESIGNA_TRIGGER.search(sumario))
-    has_other = bool(_RE_OTHER_VERB.search(sumario))
 
     if not has_designa:
         return ExtractorResult(eventos=[], estado_extraccion=ESTADO_REQUIERE_REVISION)
 
-    # Mixed-verb guard: if any non-V1 verb is present alongside 'designa/designación',
-    # the decree is ambiguous (e.g. "Ratifica la designación de…", "Acepta la renuncia y
-    # designa…"). Conservative policy: flag for human review rather than risk a false
-    # positive. Only a clean standalone V1 decree is auto-extracted.
-    if has_other:
-        return ExtractorResult(eventos=[], estado_extraccion=ESTADO_REQUIERE_REVISION)
-
-    # V1: 'designa' detected — try to extract individual appointments
+    # V1: leading Designa verb confirmed — try to extract individual appointments.
     eventos = _extract_appointments(sumario)
 
     if not eventos:
-        # Could not extract names — bulk or unstructured summary
+        # Could not extract names — bulk or unstructured summary.
         return ExtractorResult(eventos=[], estado_extraccion=ESTADO_REQUIERE_DETALLE)
 
     return ExtractorResult(eventos=eventos, estado_extraccion=ESTADO_PROCESADO)

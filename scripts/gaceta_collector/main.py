@@ -80,13 +80,19 @@ def run_cycle(
     Execute one full collection cycle for `pais`.
 
     Args:
-        conn: Open psycopg2 connection (autocommit).
+        conn: Open psycopg2 connection (autocommit or explicit transaction mode).
         pais: ISO-2 country code. Currently only 'BO' is supported.
         max_pages: Override Settings.gaceta.max_pages for this run.
         settings: Optional Settings instance (falls back to defaults).
 
     Returns:
         RunResult with counts.
+
+    Per-norma atomicity: upsert_norma + insert_eventos + update_estado_extraccion
+    are wrapped in a single transaction per norma.  If the process is killed or
+    an exception occurs mid-norma, the entire norma write is rolled back — no
+    partial event sets are ever committed.  The connection is briefly set to
+    non-autocommit for the duration of the three writes, then restored.
     """
     if settings is None:
         settings = Settings()
@@ -127,28 +133,44 @@ def run_cycle(
                     reached_known = True
                     break
 
-                # Persist norma
-                norma_id = repo.upsert_norma(norma)
-                if norma_id is None:
-                    log.debug(f"Norma {gid} duplicate — skipping events")
-                    continue
-
-                result.normas_nuevas += 1
-
-                # Extract events from sumario
+                # Extract events from sumario (pure function — outside the DB transaction)
                 extract_result = extract_eventos(norma.get("sumario", ""))
 
-                # Persist events if extracted
-                if extract_result.eventos:
-                    n_inserted = repo.insert_eventos(
-                        norma_id=norma_id,
-                        pais=norma["pais"],
-                        eventos=extract_result.eventos,
-                    )
-                    result.eventos_insertados += n_inserted
+                # Atomic per-norma persistence: all three writes commit together or
+                # not at all.  Temporarily disable autocommit so that upsert_norma,
+                # insert_eventos, and update_estado_extraccion share one transaction.
+                # On any exception the transaction is rolled back and re-raised so
+                # the outer error handler can record the failure in log_scripts.
+                prev_autocommit = conn.autocommit
+                try:
+                    conn.autocommit = False
 
-                # Update extraction state on the norma
-                repo.update_estado_extraccion(norma_id, extract_result.estado_extraccion)
+                    norma_id = repo.upsert_norma(norma)
+                    if norma_id is None:
+                        # Row already exists — rollback the no-op transaction and skip.
+                        conn.rollback()
+                        conn.autocommit = prev_autocommit
+                        log.debug(f"Norma {gid} duplicate — skipping events")
+                        continue
+
+                    result.normas_nuevas += 1
+
+                    if extract_result.eventos:
+                        n_inserted = repo.insert_eventos(
+                            norma_id=norma_id,
+                            pais=norma["pais"],
+                            eventos=extract_result.eventos,
+                        )
+                        result.eventos_insertados += n_inserted
+
+                    repo.update_estado_extraccion(norma_id, extract_result.estado_extraccion)
+                    conn.commit()
+                    conn.autocommit = prev_autocommit
+
+                except Exception:
+                    conn.rollback()
+                    conn.autocommit = prev_autocommit
+                    raise
 
             if reached_known:
                 break

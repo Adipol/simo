@@ -229,3 +229,85 @@ class TestExtractorMixedVerbSafetyNet:
 
         assert result.estado_extraccion == "procesado"
         assert len(result.eventos) == 1
+
+
+class TestExtractorAllowlistGoverningVerb:
+    """FIX A: ALLOWLIST — only decrees GOVERNED (LED) by Designa verb auto-extract.
+
+    Decrees where 'designación de' appears as an OBJECT (governed by another verb)
+    must return requiere_revision. These tests FAIL before FIX A because the trigger
+    matches 'designación de' anywhere in the sumario (broad search), not anchored to
+    the leading governing position.
+
+    Root cause: _RE_DESIGNA_TRIGGER uses .search() with no positional anchor, so
+    'Aprueba la designación de la ciudadana...' triggers has_designa=True even though
+    Aprueba (not Designa) governs the decree. Verbs like Aprueba/Modifica/Complementa/
+    Confirma/Reincorpora are not in _RE_OTHER_VERB (the denylist), so has_other=False
+    and the decree wrongly auto-extracts as procesado.
+    """
+
+    def test_aprueba_designacion_de_ciudadana_returns_requiere_revision(self) -> None:
+        """'Aprueba la designación de la ciudadana NAME como CARGO' → requiere_revision."""
+        from core.extractor import extract_eventos
+
+        result = extract_eventos(
+            "Aprueba la designación de la ciudadana ANA LOPEZ como Ministra."
+        )
+
+        assert result.estado_extraccion == "requiere_revision"
+        assert result.eventos == []
+
+    def test_modifica_aprueba_designacion_returns_requiere_revision(self) -> None:
+        """'Modifica el Decreto y aprueba la designación de...' → requiere_revision."""
+        from core.extractor import extract_eventos
+
+        result = extract_eventos(
+            "Modifica el Decreto y aprueba la designación de la ciudadana ROSA QUISPE como Viceministra."
+        )
+
+        assert result.estado_extraccion == "requiere_revision"
+        assert result.eventos == []
+
+    def test_complementa_designacion_returns_requiere_revision(self) -> None:
+        """'Complementa la designación de la ciudadana NAME como CARGO' → requiere_revision."""
+        from core.extractor import extract_eventos
+
+        result = extract_eventos(
+            "Complementa la designación de la ciudadana MARIA PEREZ como Ministra."
+        )
+
+        assert result.estado_extraccion == "requiere_revision"
+        assert result.eventos == []
+
+    def test_confirma_designacion_returns_requiere_revision(self) -> None:
+        """'Confirma la designación de la ciudadana NAME como CARGO' → requiere_revision."""
+        from core.extractor import extract_eventos
+
+        result = extract_eventos(
+            "Confirma la designación de la ciudadana JUANA VEGA como Ministra."
+        )
+
+        assert result.estado_extraccion == "requiere_revision"
+        assert result.eventos == []
+
+    def test_reincorpora_designacion_returns_requiere_revision(self) -> None:
+        """'Reincorpora la designación de la ciudadana NAME como CARGO' → requiere_revision."""
+        from core.extractor import extract_eventos
+
+        result = extract_eventos(
+            "Reincorpora la designación de la ciudadana INES SORIA como Ministra."
+        )
+
+        assert result.estado_extraccion == "requiere_revision"
+        assert result.eventos == []
+
+    def test_pure_designa_at_start_returns_procesado_allowlist_positive(self) -> None:
+        """Regression: pure 'Designa a la ciudadana NAME' at start → procesado (allowlist match)."""
+        from core.extractor import extract_eventos
+
+        result = extract_eventos(
+            "Designa a la ciudadana ANA LOPEZ como Ministra de Salud."
+        )
+
+        assert result.estado_extraccion == "procesado"
+        assert len(result.eventos) == 1

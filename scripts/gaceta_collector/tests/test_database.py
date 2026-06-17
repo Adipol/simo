@@ -143,21 +143,21 @@ class TestInsertEventos:
     """insert_eventos inserts eventos and returns inserted count."""
 
     def test_insert_single_evento_returns_1(self) -> None:
-        """Inserting 1 evento returns count=1."""
+        """Inserting 1 evento returns count=1 (loop iterations, not rowcount)."""
         from core.database import GacetaRepository
         conn, cursor = _make_conn()
-        cursor.rowcount = 1
         repo = GacetaRepository(conn)
 
         count = repo.insert_eventos(norma_id=42, pais="BO", eventos=[_sample_evento()])
 
         assert count == 1
+        # execute called exactly once — implementation counts loop iterations, not rowcount
+        assert cursor.execute.call_count == 1
 
     def test_insert_two_eventos_returns_2(self) -> None:
-        """Inserting 2 eventos returns count=2."""
+        """Inserting 2 eventos returns count=2 (one execute call per evento)."""
         from core.database import GacetaRepository
         conn, cursor = _make_conn()
-        cursor.rowcount = 1
         repo = GacetaRepository(conn)
 
         count = repo.insert_eventos(
@@ -167,6 +167,8 @@ class TestInsertEventos:
         )
 
         assert count == 2
+        # execute called once per evento — loop count drives the return value
+        assert cursor.execute.call_count == 2
 
     def test_insert_empty_list_returns_0(self) -> None:
         """Empty eventos list → 0 inserts, no DB calls."""
@@ -183,7 +185,6 @@ class TestInsertEventos:
         """pais column in inserted evento comes from the pais parameter (denormalized)."""
         from core.database import GacetaRepository
         conn, cursor = _make_conn()
-        cursor.rowcount = 1
         repo = GacetaRepository(conn)
 
         repo.insert_eventos(norma_id=42, pais="BO", eventos=[_sample_evento()])
