@@ -16,11 +16,21 @@ Design decisions (from SDD design artifact):
 - Never silently drops a norma — every case is classified.
 - Pure function; no I/O.
 
-Completeness guard (Round 5/6 — JD remediation):
-- The guard counts appointment-structure markers ('como <Cargo>') rather than
-  'ciudadano/ciudadana' tokens, making it independent of the appointee's prefix.
-  A co-appointment phrased without 'ciudadano' is now detected by the clause
-  counter even though _RE_APPOINTMENT cannot extract it.
+Completeness guard (Round 5/6/7 — JD remediation):
+- DUAL SIGNAL (Round 7 structural close):
+  The guard now uses TWO independent signals and routes on the stricter one:
+    1. 'como <Cargo>' clause counter (_count_appointment_clauses) — catches
+       co-appointments that lack the 'ciudadano/ciudadana' prefix token.
+    2. 'ciudadano/ciudadana' token counter (_count_ciudadano_tokens) — catches
+       co-appointments that have the prefix but use a non-'como' connector
+       (e.g. 'en calidad de', 'para desempeñar el cargo de').
+  threshold = max(clause_count, ciudadano_count).
+  If len(eventos) < threshold → requiere_revision, eventos=[].
+- Round 7 also adds re.IGNORECASE to _RE_APPOINTMENT_CLAUSE so that
+  'Como'/'COMO' connectors are counted in the clause counter (previously only
+  lowercase 'como' was matched), closing the case-asymmetry gap where
+  _RE_APPOINTMENT (IGNORECASE) could extract via 'COMO' but the clause counter
+  would miss it, causing an under-count and a silent-drop.
 - Round 6 fix: _RE_APPOINTMENT_CLAUSE charclass aligned with _RE_APPOINTMENT to
   include lowercase-start cargo letters.  Previously the counter used uppercase-
   only [A-ZÁÉÍÓÚÑÜ], missing 'como ministra'-style clauses and causing silent
@@ -29,6 +39,13 @@ Completeness guard (Round 5/6 — JD remediation):
   reached; the decree returns requiere_detalle (human review for detail).
   This is intentional: requiere_detalle signals "could not extract any detail",
   while requiere_revision signals "extracted some but incomplete".
+
+Accepted V1 residual (after Round 7):
+  The ONLY silent-drop path that remains is a co-appointee that has NEITHER
+  a 'ciudadano/ciudadana' prefix token NOR a 'como <Cargo>' clause in any
+  casing — the comma-style pattern ('y a MARIA ROCHA, Ministra de Economía').
+  This is intentional V1 behavior; a V2 fix would require a comma-style
+  clause counter.  See TestExtractorV1AcceptedLimitations for the pinned test.
 """
 import re
 import unicodedata
@@ -70,13 +87,18 @@ _RE_APPOINTMENT = re.compile(
     re.IGNORECASE | re.UNICODE,
 )
 
-# Appointment-clause counter for the completeness guard (Round 5/6).
+# Appointment-clause counter for the completeness guard (Round 5/6/7).
 # Counts 'como [INTERINO] <Cargo-start>' occurrences, independent of whether
 # each appointee is preceded by the 'ciudadano/ciudadana' prefix token.
 # This closes the Round-4 residual gap where a co-appointment phrased without
 # the prefix token escaped both the extractor and the old ciudadano counter.
 #
 # Design choices:
+# - Round 7 fix: re.IGNORECASE added so that 'Como'/'COMO' connectors are
+#   counted alongside lowercase 'como'.  _RE_APPOINTMENT already uses
+#   IGNORECASE, so without this flag the clause counter would under-count
+#   any co-appointment whose connector is title-cased or all-caps, while
+#   _RE_APPOINTMENT could still extract via it — causing a false procesado.
 # - Charclass aligned with _RE_APPOINTMENT (Round 6 fix): includes both
 #   uppercase AND lowercase cargo-start letters.  _RE_APPOINTMENT accepts
 #   lowercase-start cargo (re.IGNORECASE, charclass [A-ZÁÉÍÓÚÑÜA-Za-záéíóúñ]);
@@ -84,16 +106,26 @@ _RE_APPOINTMENT = re.compile(
 #   The previous uppercase-only [A-ZÁÉÍÓÚÑÜ] caused the counter to under-count
 #   when a co-appointee's cargo started with a lowercase letter, silently
 #   routing the decree to procesado instead of requiere_revision.
-# - NO re.IGNORECASE flag (still kept): the charclass is already explicit for
-#   both cases; the flag is not needed and omitting it keeps the intent clear.
 # - Bias to safety (over-count preferred over under-count): a false positive
 #   (extra clause counted) routes to requiere_revision, which is safe — human
 #   review queue. A false negative (missed clause) would silently mark procesado,
 #   which is NOT acceptable.
 _RE_APPOINTMENT_CLAUSE = re.compile(
     r"\bcomo\s+(?:INTERINO\s+)?[A-ZÁÉÍÓÚÑÜA-Za-záéíóúñ]",
-    re.UNICODE,
+    re.IGNORECASE | re.UNICODE,
 )
+
+# Ciudadano/ciudadana token counter for the completeness guard (Round 7).
+# Counts singular 'ciudadano'/'ciudadana' prefix tokens (case-insensitive).
+# This closes the gap where a co-appointment has the prefix token but uses a
+# non-'como' connector ('en calidad de', 'para desempeñar el cargo de', etc.):
+# - _RE_APPOINTMENT cannot extract it (no 'como' connector).
+# - _RE_APPOINTMENT_CLAUSE cannot count it (no 'como' clause).
+# With this counter running alongside clause_count, threshold = max(clause_count,
+# ciudadano_count) catches the case where ciudadano_count exceeds clause_count.
+# Singular-only match (\bciudadan[oa]\b): plural forms ('ciudadanos',
+# 'ciudadanas') appear in bulk-decree preambles and must not inflate the count.
+_RE_CIUDADANO_TOKEN = re.compile(r"\bciudadan[oa]\b", re.IGNORECASE | re.UNICODE)
 
 # Roman numeral inciso separator: I. / II. / III. etc.
 # Uppercase only — real Gaceta incisos are always uppercase.
@@ -151,16 +183,22 @@ def extract_eventos(sumario: str) -> ExtractorResult:
         # Could not extract names — bulk or unstructured summary.
         return ExtractorResult(eventos=[], estado_extraccion=ESTADO_REQUIERE_DETALLE)
 
-    # Round-5 completeness guard.
-    # Count 'como <Cargo>' appointment clauses instead of 'ciudadano' tokens.
-    # This is independent of whether each appointee was introduced by the
-    # 'ciudadano/ciudadana' prefix, so a co-appointment phrased without the
-    # prefix is detected here even though _RE_APPOINTMENT cannot extract it.
-    # If fewer eventos were extracted than clauses found, at least one
-    # appointment was silently dropped — route to requiere_revision so the
-    # human-review queue can re-extract from scratch.
+    # Round-7 dual-signal completeness guard.
+    # Two independent signals are combined; we route on the STRICTER one.
+    # Signal 1: 'como <Cargo>' clause counter — catches co-appointments that
+    #   lack the 'ciudadano/ciudadana' prefix (Round 5/6).
+    # Signal 2: 'ciudadano/ciudadana' token counter — catches co-appointments
+    #   that have the prefix but use a non-'como' connector such as
+    #   'en calidad de' or 'para desempeñar el cargo de' (Round 7).
+    # threshold = max(clause_count, ciudadano_count) uses whichever signal
+    # sees the higher appointment count, preventing either path from being
+    # evaded alone.  If fewer eventos were extracted than the threshold,
+    # at least one appointment was silently dropped — route to requiere_revision
+    # so the human-review queue can re-extract from scratch.
     clause_count = _count_appointment_clauses(sumario)
-    if len(eventos) < clause_count:
+    ciudadano_count = _count_ciudadano_tokens(sumario)
+    threshold = max(clause_count, ciudadano_count)
+    if len(eventos) < threshold:
         return ExtractorResult(eventos=[], estado_extraccion=ESTADO_REQUIERE_REVISION)
 
     return ExtractorResult(eventos=eventos, estado_extraccion=ESTADO_PROCESADO)
@@ -238,16 +276,37 @@ def _count_appointment_clauses(sumario: str) -> int:
     """
     Count 'como [INTERINO] <Cargo-start>' appointment clauses in the sumario.
 
-    Round-5 completeness guard: counts appointment-structure markers that are
-    independent of the 'ciudadano/ciudadana' prefix token.  Each occurrence of
-    'como' followed by an optional 'INTERINO' and an uppercase letter represents
-    a distinct appointment clause, regardless of how the appointee was introduced.
+    Round-5/6/7 completeness guard: counts appointment-structure markers that
+    are independent of the 'ciudadano/ciudadana' prefix token.  Each occurrence
+    of 'como' (any casing after Round 7) followed by an optional 'INTERINO' and
+    a cargo-start letter represents a distinct appointment clause, regardless of
+    how the appointee was introduced.
 
     Bias to safety: the pattern over-counts rather than under-counts.  A false
     positive routes to requiere_revision (human review — safe); a false negative
     would silently mark procesado (not acceptable).
     """
     return len(_RE_APPOINTMENT_CLAUSE.findall(sumario))
+
+
+def _count_ciudadano_tokens(sumario: str) -> int:
+    """
+    Count singular 'ciudadano'/'ciudadana' prefix tokens in the sumario.
+
+    Round-7 completeness guard: provides the second signal in the dual-signal
+    max() threshold.  This counter catches co-appointments that carry the
+    'ciudadano/ciudadana' prefix but use a non-'como' connector such as
+    'en calidad de' — cases that escape both _RE_APPOINTMENT (no 'como'
+    connector) and _count_appointment_clauses (no 'como' clause).
+
+    Singular-only: the word-boundary anchor (\b) followed by [oa]\b ensures
+    that plural forms ('ciudadanos', 'ciudadanas') in bulk-decree preambles
+    are not matched and do not inflate the count.
+
+    Bias to safety: over-count preferred.  A false positive routes to
+    requiere_revision (safe); a false negative silently marks procesado (unsafe).
+    """
+    return len(_RE_CIUDADANO_TOKEN.findall(sumario))
 
 
 def _normalize_name(name: str) -> str:

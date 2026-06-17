@@ -768,3 +768,123 @@ class TestExtractorV1AcceptedLimitations:
         assert result.estado_extraccion == ESTADO_PROCESADO
         assert len(result.eventos) == 1
         assert "JUAN PEREZ" in result.eventos[0]["persona_nombre"]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FIX Round 7 — Dual completeness signal: max(clause_count, ciudadano_count)
+#                + re.IGNORECASE on _RE_APPOINTMENT_CLAUSE (JD Round 7)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestExtractorRound7DualCompletenessSignal:
+    """JD Round 7 structural close: dual completeness guard.
+
+    Two independent evadable paths are closed simultaneously:
+
+    PATH 1 — Non-'como' connector with 'ciudadano' prefix:
+        e.g. 'al ciudadano LUIS GOMEZ en calidad de Viceministro'
+        - _RE_APPOINTMENT cannot extract (requires 'como' connector).
+        - _RE_APPOINTMENT_CLAUSE cannot count (requires 'como' clause).
+        - Old guard: clause_count == eventos → procesado (silent drop).
+        - Fix: ciudadano token counter runs alongside clause counter;
+          threshold = max(clause_count, ciudadano_count).
+          ciudadano_count=2 > clause_count=1 → threshold=2 > eventos=1 → requiere_revision.
+
+    PATH 2 — Case asymmetry: _RE_APPOINTMENT_CLAUSE lacked re.IGNORECASE:
+        'Como'/'COMO' clauses were NOT counted by the clause counter, while
+        _RE_APPOINTMENT (IGNORECASE) could still extract via them.
+        - Clause counter under-counts → procesado (silent drop of broken-name appointee).
+        - Fix: add re.IGNORECASE to _RE_APPOINTMENT_CLAUSE.
+
+    Invariant after this fix:
+        The ONLY path to 'procesado' with a silently-dropped appointee is when
+        that appointee has NEITHER a 'ciudadano/ciudadana' prefix token NOR a
+        'como <cargo>' clause in ANY casing — the accepted V1 comma-style
+        residual ('y a MARIA ROCHA, Ministra de Economía'), already pinned in
+        TestExtractorV1AcceptedLimitations.
+    """
+
+    def test_en_calidad_de_connector_ciudadano_prefix_routes_to_requiere_revision(self) -> None:
+        """
+        RED: 'al ciudadano LUIS GOMEZ en calidad de Viceministro' — ciudadano prefix
+        present but non-'como' connector ('en calidad de').
+        - _RE_APPOINTMENT cannot extract LUIS GOMEZ (no 'como' connector).
+        - _RE_APPOINTMENT_CLAUSE cannot count him (no 'como' clause).
+        - Today: clause_count=1, no ciudadano counter → threshold=1, eventos=1 → procesado.
+        - After fix: ciudadano_count=2, threshold=max(1,2)=2, eventos=1 < 2 → requiere_revision.
+
+        This is the exact case from the root-insight report.
+        FAILS today (returns procesado with LUIS GOMEZ silently dropped).
+        """
+        from core.extractor import extract_eventos, ESTADO_REQUIERE_REVISION
+
+        sumario = (
+            "Designa al ciudadano JUAN PEREZ como Ministro de Salud, "
+            "y al ciudadano LUIS GOMEZ en calidad de Viceministro de Salud."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == ESTADO_REQUIERE_REVISION
+        assert result.eventos == []
+
+    def test_allcaps_como_co_appointment_routes_to_requiere_revision(self) -> None:
+        """
+        RED: both appointees have 'ciudadano' prefix; both use all-caps 'COMO' connector.
+        JUAN P. PEREZ has a middle initial so _RE_APPOINTMENT fails on him.
+        - Without IGNORECASE on clause counter: 'COMO' not counted → clause_count=0.
+        - LUIS GOMEZ IS extracted by _RE_APPOINTMENT (IGNORECASE matches 'COMO').
+        - Today: eventos=1 >= clause_count=0 → procesado (JUAN P. PEREZ dropped).
+        - After fix (IGNORECASE + ciudadano counter):
+            clause_count=2 (COMO matched), ciudadano_count=2 → threshold=2 > eventos=1
+            → requiere_revision, eventos=[].
+
+        This is the case-asymmetry gap reported in the root insight.
+        FAILS today (returns procesado with JUAN P. PEREZ silently dropped).
+        """
+        from core.extractor import extract_eventos, ESTADO_REQUIERE_REVISION
+
+        sumario = (
+            "Designa al ciudadano JUAN P. PEREZ COMO Ministro de Salud, "
+            "y al ciudadano LUIS GOMEZ COMO Viceministro de Salud."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == ESTADO_REQUIERE_REVISION
+        assert result.eventos == []
+
+    def test_single_allcaps_como_clean_appointment_still_procesado(self) -> None:
+        """
+        Triangulation (GREEN regression): single clean appointment using 'COMO' (all-caps).
+        After fix: IGNORECASE counts 'COMO Viceministro' (clause_count=1) AND
+        ciudadano_count=1 → threshold=1, eventos=1 → procesado.
+        Must NOT be broken by the dual-signal change.
+        """
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        result = extract_eventos(
+            "Designa al ciudadano LUIS GOMEZ COMO Viceministro de Salud."
+        )
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 1
+        assert "LUIS GOMEZ" in result.eventos[0]["persona_nombre"]
+
+    def test_comma_style_residual_pin_intact_after_dual_signal(self) -> None:
+        """
+        Regression anchor: the accepted V1 comma-style residual MUST remain procesado.
+        MARIA ROCHA has NEITHER 'ciudadano' prefix NOR 'como <cargo>' clause:
+          - ciudadano_count=1 (JUAN PEREZ only), clause_count=1 ('como Ministro')
+          - threshold = max(1, 1) = 1
+          - eventos=1 (JUAN PEREZ) → 1 >= 1 → procesado.
+        Verifies the dual-signal threshold does NOT break the accepted pin.
+        """
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        sumario = (
+            "Designa al ciudadano JUAN PEREZ como Ministro de Salud, "
+            "y a MARIA ROCHA, Ministra de Economía."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 1
+        assert "JUAN PEREZ" in result.eventos[0]["persona_nombre"]
