@@ -289,3 +289,130 @@ class TestRunnerEjecutarGaceta:
         cmd = args[0]
         assert "--once" in cmd
         assert any("main.py" in str(c) for c in cmd)
+
+
+class TestDebeEjecutar:
+    """debe_ejecutar pure-function unit tests — no DB, no subprocess."""
+
+    def test_intervalo_cero_returns_false_fail_safe(self) -> None:
+        """intervalo_min == 0 → False (fail-safe guard, not a valid config)."""
+        from runner import debe_ejecutar
+        ahora = datetime(2026, 6, 16, 10, 0, 0)
+        assert debe_ejecutar(None, 0, ahora) is False
+
+    def test_intervalo_negativo_returns_false_fail_safe(self) -> None:
+        """intervalo_min < 0 → False (fail-safe guard)."""
+        from runner import debe_ejecutar
+        ahora = datetime(2026, 6, 16, 10, 0, 0)
+        assert debe_ejecutar(None, -5, ahora) is False
+
+    def test_no_prior_run_returns_true(self) -> None:
+        """ultimo is None → True (first run ever, execute immediately)."""
+        from runner import debe_ejecutar
+        ahora = datetime(2026, 6, 16, 10, 0, 0)
+        assert debe_ejecutar(None, 60, ahora) is True
+
+    def test_elapsed_exceeds_interval_returns_true(self) -> None:
+        """ahora - ultimo >= intervalo_min → True."""
+        from runner import debe_ejecutar
+        ahora = datetime(2026, 6, 16, 11, 0, 0)
+        ultimo = datetime(2026, 6, 16, 9, 0, 0)  # 2 h ago, interval = 60 min
+        assert debe_ejecutar(ultimo, 60, ahora) is True
+
+    def test_elapsed_less_than_interval_returns_false(self) -> None:
+        """ahora - ultimo < intervalo_min → False (too soon)."""
+        from runner import debe_ejecutar
+        ahora = datetime(2026, 6, 16, 10, 30, 0)
+        ultimo = datetime(2026, 6, 16, 10, 0, 0)  # 30 min ago, interval = 60 min
+        assert debe_ejecutar(ultimo, 60, ahora) is False
+
+    def test_elapsed_exactly_at_interval_returns_true(self) -> None:
+        """Exactly at the boundary (== intervalo_min) → True."""
+        from runner import debe_ejecutar
+        ahora = datetime(2026, 6, 16, 11, 0, 0)
+        ultimo = datetime(2026, 6, 16, 10, 0, 0)  # exactly 60 min ago
+        assert debe_ejecutar(ultimo, 60, ahora) is True
+
+
+class TestEnVentanaHoraria:
+    """en_ventana_horaria pure-function unit tests."""
+
+    def test_no_window_configured_always_true(self) -> None:
+        """hora_inicio=None or hora_fin=None → always True (no restriction)."""
+        from runner import en_ventana_horaria
+        cfg = {"hora_inicio": None, "hora_fin": None}
+        assert en_ventana_horaria(cfg, datetime(2026, 6, 16, 3, 0, 0)) is True
+
+    def test_inside_window_returns_true(self) -> None:
+        """Current time within [hora_inicio, hora_fin] → True."""
+        from runner import en_ventana_horaria
+        from datetime import time
+        cfg = {"hora_inicio": time(8, 0), "hora_fin": time(22, 0)}
+        assert en_ventana_horaria(cfg, datetime(2026, 6, 16, 12, 0, 0)) is True
+
+    def test_outside_window_before_start_returns_false(self) -> None:
+        """Current time before hora_inicio → False."""
+        from runner import en_ventana_horaria
+        from datetime import time
+        cfg = {"hora_inicio": time(8, 0), "hora_fin": time(22, 0)}
+        assert en_ventana_horaria(cfg, datetime(2026, 6, 16, 3, 0, 0)) is False
+
+    def test_outside_window_after_end_returns_false(self) -> None:
+        """Current time after hora_fin → False."""
+        from runner import en_ventana_horaria
+        from datetime import time
+        cfg = {"hora_inicio": time(8, 0), "hora_fin": time(22, 0)}
+        assert en_ventana_horaria(cfg, datetime(2026, 6, 16, 23, 30, 0)) is False
+
+    def test_midnight_crossing_window_returns_false_not_supported(self) -> None:
+        """hora_inicio > hora_fin (midnight cross) → False (V1 does not support this)."""
+        from runner import en_ventana_horaria
+        from datetime import time
+        cfg = {"hora_inicio": time(22, 0), "hora_fin": time(6, 0)}  # crosses midnight
+        # Even at 23:00 which would logically be inside the window, V1 returns False
+        assert en_ventana_horaria(cfg, datetime(2026, 6, 16, 23, 0, 0)) is False
+
+    def test_timedelta_values_are_converted(self) -> None:
+        """hora_inicio/hora_fin as timedelta (psycopg2 TIME) are converted to time."""
+        from runner import en_ventana_horaria
+        from datetime import time
+        # psycopg2 returns TIME columns as timedelta
+        cfg = {
+            "hora_inicio": timedelta(hours=8),
+            "hora_fin": timedelta(hours=22),
+        }
+        assert en_ventana_horaria(cfg, datetime(2026, 6, 16, 12, 0, 0)) is True
+
+
+class TestDiaActivo:
+    """dia_activo pure-function unit tests."""
+
+    def test_no_dias_configured_always_true(self) -> None:
+        """dias_semana=None → True (no restriction)."""
+        from runner import dia_activo
+        cfg = {"dias_semana": None}
+        assert dia_activo(cfg, datetime(2026, 6, 16)) is True
+
+    def test_empty_dias_returns_true(self) -> None:
+        """dias_semana='' → True (empty = no restriction)."""
+        from runner import dia_activo
+        cfg = {"dias_semana": ""}
+        assert dia_activo(cfg, datetime(2026, 6, 16)) is True
+
+    def test_today_tuesday_in_weekday_list_returns_true(self) -> None:
+        """2026-06-16 is Tuesday (isoweekday=2); '1,2,3,4,5' includes it → True."""
+        from runner import dia_activo
+        cfg = {"dias_semana": "1,2,3,4,5"}
+        assert dia_activo(cfg, datetime(2026, 6, 16)) is True
+
+    def test_today_tuesday_not_in_weekend_list_returns_false(self) -> None:
+        """2026-06-16 is Tuesday (isoweekday=2); '6,7' does not include it → False."""
+        from runner import dia_activo
+        cfg = {"dias_semana": "6,7"}
+        assert dia_activo(cfg, datetime(2026, 6, 16)) is False
+
+    def test_invalid_dias_semana_string_returns_true_safe_fallback(self) -> None:
+        """Non-numeric dias_semana → ValueError caught, safe fallback returns True."""
+        from runner import dia_activo
+        cfg = {"dias_semana": "lunes,martes"}
+        assert dia_activo(cfg, datetime(2026, 6, 16)) is True

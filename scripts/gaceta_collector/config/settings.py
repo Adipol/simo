@@ -56,6 +56,11 @@ class GacetaConfig:
         )
     )
 
+    # Per-request HTTP timeout in seconds (prevents indefinite hangs on slow servers)
+    timeout_seconds: int = field(
+        default_factory=lambda: int(os.getenv("GACETA_TIMEOUT_SECONDS", "30"))
+    )
+
 
 @dataclass(frozen=True)
 class Settings:

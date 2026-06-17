@@ -154,3 +154,100 @@ class TestBoliviaParserEdgeCases:
         parser = BoliviaParser()
         rows = parser.parse_listing("<html><body><p>No data</p></body></html>")
         assert rows == []
+
+
+class TestBoliviaParserMalformedRows:
+    """Parser skips malformed <tr> rows silently (no crash, no partial data)."""
+
+    def _table(self, row_html: str) -> str:
+        """Wrap row HTML in the expected table structure."""
+        return (
+            '<table id="tNormas"><tbody>'
+            + row_html
+            + "</tbody></table>"
+        )
+
+    def _valid_row(self, gid: int = 99999, date_str: str = "14/06/2026") -> str:
+        """Helper: build a well-formed Decreto Presidencial row."""
+        return (
+            f"<tr>"
+            f"<td>1</td>"
+            f'<td><a href="/normas/textonormaRE/{gid}">D-{gid}</a></td>'
+            f"<td>Decreto Presidencial</td>"
+            f"<td>{date_str}</td>"
+            f"<td>3500</td>"
+            f"<td>Designa al ciudadano JUAN PEREZ como Ministro.</td>"
+            f"<td></td>"
+            f"</tr>"
+        )
+
+    def test_tr_with_fewer_than_7_cells_is_skipped(self) -> None:
+        """<tr> with < 7 <td> cells is silently skipped (returns empty list)."""
+        from drivers.bolivia.parser import BoliviaParser
+        parser = BoliviaParser()
+        html = self._table(
+            "<tr>"
+            '<td><a href="/normas/textonormaRE/999">D-999</a></td>'
+            "<td>Decreto Presidencial</td>"
+            "<td>14/06/2026</td>"
+            "</tr>"
+        )
+        rows = parser.parse_listing(html)
+        assert rows == []
+
+    def test_numero_cell_without_anchor_is_skipped(self) -> None:
+        """Numero <td> without <a> → row skipped."""
+        from drivers.bolivia.parser import BoliviaParser
+        parser = BoliviaParser()
+        html = self._table(
+            "<tr>"
+            "<td>1</td>"
+            "<td>Plain text — no link</td>"
+            "<td>Decreto Presidencial</td>"
+            "<td>14/06/2026</td>"
+            "<td>3500</td>"
+            "<td>Some sumario.</td>"
+            "<td></td>"
+            "</tr>"
+        )
+        rows = parser.parse_listing(html)
+        assert rows == []
+
+    def test_href_failing_id_regex_is_skipped(self) -> None:
+        """href that doesn't match /normas/textonormaRE/<digits> → row skipped."""
+        from drivers.bolivia.parser import BoliviaParser
+        parser = BoliviaParser()
+        html = self._table(
+            "<tr>"
+            "<td>1</td>"
+            '<td><a href="/other/path/no-id">D-999</a></td>'
+            "<td>Decreto Presidencial</td>"
+            "<td>14/06/2026</td>"
+            "<td>3500</td>"
+            "<td>Some sumario.</td>"
+            "<td></td>"
+            "</tr>"
+        )
+        rows = parser.parse_listing(html)
+        assert rows == []
+
+    def test_unparseable_date_sets_fecha_publicacion_to_none(self) -> None:
+        """Invalid date string → fecha_publicacion is None; row is still returned."""
+        from drivers.bolivia.parser import BoliviaParser
+        parser = BoliviaParser()
+        html = self._table(self._valid_row(date_str="INVALID-DATE"))
+        rows = parser.parse_listing(html)
+        assert len(rows) == 1
+        assert rows[0]["fecha_publicacion"] is None
+
+    def test_valid_row_after_malformed_is_returned(self) -> None:
+        """A valid row following a malformed one is still parsed correctly."""
+        from drivers.bolivia.parser import BoliviaParser
+        parser = BoliviaParser()
+        malformed = (
+            "<tr><td>bad</td></tr>"  # < 7 cells
+        )
+        html = self._table(malformed + self._valid_row(gid=88888))
+        rows = parser.parse_listing(html)
+        assert len(rows) == 1
+        assert rows[0]["gaceta_id_externo"] == 88888

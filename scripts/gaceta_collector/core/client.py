@@ -36,7 +36,7 @@ class GacetaClient:
         """
         self._throttle()
         headers = {"User-Agent": self._config.user_agent}
-        response = self._session.get(url, headers=headers)
+        response = self._session.get(url, headers=headers, timeout=self._config.timeout_seconds)
         self._last_request_at = time.monotonic()
         response.raise_for_status()
         return response.text

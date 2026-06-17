@@ -171,3 +171,132 @@ class TestRunCycleLogScripts:
             run_cycle(conn=mock_conn, pais="BO", max_pages=1)
 
         mock_log.assert_called_once()
+
+
+class TestRunCycleErrorBranch:
+    """run_cycle handles exceptions gracefully: logs error, _log_run still called."""
+
+    def test_client_error_sets_estado_error(self) -> None:
+        """When client.get() raises, result.estado='error' and _log_run is still called."""
+        from main import run_cycle
+
+        mock_conn = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.get_ultimo_gaceta_id.return_value = None
+
+        mock_client = MagicMock()
+        mock_client.get.side_effect = ConnectionError("Network unreachable")
+
+        with patch("main.GacetaRepository", return_value=mock_repo), \
+             patch("main.GacetaClient", return_value=mock_client), \
+             patch("main._log_run") as mock_log:
+            result = run_cycle(conn=mock_conn, pais="BO", max_pages=1)
+
+        assert result.estado == "error"
+        assert result.mensaje_error is not None
+        assert "Network unreachable" in result.mensaje_error
+        mock_log.assert_called_once()
+
+    def test_partial_failure_still_logs(self) -> None:
+        """Repo error mid-cycle: result.estado='error', _log_run called with error result."""
+        from main import run_cycle
+
+        mock_conn = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.get_ultimo_gaceta_id.return_value = None
+        mock_repo.upsert_norma.side_effect = Exception("DB write failed")
+
+        mock_client = MagicMock()
+        mock_client.get.return_value = FIXTURE_HTML
+
+        with patch("main.GacetaRepository", return_value=mock_repo), \
+             patch("main.GacetaClient", return_value=mock_client), \
+             patch("main._log_run") as mock_log:
+            result = run_cycle(conn=mock_conn, pais="BO", max_pages=1)
+
+        assert result.estado == "error"
+        mock_log.assert_called_once()
+
+
+class TestRunCycleMultiPage:
+    """run_cycle fetches multiple pages and respects cross-page reached_known."""
+
+    def test_multi_page_fetches_all_pages_when_no_cursor(self) -> None:
+        """With max_pages=2 and no cursor, client.get called twice; paginas_procesadas=2."""
+        from main import run_cycle
+
+        mock_conn = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.get_ultimo_gaceta_id.return_value = None
+        mock_repo.upsert_norma.return_value = 42
+        mock_repo.insert_eventos.return_value = 1
+        mock_repo.update_estado_extraccion.return_value = None
+
+        mock_client = MagicMock()
+        mock_client.get.return_value = FIXTURE_HTML
+
+        with patch("main.GacetaRepository", return_value=mock_repo), \
+             patch("main.GacetaClient", return_value=mock_client):
+            result = run_cycle(conn=mock_conn, pais="BO", max_pages=2)
+
+        assert mock_client.get.call_count == 2
+        assert result.paginas_procesadas == 2
+
+    def test_cross_page_reached_known_stops_before_next_page(self) -> None:
+        """Cursor=180124: row 180125 is new, row 180123 is known → page 2 never fetched."""
+        from main import run_cycle
+
+        mock_conn = MagicMock()
+        mock_repo = MagicMock()
+        # Cursor set so that only 180125 is new in the fixture
+        mock_repo.get_ultimo_gaceta_id.return_value = 180124
+        mock_repo.upsert_norma.return_value = 42
+        mock_repo.insert_eventos.return_value = 1
+        mock_repo.update_estado_extraccion.return_value = None
+
+        mock_client = MagicMock()
+        mock_client.get.return_value = FIXTURE_HTML
+
+        with patch("main.GacetaRepository", return_value=mock_repo), \
+             patch("main.GacetaClient", return_value=mock_client):
+            result = run_cycle(conn=mock_conn, pais="BO", max_pages=2)
+
+        # reached_known on page 1 → page 2 never fetched
+        assert mock_client.get.call_count == 1
+        # Only 180125 upserted (180123 <= 180124 triggers break)
+        assert mock_repo.upsert_norma.call_count == 1
+
+
+class TestRunCycleExactCounts:
+    """Exact counts from the fixture: 3 normas, 2 with events, 1 bulk → requiere_detalle."""
+
+    def test_full_cycle_exact_upsert_and_event_counts(self) -> None:
+        """Fixture: 3 Decreto Presidencial rows; 2 extractable, 1 bulk → exact counts."""
+        from main import run_cycle, RunResult
+
+        mock_conn = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.get_ultimo_gaceta_id.return_value = None
+        mock_repo.upsert_norma.return_value = 42
+        mock_repo.insert_eventos.return_value = 1
+        mock_repo.update_estado_extraccion.return_value = None
+
+        mock_client = MagicMock()
+        mock_client.get.return_value = FIXTURE_HTML
+
+        with patch("main.GacetaRepository", return_value=mock_repo), \
+             patch("main.GacetaClient", return_value=mock_client):
+            result = run_cycle(conn=mock_conn, pais="BO", max_pages=1)
+
+        # 3 Decreto Presidencial rows in fixture (180125, 180123, 180120)
+        assert mock_repo.upsert_norma.call_count == 3
+        # 2 extractable rows (180125 + 180123); 180120 bulk → requiere_detalle, no eventos
+        assert mock_repo.insert_eventos.call_count == 2
+        # update_estado_extraccion called for all 3 normas
+        assert mock_repo.update_estado_extraccion.call_count == 3
+        # Exact result counts
+        assert isinstance(result, RunResult)
+        assert result.normas_nuevas == 3
+        assert result.eventos_insertados == 2
+        assert result.paginas_procesadas == 1
+        assert result.estado == "ok"

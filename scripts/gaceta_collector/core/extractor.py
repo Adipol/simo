@@ -91,6 +91,13 @@ def extract_eventos(sumario: str) -> ExtractorResult:
     if not has_designa:
         return ExtractorResult(eventos=[], estado_extraccion=ESTADO_REQUIERE_REVISION)
 
+    # Mixed-verb guard: if any non-V1 verb is present alongside 'designa/designación',
+    # the decree is ambiguous (e.g. "Ratifica la designación de…", "Acepta la renuncia y
+    # designa…"). Conservative policy: flag for human review rather than risk a false
+    # positive. Only a clean standalone V1 decree is auto-extracted.
+    if has_other:
+        return ExtractorResult(eventos=[], estado_extraccion=ESTADO_REQUIERE_REVISION)
+
     # V1: 'designa' detected — try to extract individual appointments
     eventos = _extract_appointments(sumario)
 

@@ -16,14 +16,19 @@ import pytest
 from config.settings import GacetaConfig
 
 
-def _make_config(delay_min_ms: int = 200, delay_max_ms: int = 400, user_agent: str = "TestBot/1.0") -> GacetaConfig:
+def _make_config(
+    delay_min_ms: int = 200,
+    delay_max_ms: int = 400,
+    user_agent: str = "TestBot/1.0",
+    timeout_seconds: int = 30,
+) -> GacetaConfig:
     """Helper — create a GacetaConfig with fast throttle for tests."""
-    # GacetaConfig is frozen, so use env vars + Settings
     import os
     with patch.dict(os.environ, {
         "GACETA_DELAY_MIN_MS": str(delay_min_ms),
         "GACETA_DELAY_MAX_MS": str(delay_max_ms),
         "GACETA_USER_AGENT": user_agent,
+        "GACETA_TIMEOUT_SECONDS": str(timeout_seconds),
     }):
         return GacetaConfig()
 
@@ -158,3 +163,36 @@ class TestGacetaClientThrottle:
         assert len(sleep_calls) >= 1
         for s in sleep_calls:
             assert 0.2 <= s <= 0.6, f"Sleep {s}s outside expected range 0.2-0.6s"
+
+
+class TestGacetaClientTimeout:
+    """GacetaClient passes the configured timeout to each HTTP request."""
+
+    def _mock_response(self, status_code: int = 200, text: str = "<html/>") -> MagicMock:
+        resp = MagicMock()
+        resp.status_code = status_code
+        resp.text = text
+        resp.raise_for_status = MagicMock()
+        return resp
+
+    def test_get_passes_timeout_to_session(self) -> None:
+        """get() passes timeout_seconds from config to requests.Session.get()."""
+        from core.client import GacetaClient
+        cfg = _make_config(timeout_seconds=45)
+        client = GacetaClient(cfg)
+        mock_resp = self._mock_response(200)
+
+        with patch("requests.Session.get", return_value=mock_resp) as mock_get:
+            client.get("https://example.com/test")
+
+        _args, kwargs = mock_get.call_args
+        assert kwargs.get("timeout") == 45
+
+    def test_default_timeout_is_30_seconds(self) -> None:
+        """Default GACETA_TIMEOUT_SECONDS resolves to 30."""
+        from config.settings import GacetaConfig
+        import os
+        env = {k: v for k, v in os.environ.items() if k != "GACETA_TIMEOUT_SECONDS"}
+        with patch.dict(os.environ, env, clear=True):
+            cfg = GacetaConfig()
+        assert cfg.timeout_seconds == 30

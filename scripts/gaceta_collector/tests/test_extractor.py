@@ -173,3 +173,59 @@ class TestExtractorNonDesignaVerb:
 
         assert result.estado_extraccion == "requiere_revision"
         assert result.eventos == []
+
+
+class TestExtractorMixedVerbSafetyNet:
+    """FIX 1: Mixed-verb decrees (non-V1 verb + designación de) → requiere_revision.
+
+    The natural feminine form 'designación de la ciudadana' matches _RE_DESIGNA_TRIGGER
+    (word boundary after 'de' is satisfied by the trailing space). When a non-V1
+    verb (Ratifica, Deroga, acepta la renuncia) also appears, has_other is True —
+    the decree is ambiguous and must be flagged for human review, NOT auto-extracted.
+
+    These tests FAIL before FIX 1 because has_other is computed but never gated.
+    """
+
+    def test_ratifica_designacion_de_ciudadana_returns_requiere_revision(self) -> None:
+        """'Ratifica la designación de la ciudadana NAME como CARGO' → requiere_revision."""
+        from core.extractor import extract_eventos
+
+        result = extract_eventos(
+            "Ratifica la designación de la ciudadana ANA LOPEZ como Ministra."
+        )
+
+        assert result.estado_extraccion == "requiere_revision"
+        assert result.eventos == []
+
+    def test_deroga_designacion_de_ciudadana_returns_requiere_revision(self) -> None:
+        """'Deroga la designación de la ciudadana NAME como CARGO' → requiere_revision."""
+        from core.extractor import extract_eventos
+
+        result = extract_eventos(
+            "Deroga la designación de la ciudadana ROSA QUISPE como Viceministra."
+        )
+
+        assert result.estado_extraccion == "requiere_revision"
+        assert result.eventos == []
+
+    def test_acepta_renuncia_y_designa_returns_requiere_revision(self) -> None:
+        """'Acepta la renuncia y designa a la ciudadana NAME como CARGO' → requiere_revision."""
+        from core.extractor import extract_eventos
+
+        result = extract_eventos(
+            "Acepta la renuncia y designa a la ciudadana MARIA PEREZ como Ministra."
+        )
+
+        assert result.estado_extraccion == "requiere_revision"
+        assert result.eventos == []
+
+    def test_pure_designa_feminine_still_returns_procesado_no_regression(self) -> None:
+        """Regression: pure 'Designa a la ciudadana NAME' (no other verb) → procesado."""
+        from core.extractor import extract_eventos
+
+        result = extract_eventos(
+            "Designa a la ciudadana ANA MARIA GUTIERREZ SORIA como Ministra de Salud."
+        )
+
+        assert result.estado_extraccion == "procesado"
+        assert len(result.eventos) == 1
