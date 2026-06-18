@@ -16,9 +16,9 @@ use Livewire\WithPagination;
 /**
  * Human review queue for Gaceta PEP appointment events.
  *
- * Lists events with estado_revision = 'pendiente' (or 'requiere_revision'
- * when the extractor flagged incomplete extractions). A reviewer can filter
- * by country (pais) and approve or reject each event individually.
+ * Lists events with estado_revision = 'pendiente' awaiting human review.
+ * A reviewer can filter by country (pais) and approve or reject each event
+ * individually.
  *
  * Approve  → estado_revision = 'aprobado',  revisado_por + revisado_at stamped.
  * Reject   → estado_revision = 'rechazado', revisado_por + revisado_at stamped.

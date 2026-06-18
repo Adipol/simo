@@ -40,6 +40,15 @@ class EventosTest extends TestCase
         return $user;
     }
 
+    private function makeOperador(): User
+    {
+        $this->seed(RolesPermisosSeeder::class);
+        $user = User::factory()->create(['activo' => true]);
+        $user->assignRole('operador');
+
+        return $user;
+    }
+
     private function makePais(string $codigo = 'BO', string $nombre = 'Bolivia'): Pais
     {
         return Pais::firstOrCreate(
@@ -73,6 +82,47 @@ class EventosTest extends TestCase
             'interino'                   => false,
             'estado_revision'            => $estado,
         ]);
+    }
+
+    // ─── T0: Auth gate (security regression) ─────────────────────────────────
+
+    /**
+     * Unauthenticated user accessing /gaceta/eventos is redirected to login.
+     *
+     * REQ-AUTH / SCN-auth.1
+     */
+    public function test_gaceta_eventos_requires_authentication(): void
+    {
+        $this->get('/gaceta/eventos')
+            ->assertRedirect(route('login'));
+    }
+
+    /**
+     * Operador (no 'gestionar resultados' permission) gets 403 from mount().
+     *
+     * REQ-AUTH / SCN-auth.2
+     */
+    public function test_gaceta_eventos_operator_without_permission_gets_403(): void
+    {
+        $operador = $this->makeOperador();
+
+        Livewire::actingAs($operador)
+            ->test(Eventos::class)
+            ->assertForbidden();
+    }
+
+    /**
+     * Admin (has 'gestionar resultados') can mount the component successfully.
+     *
+     * REQ-AUTH / SCN-auth.3 — positive case proving the gate allows the right role.
+     */
+    public function test_gaceta_eventos_admin_with_permission_gets_200(): void
+    {
+        $admin = $this->makeAdmin();
+
+        Livewire::actingAs($admin)
+            ->test(Eventos::class)
+            ->assertOk();
     }
 
     // ─── T1: Renders pending list (6.1) ──────────────────────────────────────
