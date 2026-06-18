@@ -262,6 +262,66 @@ class EventosTest extends TestCase
         ]);
     }
 
+    // ─── T5: PDF link in Decreto column (SCN-pdf-link) ───────────────────────
+
+    /**
+     * When gacetaNorma has a pdf_url the decree number is rendered as an anchor
+     * pointing to that URL and opening in a new tab.
+     *
+     * SCN-pdf-link.1
+     */
+    public function test_gaceta_eventos_decree_links_to_pdf_when_url_present(): void
+    {
+        $admin = $this->makeAdmin();
+        $this->makePais();
+
+        $norma = GacetaNorma::create([
+            'pais'              => 'BO',
+            'gaceta_id_externo' => 99,
+            'tipo_norma'        => 'decreto_supremo',
+            'numero_decreto'    => '0042',
+            'sumario'           => 'Test sumario',
+            'estado_extraccion' => 'procesado',
+            'pdf_url'           => 'https://gaceta.bo/pdf/decreto-42.pdf',
+        ]);
+
+        $this->makeEvento($norma, 'pendiente', 'Carlos Ruiz');
+
+        Livewire::actingAs($admin)
+            ->test(Eventos::class)
+            ->assertSeeHtml('href="https://gaceta.bo/pdf/decreto-42.pdf"')
+            ->assertSeeHtml('target="_blank"');
+    }
+
+    /**
+     * When gacetaNorma has no pdf_url, no empty/broken anchor is rendered — decree
+     * text appears as plain text.
+     *
+     * SCN-pdf-link.2 (triangulation — forces the conditional branch in the blade)
+     */
+    public function test_gaceta_eventos_decree_shows_plain_text_when_no_pdf_url(): void
+    {
+        $admin = $this->makeAdmin();
+        $this->makePais();
+
+        $norma = GacetaNorma::create([
+            'pais'              => 'BO',
+            'gaceta_id_externo' => 100,
+            'tipo_norma'        => 'decreto_supremo',
+            'numero_decreto'    => '0043',
+            'sumario'           => 'Test sumario sin pdf',
+            'estado_extraccion' => 'procesado',
+            'pdf_url'           => null,
+        ]);
+
+        $this->makeEvento($norma, 'pendiente', 'María Torres');
+
+        Livewire::actingAs($admin)
+            ->test(Eventos::class)
+            ->assertSeeHtml('DS 0043')
+            ->assertDontSeeHtml('href=""');
+    }
+
     // ─── T4: Rechazar sets rechazado (6.4) ───────────────────────────────────
 
     /**

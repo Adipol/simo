@@ -67,7 +67,15 @@
                     </td>
                     <td class="px-4 py-3 text-zinc-500 text-xs">
                         @if($evento->gacetaNorma?->numero_decreto)
-                            DS {{ $evento->gacetaNorma->numero_decreto }}
+                            @if($evento->gacetaNorma->pdf_url)
+                                <a href="{{ $evento->gacetaNorma->pdf_url }}"
+                                   target="_blank"
+                                   rel="noopener noreferrer"
+                                   class="text-indigo-600 hover:underline"
+                                >DS {{ $evento->gacetaNorma->numero_decreto }}</a>
+                            @else
+                                DS {{ $evento->gacetaNorma->numero_decreto }}
+                            @endif
                             @if($evento->gacetaNorma->fecha_publicacion)
                                 <br><span class="text-zinc-400">{{ $evento->gacetaNorma->fecha_publicacion->format('d/m/Y') }}</span>
                             @endif
