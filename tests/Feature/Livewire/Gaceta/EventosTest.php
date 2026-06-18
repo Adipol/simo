@@ -322,6 +322,198 @@ class EventosTest extends TestCase
             ->assertDontSeeHtml('href=""');
     }
 
+    // ─── T5: Estado filter — aprobado (SCN-estado.1) ─────────────────────────
+
+    /**
+     * Setting estado='aprobado' shows only aprobado events; pendiente excluded.
+     */
+    public function test_gaceta_eventos_estado_filter_shows_only_aprobados(): void
+    {
+        $admin     = $this->makeAdmin();
+        $norma     = $this->makeNorma();
+        $pendiente = $this->makeEvento($norma, 'pendiente', 'Juan Pérez');
+        $aprobado  = $this->makeEvento($norma, 'aprobado', 'Ana García');
+
+        Livewire::actingAs($admin)
+            ->test(Eventos::class)
+            ->set('estado', 'aprobado')
+            ->assertViewHas('eventos', function ($eventos) use ($pendiente, $aprobado) {
+                $ids = $eventos->pluck('id');
+
+                return $ids->contains($aprobado->id) && ! $ids->contains($pendiente->id);
+            });
+    }
+
+    /**
+     * Triangulation: estado='rechazado' shows only rechazado; pendiente excluded.
+     *
+     * SCN-estado.2
+     */
+    public function test_gaceta_eventos_estado_filter_shows_only_rechazados(): void
+    {
+        $admin     = $this->makeAdmin();
+        $norma     = $this->makeNorma();
+        $pendiente = $this->makeEvento($norma, 'pendiente', 'Juan Pérez');
+        $rechazado = $this->makeEvento($norma, 'rechazado', 'Luis Gomez');
+
+        Livewire::actingAs($admin)
+            ->test(Eventos::class)
+            ->set('estado', 'rechazado')
+            ->assertViewHas('eventos', function ($eventos) use ($pendiente, $rechazado) {
+                $ids = $eventos->pluck('id');
+
+                return $ids->contains($rechazado->id) && ! $ids->contains($pendiente->id);
+            });
+    }
+
+    /**
+     * Triangulation: estado='' (todos) shows all three estados simultaneously.
+     *
+     * SCN-estado.3
+     */
+    public function test_gaceta_eventos_estado_filter_todos_shows_all_estados(): void
+    {
+        $admin     = $this->makeAdmin();
+        $norma     = $this->makeNorma();
+        $pendiente = $this->makeEvento($norma, 'pendiente', 'Juan Pérez');
+        $aprobado  = $this->makeEvento($norma, 'aprobado', 'Ana García');
+        $rechazado = $this->makeEvento($norma, 'rechazado', 'Luis Gomez');
+
+        Livewire::actingAs($admin)
+            ->test(Eventos::class)
+            ->set('estado', '')
+            ->assertViewHas('eventos', function ($eventos) use ($pendiente, $aprobado, $rechazado) {
+                $ids = $eventos->pluck('id');
+
+                return $ids->contains($pendiente->id)
+                    && $ids->contains($aprobado->id)
+                    && $ids->contains($rechazado->id);
+            });
+    }
+
+    // ─── T6: Estado filter resets pagination (SCN-estado.4) ──────────────────
+
+    /**
+     * Changing the estado filter resets the paginator back to page 1.
+     */
+    public function test_gaceta_eventos_changing_estado_resets_page(): void
+    {
+        $admin = $this->makeAdmin();
+        $norma = $this->makeNorma();
+
+        // 25 pending events so page 2 exists at default estado=pendiente
+        for ($i = 1; $i <= 25; $i++) {
+            $this->makeEvento($norma, 'pendiente', "Persona {$i}");
+        }
+
+        $component = Livewire::actingAs($admin)->test(Eventos::class);
+
+        // Navigate to page 2 on the pending list
+        $component->call('gotoPage', 2);
+
+        // Change estado — must reset to page 1
+        $component->set('estado', '');
+
+        $component->assertSet('paginators', ['page' => 1]);
+    }
+
+    // ─── T7: Default estado is pendiente (SCN-estado.5) ──────────────────────
+
+    /**
+     * The component mounts with estado='pendiente' by default so existing
+     * pending-list behaviour is preserved as a regression guard.
+     */
+    public function test_gaceta_eventos_default_estado_is_pendiente(): void
+    {
+        $admin = $this->makeAdmin();
+
+        Livewire::actingAs($admin)
+            ->test(Eventos::class)
+            ->assertSet('estado', 'pendiente');
+    }
+
+    // ─── T8: Reviewer columns and badge vs buttons (SCN-estado.6) ────────────
+
+    /**
+     * An aprobado row renders the reviewer's name in the "Revisado por" column.
+     */
+    public function test_gaceta_eventos_aprobado_row_shows_reviewer_name(): void
+    {
+        $admin    = $this->makeAdmin();
+        $reviewer = User::factory()->create(['activo' => true, 'name' => 'Revisor Ejemplo']);
+        $norma    = $this->makeNorma();
+
+        GacetaEventoPep::create([
+            'gaceta_norma_id'           => $norma->id,
+            'pais'                      => $norma->pais,
+            'persona_nombre'            => 'Carlos Ruiz',
+            'persona_nombre_normalizado' => 'CARLOS RUIZ',
+            'cargo'                     => 'Ministro de Hacienda',
+            'tipo_evento'               => 'designacion',
+            'interino'                  => false,
+            'estado_revision'           => 'aprobado',
+            'revisado_por'              => $reviewer->id,
+            'revisado_at'               => now(),
+        ]);
+
+        Livewire::actingAs($admin)
+            ->test(Eventos::class)
+            ->set('estado', 'aprobado')
+            ->assertSeeHtml('Revisor Ejemplo');
+    }
+
+    /**
+     * Triangulation: an aprobado row hides Aprobar/Rechazar buttons and shows a badge.
+     *
+     * SCN-estado.7
+     */
+    public function test_gaceta_eventos_aprobado_row_hides_action_buttons(): void
+    {
+        $admin    = $this->makeAdmin();
+        $reviewer = User::factory()->create(['activo' => true]);
+        $norma    = $this->makeNorma();
+
+        GacetaEventoPep::create([
+            'gaceta_norma_id'           => $norma->id,
+            'pais'                      => $norma->pais,
+            'persona_nombre'            => 'Ana García',
+            'persona_nombre_normalizado' => 'ANA GARCÍA',
+            'cargo'                     => 'Ministra de Salud',
+            'tipo_evento'               => 'designacion',
+            'interino'                  => false,
+            'estado_revision'           => 'aprobado',
+            'revisado_por'              => $reviewer->id,
+            'revisado_at'               => now(),
+        ]);
+
+        Livewire::actingAs($admin)
+            ->test(Eventos::class)
+            ->set('estado', 'aprobado')
+            ->assertDontSeeHtml('wire:click="aprobar(')
+            ->assertDontSeeHtml('wire:click="rechazar(')
+            ->assertSeeHtml('Aprobado');
+    }
+
+    /**
+     * A pendiente row still renders Aprobar and Rechazar action buttons.
+     *
+     * Regression guard: ensures the conditional in the view keeps showing
+     * buttons for rows that are still pending.
+     *
+     * SCN-estado.8
+     */
+    public function test_gaceta_eventos_pendiente_row_shows_action_buttons(): void
+    {
+        $admin  = $this->makeAdmin();
+        $norma  = $this->makeNorma();
+        $evento = $this->makeEvento($norma, 'pendiente', 'Juan Pérez');
+
+        Livewire::actingAs($admin)
+            ->test(Eventos::class)
+            ->assertSeeHtml("wire:click=\"aprobar({$evento->id})\"")
+            ->assertSeeHtml("wire:click=\"rechazar({$evento->id})\"");
+    }
+
     // ─── T4: Rechazar sets rechazado (6.4) ───────────────────────────────────
 
     /**
