@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Http\Controllers\ProfileController;
 use App\Livewire\Admin\PrecisionDashboard;
 use App\Livewire\Configuracion\Paises;
+use App\Livewire\Gaceta\Eventos as GacetaEventos;
 use App\Livewire\Dashboard;
 use App\Livewire\Pep\Cambios;
 use App\Livewire\Pep\Fuentes;
@@ -75,6 +76,11 @@ Route::middleware(['auth', 'usuario.activo'])->group(function () {
     Route::get('/admin/precision', PrecisionDashboard::class)
         ->middleware('permission:gestionar resultados')
         ->name('admin.precision');
+
+    // Gaceta — revision de eventos PEP (admin y supervisor)
+    Route::get('/gaceta/eventos', GacetaEventos::class)
+        ->middleware('permission:gestionar resultados')
+        ->name('gaceta.eventos');
 
     // Perfil (Breeze)
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
