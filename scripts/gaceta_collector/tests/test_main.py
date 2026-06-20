@@ -15,6 +15,18 @@ run_cycle() must:
 7. Returns a RunResult with counts
 
 All HTTP and DB calls are MOCKED.
+
+NOTE on FIXTURE_HTML: test_main.py uses a standalone inline card-based mock HTML
+(FIXTURE_HTML below) instead of the real parser fixture.  The real fixture
+(bolivia_listadonor_page1.html) is the parser's responsibility; coupling test_main
+to it creates brittle count assertions.  The inline mock provides controlled
+IDs, sumarios, and counts that are stable across fixture updates.
+
+IDs used (descending, as per real site ordering):
+  180125  Decreto Presidencial  — extractable sumario (1 event)
+  180124  Decreto Supremo       — filtered out by parser
+  180123  Decreto Presidencial  — extractable sumario (1 event, interino)
+  180120  Decreto Presidencial  — bulk sumario → requiere_detalle (0 events)
 """
 from datetime import date
 from pathlib import Path
@@ -22,10 +34,88 @@ from unittest.mock import MagicMock, patch, call
 
 import pytest
 
-# Reuse the HTML fixture from parser tests
-FIXTURE_HTML = (
-    Path(__file__).parent / "fixtures" / "bolivia_listadonor_page1.html"
-).read_text(encoding="utf-8")
+# Inline card-based mock HTML (matches the real Drupal 10 Bootstrap card structure
+# that the new BoliviaParser expects).  Uses controlled IDs and sumarios so that
+# test_main.py assertions stay stable regardless of what the real parser fixture
+# contains.
+FIXTURE_HTML = """<html><body>
+<div class="row"><div class="col-12 m-2">
+  <div class="card h-100 p-2 fondo-paper">
+    <div class="card-body">
+      <p class="card-text texto-default">
+        Publicado en edición: <strong><a href="/edicions/view/3500NEC">3500NEC</a></strong>
+        | Fecha de Publicación: 2026-06-14
+      </p>
+      <h6><b>Decreto Presidencial N° 549</b></h6>
+      <div class="contentpaneopen">
+        <p>Designa a la ciudadana MARIA JOSE GARCIA LUNA como Ministra de Educacion.</p>
+      </div>
+    </div>
+    <div class="card-footer bg-transparent text-end" style="border: none;">
+      <a href="/normas/verGratis_gob/180125">Ver Norma</a> |
+      <a href="/normas/verGratis_gob1/180125" target="_blank">Descargar Word</a> |
+      <a href="/normas/descargarNrms/180125">Descargar PDF</a>
+    </div>
+  </div>
+</div></div>
+<div class="row"><div class="col-12 m-2">
+  <div class="card h-100 p-2 fondo-paper">
+    <div class="card-body">
+      <p class="card-text texto-default">
+        Publicado en edición: <strong><a href="/edicions/view/3500NEC">3500NEC</a></strong>
+        | Fecha de Publicación: 2026-06-14
+      </p>
+      <h6><b>Decreto Supremo N° 548</b></h6>
+      <div class="contentpaneopen">
+        <p>Aprueba el Presupuesto General del Estado 2027.</p>
+      </div>
+    </div>
+    <div class="card-footer bg-transparent text-end" style="border: none;">
+      <a href="/normas/verGratis_gob/180124">Ver Norma</a> |
+      <a href="/normas/verGratis_gob1/180124" target="_blank">Descargar Word</a> |
+      <a href="/normas/descargarNrms/180124">Descargar PDF</a>
+    </div>
+  </div>
+</div></div>
+<div class="row"><div class="col-12 m-2">
+  <div class="card h-100 p-2 fondo-paper">
+    <div class="card-body">
+      <p class="card-text texto-default">
+        Publicado en edición: <strong><a href="/edicions/view/3499NEC">3499NEC</a></strong>
+        | Fecha de Publicación: 2026-06-12
+      </p>
+      <h6><b>Decreto Presidencial N° 547</b></h6>
+      <div class="contentpaneopen">
+        <p>Designa al ciudadano JUAN CARLOS MAMANI QUISPE como INTERINO Viceministro de Energias Renovables de la Agencia Nacional de Hidrocarburos.</p>
+      </div>
+    </div>
+    <div class="card-footer bg-transparent text-end" style="border: none;">
+      <a href="/normas/verGratis_gob/180123">Ver Norma</a> |
+      <a href="/normas/verGratis_gob1/180123" target="_blank">Descargar Word</a> |
+      <a href="/normas/descargarNrms/180123">Descargar PDF</a>
+    </div>
+  </div>
+</div></div>
+<div class="row"><div class="col-12 m-2">
+  <div class="card h-100 p-2 fondo-paper">
+    <div class="card-body">
+      <p class="card-text texto-default">
+        Publicado en edición: <strong><a href="/edicions/view/3498NEC">3498NEC</a></strong>
+        | Fecha de Publicación: 2026-06-10
+      </p>
+      <h6><b>Decreto Presidencial N° 546</b></h6>
+      <div class="contentpaneopen">
+        <p>Designacion del Alto Mando Militar.</p>
+      </div>
+    </div>
+    <div class="card-footer bg-transparent text-end" style="border: none;">
+      <a href="/normas/verGratis_gob/180120">Ver Norma</a> |
+      <a href="/normas/verGratis_gob1/180120" target="_blank">Descargar Word</a> |
+      <a href="/normas/descargarNrms/180120">Descargar PDF</a>
+    </div>
+  </div>
+</div></div>
+</body></html>"""
 
 
 def _make_mock_conn(cursor_value=None, upsert_id=42):
