@@ -36,6 +36,13 @@ final class Eventos extends Component
     #[Url]
     public string $pais = '';
 
+    /**
+     * Review-status filter — persisted in the URL query string.
+     * Allowed values: 'pendiente' | 'aprobado' | 'rechazado' | '' (all).
+     */
+    #[Url]
+    public string $estado = 'pendiente';
+
     // ─── Lifecycle ────────────────────────────────────────────────────────────
 
     public function mount(): void
@@ -53,14 +60,20 @@ final class Eventos extends Component
         $this->resetPage();
     }
 
+    public function updatingEstado(): void
+    {
+        $this->resetPage();
+    }
+
     // ─── Computed ─────────────────────────────────────────────────────────────
 
     /**
-     * Paginated list of events pending human review.
+     * Paginated list of events filtered by estado and país.
      *
-     * Eagerly loads gacetaNorma to avoid N+1 when the view renders decree data.
-     * Never queries the DB inside render() — this computed property is memoized
-     * for the duration of the request by Livewire's #[Computed] decorator.
+     * When estado is non-empty, restricts to that estado_revision value.
+     * When estado is '' all statuses are included (history view).
+     * Eagerly loads gacetaNorma and revisadoPor to avoid N+1 in the view.
+     * Never queries the DB inside render() — memoized by Livewire's #[Computed].
      *
      * @return LengthAwarePaginator<GacetaEventoPep>
      */
@@ -68,8 +81,8 @@ final class Eventos extends Component
     public function eventos(): LengthAwarePaginator
     {
         return GacetaEventoPep::query()
-            ->with('gacetaNorma')
-            ->pendienteRevision()
+            ->with(['gacetaNorma', 'revisadoPor'])
+            ->when($this->estado !== '', fn ($q) => $q->where('estado_revision', $this->estado))
             ->when($this->pais !== '', fn ($q) => $q->porPais($this->pais))
             ->orderBy('created_at', 'asc')
             ->paginate(20);

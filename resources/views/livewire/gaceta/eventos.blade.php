@@ -2,6 +2,12 @@
 
     {{-- ── Filtros ────────────────────────────────────────────────────────── --}}
     <div class="flex items-center gap-2 flex-wrap">
+        <select wire:model.live="estado" class="simo-select">
+            <option value="pendiente">Pendientes</option>
+            <option value="aprobado">Aprobados</option>
+            <option value="rechazado">Rechazados</option>
+            <option value="">Todos</option>
+        </select>
         <select wire:model.live="pais" class="simo-select">
             <option value="">Todos los países</option>
             <option value="BO">Bolivia</option>
@@ -19,8 +25,8 @@
             <svg class="w-12 h-12 text-zinc-300 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
             </svg>
-            <p class="text-sm font-medium text-zinc-500">No hay eventos pendientes de revisión.</p>
-            @if($pais !== '')
+            <p class="text-sm font-medium text-zinc-500">No hay eventos para mostrar.</p>
+            @if($pais !== '' || $estado !== '')
                 <button wire:click="$set('pais', '')" class="mt-2 text-xs text-indigo-600 hover:underline">
                     Ver todos los países
                 </button>
@@ -40,6 +46,8 @@
                     <th class="px-4 py-3 text-left">Tipo</th>
                     <th class="px-4 py-3 text-left">Decreto</th>
                     <th class="px-4 py-3 text-left">Interino</th>
+                    <th class="px-4 py-3 text-left">Revisado por</th>
+                    <th class="px-4 py-3 text-left">Revisado</th>
                     <th class="px-4 py-3 text-right">Acciones</th>
                 </tr>
             </thead>
@@ -90,23 +98,35 @@
                             <span class="text-zinc-300 text-xs">—</span>
                         @endif
                     </td>
+                    <td class="px-4 py-3 text-zinc-600 text-xs">
+                        {{ $evento->revisadoPor?->name ?? '—' }}
+                    </td>
+                    <td class="px-4 py-3 text-zinc-500 text-xs">
+                        {{ $evento->revisado_at?->format('d/m/Y H:i') ?? '—' }}
+                    </td>
                     <td class="px-4 py-3">
-                        <div class="flex items-center justify-end gap-2">
-                            <button
-                                wire:click="aprobar({{ $evento->id }})"
-                                wire:confirm="¿Aprobar este evento PEP?"
-                                class="simo-btn bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 text-xs"
-                            >
-                                Aprobar
-                            </button>
-                            <button
-                                wire:click="rechazar({{ $evento->id }})"
-                                wire:confirm="¿Rechazar este evento PEP?"
-                                class="simo-btn bg-rose-50 border border-rose-200 text-rose-600 hover:bg-rose-100 text-xs"
-                            >
-                                Rechazar
-                            </button>
-                        </div>
+                        @if($evento->estado_revision === 'pendiente')
+                            <div class="flex items-center justify-end gap-2">
+                                <button
+                                    wire:click="aprobar({{ $evento->id }})"
+                                    wire:confirm="¿Aprobar este evento PEP?"
+                                    class="simo-btn bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 text-xs"
+                                >
+                                    Aprobar
+                                </button>
+                                <button
+                                    wire:click="rechazar({{ $evento->id }})"
+                                    wire:confirm="¿Rechazar este evento PEP?"
+                                    class="simo-btn bg-rose-50 border border-rose-200 text-rose-600 hover:bg-rose-100 text-xs"
+                                >
+                                    Rechazar
+                                </button>
+                            </div>
+                        @elseif($evento->estado_revision === 'aprobado')
+                            <span class="simo-badge bg-emerald-50 text-emerald-700">Aprobado</span>
+                        @else
+                            <span class="simo-badge bg-rose-50 text-rose-600">Rechazado</span>
+                        @endif
                     </td>
                 </tr>
                 @endforeach

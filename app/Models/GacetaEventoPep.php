@@ -63,6 +63,11 @@ class GacetaEventoPep extends Model
         return $this->belongsTo(GacetaNorma::class, 'gaceta_norma_id');
     }
 
+    public function revisadoPor(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'revisado_por');
+    }
+
     // =========================================================================
     // Scopes
     // =========================================================================
