@@ -49,8 +49,11 @@ logging.basicConfig(
 log = logging.getLogger("gaceta.main")
 
 # ── Bolivia base URL ──────────────────────────────────────────────────────────
-# tipo_norma_id=11 in Bolivia's system = Decreto Presidencial
-_BOLIVIA_BASE = "https://www.gacetaoficialdebolivia.gob.bo"
+# tipo_norma_id=11 in Bolivia's system = Decreto Presidencial.
+# NOTE: the source serves over plain HTTP only — the legacy server
+# (Apache 2.2.4 / Win32 / PHP 5.2.3) exposes no TLS, so HTTPS times out at
+# the TCP layer. HTTP is the only working scheme for this public source.
+_BOLIVIA_BASE = "http://www.gacetaoficialdebolivia.gob.bo"
 _BOLIVIA_LIST_PATH = "/normas/listadonor/11"
 
 
