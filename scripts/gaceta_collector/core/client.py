@@ -39,6 +39,10 @@ class GacetaClient:
         response = self._session.get(url, headers=headers, timeout=self._config.timeout_seconds)
         self._last_request_at = time.monotonic()
         response.raise_for_status()
+        # The Bolivia gazette (and similar sources) serve UTF-8 but omit charset in
+        # Content-Type. requests defaults to ISO-8859-1 in that case, producing
+        # mojibake. Force UTF-8 before reading .text.
+        response.encoding = "utf-8"
         return response.text
 
     # ── private ──────────────────────────────────────────────────────────────
