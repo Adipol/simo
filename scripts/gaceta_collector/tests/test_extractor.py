@@ -1331,3 +1331,106 @@ class TestRealMultiCommaCargo:
         assert result.estado_extraccion == ESTADO_PROCESADO
         assert len(result.eventos) == 1
         assert "RELACIONES EXTERIORES" in result.eventos[0]["cargo"]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FIX Round 8 — Pattern A full cargo (no "de <entidad>" split)
+# Source: real Bolivian gazette sumarios — verified corpus
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestPatternAFullCargo:
+    """Pattern A (name-first) must capture the FULL cargo title up to the
+    terminating comma/period — the "de <entidad>" portion is INTRINSIC to
+    Bolivian ministerial titles, not a separable entity qualifier.
+
+    Bug: the non-greedy cargo group + optional entidad split in _RE_APPOINTMENT
+    causes "MINISTRO DE EDUCACIÓN" → cargo="MINISTRO", entidad="EDUCACIÓN".
+
+    Fix: make cargo greedy ([^,\\.\\n;]+, no entidad split), set entidad=None
+    for all Pattern A matches.
+
+    These tests FAIL before the fix because the current regex truncates cargo.
+    """
+
+    def test_ministro_de_educacion_full_cargo(self) -> None:
+        """Real sumario: cargo must be 'MINISTRO DE EDUCACIÓN', not 'MINISTRO'.
+
+        Source: corpus 2026-06-10 — decreto de designacion ordinaria.
+        RED: currently cargo='MINISTRO' (DE EDUCACION lands in entidad group).
+        """
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        sumario = (
+            "10 DE JUNIO DE 2026 .- Designa al ciudadano RICARDO ERICK SANJINES CHAVEZ, "
+            "como MINISTRO DE EDUCACION, quien tomara posesion del cargo en el dia, "
+            "en acto especial."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 1
+        ev = result.eventos[0]
+        assert ev["cargo"] == "MINISTRO DE EDUCACION"
+        assert ev["interino"] is False
+
+    def test_vocal_tribunal_electoral_full_cargo(self) -> None:
+        """Real sumario: multi-word cargo with 'DEL ... DE ...' must come through whole.
+
+        Source: corpus 2026-03-20 — decreto VOCAL TEP SANTA CRUZ.
+        RED: current regex stops at first 'de', leaving only 'VOCAL'.
+        """
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        sumario = (
+            "20 DE MARZO DE 2026 .- Designa a la ciudadana YAJAIRA SAN MARTIN CRESPO, "
+            "como VOCAL DEL TRIBUNAL ELECTORAL DEPARTAMENTAL DE SANTA CRUZ, "
+            "en representacion del Organo Ejecutivo, quien tomara posesion del cargo."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 1
+        ev = result.eventos[0]
+        assert ev["cargo"] == "VOCAL DEL TRIBUNAL ELECTORAL DEPARTAMENTAL DE SANTA CRUZ"
+        assert ev["interino"] is False
+
+    def test_ministro_de_defensa_full_cargo(self) -> None:
+        """Real sumario: two-word cargo 'MINISTRO DE DEFENSA' must not split.
+
+        Source: corpus 2026-06-03 — decreto designacion DEFENSA.
+        RED: current regex sets cargo='MINISTRO', entidad='DEFENSA'.
+        """
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        sumario = (
+            "03 DE JUNIO DE 2026 .- Designa al ciudadano ERNESTO JUSTINIANO URENDA, "
+            "como MINISTRO DE DEFENSA, quien tomara posesion del cargo en el dia, "
+            "en acto especial."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 1
+        ev = result.eventos[0]
+        assert ev["cargo"] == "MINISTRO DE DEFENSA"
+        assert ev["interino"] is False
+
+    def test_interino_cargo_full_not_truncated(self) -> None:
+        """Pattern A INTERINO: cargo must be full 'INTERINO Viceministro de Energías',
+        and interino flag must remain True after the cargo-group change.
+
+        Triangulation: different cargo that also contains 'de' — must not split.
+        """
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        result = extract_eventos(
+            "Designa al ciudadano JUAN CARLOS MAMANI QUISPE "
+            "como INTERINO Viceministro de Energias."
+        )
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 1
+        ev = result.eventos[0]
+        assert "Viceministro de Energias" in ev["cargo"]
+        assert ev["interino"] is True

@@ -110,8 +110,7 @@ _RE_APPOINTMENT = re.compile(
     r"(?:al?)\s+ciudadan[oa]\s+"
     r"(?P<nombre>[A-Za-záéíóúñüÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕàèìòùâêîôûãõ]"
     r"[A-Za-záéíóúñüÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕàèìòùâêîôûãõ\s]+?)"
-    r"[,\s]+como\s+(?P<interino>INTERINO[A]?\s+)?(?P<cargo>[A-Za-záéíóúñüÁÉÍÓÚÑÜ][^\.,\n;]+?)"
-    r"(?:\s+de\s+(?P<entidad>[^\.,\n;]+?))?[,\.]",
+    r"[,\s]+como\s+(?P<interino>INTERINO[A]?\s+)?(?P<cargo>[A-Za-záéíóúñüÁÉÍÓÚÑÜ][^,\.\n;]+)[,\.]",
     re.IGNORECASE | re.UNICODE,
 )
 
@@ -328,7 +327,7 @@ def _build_evento_from_match(match, full_sumario: str) -> dict:
     """
     persona_nombre = match.group("nombre").strip()
     cargo = match.group("cargo").strip()
-    entidad = (match.group("entidad") or "").strip() or None
+    entidad = None  # Pattern A: "de <X>" is intrinsic to the cargo title, not a split entity
     interino = bool(match.group("interino"))
 
     return {
