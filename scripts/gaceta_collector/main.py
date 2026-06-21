@@ -176,6 +176,8 @@ def run_cycle(
                 break
 
             result.paginas_procesadas += 1
+            # Tracks the newest fecha seen on this page (backfill page-granularity stop).
+            page_max_fecha = None
 
             for norma in rows:
                 gid = norma["gaceta_id_externo"]
@@ -189,18 +191,23 @@ def run_cycle(
                         stop_pagination = True
                         break
                 else:
-                    # Backfill: stop when fecha_publicacion crosses the cutoff.
-                    # Normas without a fecha are skipped gracefully.
+                    # Backfill: skip individual normas older than the cutoff, but do NOT
+                    # stop pagination on a single outlier.  Bolivia's listing is not
+                    # strictly date-descending — occasional old decrees appear in otherwise-
+                    # recent pages (confirmed: a 2010 decree on an otherwise-2023 page).
+                    # Track the page's max fecha for the page-granularity stop below.
                     fecha = norma.get("fecha_publicacion")
                     if fecha is None:
                         log.debug(f"Norma {gid} has no fecha_publicacion — skipping")
                         continue
+                    if page_max_fecha is None or fecha > page_max_fecha:
+                        page_max_fecha = fecha
                     if fecha < desde_fecha:
                         log.debug(
-                            f"Norma {gid} fecha {fecha} < cutoff {desde_fecha} — stopping backfill"
+                            f"Norma {gid} fecha {fecha} < cutoff {desde_fecha} "
+                            f"— skipping out-of-order norma (page max will decide stop)"
                         )
-                        stop_pagination = True
-                        break
+                        continue
 
                 # Extract events from sumario (pure function — outside the DB transaction)
                 extract_result = extract_eventos(norma.get("sumario", ""))
@@ -254,6 +261,17 @@ def run_cycle(
                     conn.rollback()
                     conn.autocommit = prev_autocommit
                     raise
+
+            # Page-granularity backfill stop: once the newest decree on a page is
+            # older than the cutoff, every subsequent page is genuinely past the
+            # backfill window → stop.  A lone out-of-order outlier on an otherwise-
+            # recent page must NOT trigger this stop.
+            if backfill and page_max_fecha is not None and page_max_fecha < desde_fecha:
+                log.info(
+                    f"Page {page_num} max fecha {page_max_fecha} < cutoff {desde_fecha} "
+                    f"— stopping backfill (entire page is older than window)"
+                )
+                stop_pagination = True
 
             if stop_pagination:
                 break
