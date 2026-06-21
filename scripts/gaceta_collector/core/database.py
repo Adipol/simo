@@ -116,11 +116,12 @@ class GacetaRepository:
                 entidad,
                 tipo_evento,
                 interino,
+                cargo_referenciado,
                 estado_revision,
                 revisado_por,
                 revisado_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         inserted = 0
         revisado_at = datetime.now() if auto_aprobar else None
@@ -139,6 +140,7 @@ class GacetaRepository:
                         ev.get("entidad"),
                         ev.get("tipo_evento", "designacion"),
                         ev.get("interino", False),
+                        ev.get("cargo_referenciado"),  # NULL when not present
                         estado,
                         None,        # revisado_por: NULL — auto-approval marker
                         revisado_at,

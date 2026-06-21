@@ -1434,3 +1434,109 @@ class TestPatternAFullCargo:
         ev = result.eventos[0]
         assert "Viceministro de Energias" in ev["cargo"]
         assert ev["interino"] is True
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Pattern B — Referenced titular cargo (cargo_referenciado)
+# Source: real Bolivia gazette — Lupo Flores example + corpus triangulation
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestPatternBCargoReferenciado:
+    """Pattern B interim decrees carry a 'referenced titular cargo' for the appointee.
+
+    Structure: '...al ciudadano <Name>, <Cargo Titular>, mientras dure la ausencia...'
+    The <Cargo Titular> is Title Case, sitting between the name-comma and
+    ', mientras dure'. It is the appointee's PERMANENT role mentioned as context.
+
+    Spec:
+    - cargo_referenciado is captured for Pattern B when the titular phrase is present.
+    - Pattern A events always get cargo_referenciado=None.
+    - Pattern B events without the titular phrase also get cargo_referenciado=None.
+    """
+
+    def test_pattern_b_lupo_captures_cargo_referenciado(self) -> None:
+        """Verified real sumario: 'Ministro de la Presidencia' is Lupo's titular cargo.
+
+        Source: real Bolivia gazette 2026-06-20.
+        RED: currently cargo_referenciado key is absent from evento dict.
+        """
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        sumario = (
+            "Designese MINISTRO INTERINO DE RELACIONES EXTERIORES, "
+            "al ciudadano Jose Luis Lupo Flores, Ministro de la Presidencia, "
+            "mientras dure la ausencia del titular."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 1
+        assert result.eventos[0]["cargo_referenciado"] == "Ministro de la Presidencia"
+
+    def test_pattern_b_without_titular_phrase_cargo_referenciado_none(self) -> None:
+        """Pattern B with 'mientras dure' but no titular cargo phrase -> None.
+
+        Structure: '...al ciudadano Carlos Pinto Rios, mientras dure...'
+        No Title Case cargo between the name and 'mientras dure'.
+        """
+        from core.extractor import extract_eventos
+
+        sumario = (
+            "Designese MINISTRO INTERINO DE HACIENDA, "
+            "al ciudadano Carlos Pinto Rios, "
+            "mientras dure la ausencia del titular."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == "procesado"
+        assert result.eventos[0]["cargo_referenciado"] is None
+
+    def test_pattern_b_no_interino_no_ausencia_cargo_referenciado_none(self) -> None:
+        """Pattern B without 'mientras dure' (permanent appointment) -> None.
+
+        No interim phrase means no titular context to extract.
+        """
+        from core.extractor import extract_eventos
+
+        sumario = (
+            "Designese DIRECTOR EJECUTIVO DE ADUANA NACIONAL, "
+            "al ciudadano Pablo Rodrigo Flores Quispe."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == "procesado"
+        assert result.eventos[0]["cargo_referenciado"] is None
+
+    def test_pattern_a_permanent_cargo_referenciado_none(self) -> None:
+        """Pattern A (name-first) always has cargo_referenciado=None.
+
+        Pattern A structure has no ', <Titular>, mientras dure' tail.
+        """
+        from core.extractor import extract_eventos
+
+        sumario = (
+            "Designa al ciudadano RICARDO ERICK SANJINES CHAVEZ, "
+            "como MINISTRO DE EDUCACION, quien tomara posesion del cargo en el dia."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == "procesado"
+        assert result.eventos[0]["cargo_referenciado"] is None
+
+    def test_pattern_b_with_date_prefix_captures_cargo_referenciado(self) -> None:
+        """Full real sumario with date prefix also captures cargo_referenciado.
+
+        Triangulation: ensure preprocessing does not interfere with the extraction.
+        """
+        from core.extractor import extract_eventos
+
+        sumario = (
+            "20 DE JUNIO DE 2026 .- Designese MINISTRO INTERINO DE RELACIONES EXTERIORES, "
+            "al ciudadano Jose Luis Lupo Flores, Ministro de la Presidencia, "
+            "mientras dure la ausencia del titular."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == "procesado"
+        assert result.eventos[0]["cargo_referenciado"] == "Ministro de la Presidencia"

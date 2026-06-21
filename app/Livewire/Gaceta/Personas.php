@@ -180,10 +180,21 @@ final class Personas extends Component
     }
 
     /**
-     * Cargo from the most recent non-interim event for the selected person.
+     * Cargo from the most recent non-interim event for the selected person,
+     * with a fallback to the referenced titular cargo from interim events.
      *
-     * Returns null when no person is selected or when all their events are
-     * interim designations.
+     * Resolution order:
+     *   1. Latest non-interim (interino=false) appointment cargo — a real titular
+     *      designation recorded in the gazette.
+     *   2. Latest non-null cargo_referenciado among interim events — the permanent
+     *      role mentioned as context in an interim decree (e.g. "Ministro de la
+     *      Presidencia" in "Desígnese MINISTRO INTERINO DE X … mientras dure…").
+     *   3. null — the person has only interim events with no referenced cargo.
+     *
+     * The detalle collection is already ordered newest-first, so first() naturally
+     * picks the most recent event that satisfies each condition.
+     *
+     * Returns null when no person is selected.
      */
     #[Computed]
     public function cargoTitular(): ?string
@@ -192,7 +203,17 @@ final class Personas extends Component
             return null;
         }
 
-        return $this->detalle->first(fn ($e) => ! $e->interino)?->cargo;
+        // Primary: latest non-interim appointment
+        $titular = $this->detalle->first(fn ($e) => ! $e->interino)?->cargo;
+        if ($titular !== null) {
+            return $titular;
+        }
+
+        // Fallback: referenced titular cargo from latest interim event that has one
+        return $this->detalle
+            ->filter(fn ($e) => $e->interino && $e->cargo_referenciado !== null)
+            ->first()
+            ?->cargo_referenciado;
     }
 
     // ─── Actions ──────────────────────────────────────────────────────────────

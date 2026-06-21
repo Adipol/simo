@@ -101,6 +101,26 @@ class PersonasTest extends TestCase
         ]);
     }
 
+    private function makeEventoConReferenciado(
+        GacetaNorma $norma,
+        string $cargo,
+        string $cargoReferenciado,
+        string $nombre = 'Juan Pérez',
+        string $estado = 'aprobado',
+    ): GacetaEventoPep {
+        return GacetaEventoPep::create([
+            'gaceta_norma_id'            => $norma->id,
+            'pais'                       => $norma->pais,
+            'persona_nombre'             => $nombre,
+            'persona_nombre_normalizado' => Str::lower(Str::ascii($nombre)),
+            'cargo'                      => $cargo,
+            'tipo_evento'                => 'designacion',
+            'interino'                   => true,
+            'cargo_referenciado'         => $cargoReferenciado,
+            'estado_revision'            => $estado,
+        ]);
+    }
+
     // ─── T0: Auth gate ────────────────────────────────────────────────────────
 
     /**
@@ -590,5 +610,79 @@ class PersonasTest extends TestCase
 
                 return $ids->contains($aprobado->id) && ! $ids->contains($rechazado->id);
             });
+    }
+
+    // ─── T7: cargoTitular fallback to cargo_referenciado ─────────────────────
+
+    /**
+     * A person with only interim events that carry cargo_referenciado shows
+     * cargo_referenciado as cargoTitular (the referenced titular role).
+     *
+     * SCN-T7-cargo-referenciado.1 — RED: cargoTitular currently returns null
+     * for all-interim persons even when cargo_referenciado is set.
+     */
+    public function test_gaceta_personas_cargo_titular_falls_back_to_cargo_referenciado(): void
+    {
+        $admin  = $this->makeAdmin();
+        $norma1 = $this->makeNorma('BO', 1, '2024-01-15');
+        $norma2 = $this->makeNorma('BO', 2, '2024-06-20');
+
+        // Both events are interim — oldest and newest both carry cargo_referenciado
+        $this->makeEventoConReferenciado($norma1, 'Ministro Interino de Hacienda', 'Ministro de la Presidencia', 'Jose Luis Lupo Flores');
+        $this->makeEventoConReferenciado($norma2, 'Ministro Interino de RR.EE.',   'Ministro de la Presidencia', 'Jose Luis Lupo Flores');
+
+        $normalizado = Str::lower(Str::ascii('Jose Luis Lupo Flores'));
+
+        Livewire::actingAs($admin)
+            ->test(Personas::class)
+            ->call('seleccionar', $normalizado)
+            ->assertViewHas('cargoTitular', 'Ministro de la Presidencia');
+    }
+
+    /**
+     * A real non-interim event takes precedence over cargo_referenciado.
+     * Even when the person has interim events with cargo_referenciado set,
+     * the non-interim cargo wins.
+     *
+     * SCN-T7-cargo-referenciado.2 — Triangulation: precedence rule.
+     */
+    public function test_gaceta_personas_real_titular_event_takes_precedence_over_cargo_referenciado(): void
+    {
+        $admin  = $this->makeAdmin();
+        $norma1 = $this->makeNorma('BO', 1, '2024-01-01');
+        $norma2 = $this->makeNorma('BO', 2, '2024-06-01');
+
+        // Older real titular event (interino=false, no cargo_referenciado)
+        $this->makeEvento($norma1, false, 'Ministro de la Presidencia', 'Jose Luis Lupo Flores');
+        // Newer interim event with a DIFFERENT cargo_referenciado — should NOT override
+        $this->makeEventoConReferenciado($norma2, 'Ministro Interino de RR.EE.', 'Ministro de Economia', 'Jose Luis Lupo Flores');
+
+        $normalizado = Str::lower(Str::ascii('Jose Luis Lupo Flores'));
+
+        Livewire::actingAs($admin)
+            ->test(Personas::class)
+            ->call('seleccionar', $normalizado)
+            ->assertViewHas('cargoTitular', 'Ministro de la Presidencia');
+    }
+
+    /**
+     * Triangulation: person with interim events but no cargo_referenciado → null.
+     * Preserves existing behavior for interim-only persons without referenced cargo.
+     *
+     * SCN-T7-cargo-referenciado.3 — Regression guard.
+     */
+    public function test_gaceta_personas_interim_without_cargo_referenciado_shows_null(): void
+    {
+        $admin  = $this->makeAdmin();
+        $norma1 = $this->makeNorma('BO', 1, '2024-01-15');
+
+        $this->makeEvento($norma1, true, 'Ministro Interino de Hacienda', 'María Torres');
+
+        $normalizado = Str::lower(Str::ascii('María Torres'));
+
+        Livewire::actingAs($admin)
+            ->test(Personas::class)
+            ->call('seleccionar', $normalizado)
+            ->assertViewHas('cargoTitular', null);
     }
 }
