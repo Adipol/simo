@@ -8,6 +8,7 @@ use App\Models\GacetaEventoPep;
 use Illuminate\Contracts\View\View;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Livewire\Attributes\Computed;
@@ -127,14 +128,27 @@ final class Personas extends Component
                     JOIN gaceta_normas n3 ON n3.id = e3.gaceta_norma_id
                     WHERE e3.persona_nombre_normalizado = e.persona_nombre_normalizado
                       AND e3.estado_revision != 'rechazado'
-                      AND e3.interino = false
+                      AND e3.interino = ?
                     ORDER BY n3.fecha_publicacion DESC, e3.id DESC
                     LIMIT 1
                 ) AS cargo_titular",
+                [false], // bound parameter — PDO casts per engine (0 on SQLite, false on PgSQL)
             )
             ->groupBy('e.persona_nombre_normalizado')
             ->orderByRaw('MAX(n.fecha_publicacion) DESC, e.persona_nombre_normalizado ASC')
-            ->paginate(20);
+            ->paginate(20)
+            ->through(function (object $row): object {
+                // Normalize date strings to Y-m-d regardless of engine/version.
+                // SQLite may return "2024-01-10 00:00:00"; PostgreSQL returns "2024-01-10".
+                $row->desde = isset($row->desde)
+                    ? Carbon::parse($row->desde)->format('Y-m-d')
+                    : null;
+                $row->hasta = isset($row->hasta)
+                    ? Carbon::parse($row->hasta)->format('Y-m-d')
+                    : null;
+
+                return $row;
+            });
     }
 
     /**
