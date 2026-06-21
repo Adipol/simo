@@ -61,6 +61,20 @@ class GacetaConfig:
         default_factory=lambda: int(os.getenv("GACETA_TIMEOUT_SECONDS", "30"))
     )
 
+    # Backfill look-back window in years.
+    # Default: 5 — Bolivian PEP regulation retains PEP status for 5 years after
+    # leaving office, so the baseline must cover everyone who held office in the
+    # last 5 years. Configurable so operators can adjust if the regulation changes.
+    backfill_years: int = field(
+        default_factory=lambda: int(os.getenv("GACETA_BACKFILL_YEARS", "5"))
+    )
+
+    # Safety page cap for the backfill crawl. Prevents a misconfigured cutoff
+    # date from crawling hundreds of pages in a single run.
+    backfill_max_pages: int = field(
+        default_factory=lambda: int(os.getenv("GACETA_BACKFILL_MAX_PAGES", "60"))
+    )
+
 
 @dataclass(frozen=True)
 class Settings:

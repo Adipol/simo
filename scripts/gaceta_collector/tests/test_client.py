@@ -196,3 +196,48 @@ class TestGacetaClientTimeout:
         with patch.dict(os.environ, env, clear=True):
             cfg = GacetaConfig()
         assert cfg.timeout_seconds == 30
+
+
+class TestGacetaClientEncoding:
+    """GacetaClient forces UTF-8 decoding regardless of server-declared charset.
+
+    The Bolivia gazette (and other sources) serve UTF-8 but omit charset in
+    Content-Type. requests defaults to ISO-8859-1 in that case, producing
+    mojibake (e.g. 'DesÃ­gnese' instead of 'Desígnese'). The client must
+    force UTF-8 before reading response.text.
+    """
+
+    def _real_response(self, text: str, declared_encoding: str = "ISO-8859-1"):
+        """Return a real requests.Response with UTF-8 bytes but wrong declared encoding."""
+        import requests as req_lib
+        resp = req_lib.Response()
+        resp.status_code = 200
+        resp._content = text.encode("utf-8")  # raw bytes are correct UTF-8
+        resp.encoding = declared_encoding       # server omitted charset → requests guesses wrong
+        return resp
+
+    def test_get_forces_utf8_when_server_omits_charset(self) -> None:
+        """get() returns correctly-decoded text even when server declares ISO-8859-1."""
+        from core.client import GacetaClient
+        cfg = _make_config()
+        client = GacetaClient(cfg)
+        real_resp = self._real_response("Desígnese")
+
+        with patch("requests.Session.get", return_value=real_resp):
+            result = client.get("http://www.gacetaoficialdebolivia.gob.bo/normas")
+
+        assert "Desígnese" in result, f"Mojibake detected — expected 'Desígnese' in: {result!r}"
+        assert "DesÃ" not in result, f"Mojibake present: {result!r}"
+
+    def test_get_no_mojibake_for_accented_bolivian_names(self) -> None:
+        """Accented names like 'José' decode correctly, not as 'JosÃ©'."""
+        from core.client import GacetaClient
+        cfg = _make_config()
+        client = GacetaClient(cfg)
+        real_resp = self._real_response("José Luis Lupo Flores")
+
+        with patch("requests.Session.get", return_value=real_resp):
+            result = client.get("http://www.gacetaoficialdebolivia.gob.bo/normas")
+
+        assert "José" in result, f"Mojibake detected — expected 'José' in: {result!r}"
+        assert "JosÃ©" not in result, f"Mojibake present: {result!r}"

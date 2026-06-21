@@ -2,11 +2,25 @@
 Bolivia driver — HTML listing parser.
 
 Parses the norma listing from:
-  https://www.gacetaoficialdebolivia.gob.bo/normas/listadonor/11
+  http://www.gacetaoficialdebolivia.gob.bo/normas/listadonor/11
+
+The site uses a Bootstrap card layout (Drupal 10). There is NO table with
+id="tNormas". Each decree is rendered as a <div class="card-body"> with:
+  - <p class="card-text"> for edition and publication date
+  - <h6><b>Decreto Presidencial N° 5637</b></h6> for tipo and number
+  - <div class="contentpaneopen"> for sumario text
+  - <div class="card-footer"> for download/view links (gaceta_id_externo lives here)
 
 Returns ONLY rows with tipo_norma == 'Decreto Presidencial'.
-gaceta_id_externo is extracted from the href of the norma link.
+gaceta_id_externo is the numeric id present in any footer link (descargarNrms,
+descargarPdf, verGratis_gob, verGratis_gob1 — all carry the same id).
+pdf_url is the absolute URL of the download link present in the footer:
+  - /normas/descargarNrms/{id} for post-~2024 cards (new format)
+  - /normas/descargarPdf/{id}  for pre-~2024 historical cards (old format)
+Cards with no id-bearing footer link are skipped (no id = cannot dedup).
 pais is always 'BO'.
+
+Date format: YYYY-MM-DD (the site changed from DD/MM/YYYY; old format is rejected).
 """
 import re
 from datetime import date
@@ -14,19 +28,33 @@ from typing import Optional
 
 from bs4 import BeautifulSoup
 
-# The column index order in the listing table:
-# 0=N°, 1=Número de Decreto (link), 2=Tipo de Norma, 3=Fecha, 4=Edición, 5=Sumario, 6=PDF link
-_COL_NUMERO = 1
-_COL_TIPO = 2
-_COL_FECHA = 3
-_COL_EDICION = 4
-_COL_SUMARIO = 5
-_COL_PDF = 6
+# ── constants ────────────────────────────────────────────────────────────────
 
 _TIPO_NORMA_FILTER = "Decreto Presidencial"
 
-# Extract numeric ID from URL like /normas/textonormaRE/180123
-_RE_NORMA_ID = re.compile(r"/normas/textonormaRE/(\d+)", re.IGNORECASE)
+# Matches "Decreto Presidencial N° 5637" (degree sign U+00B0 or ordinal º U+00BA)
+_RE_NUMERO = re.compile(r"Decreto Presidencial\s+N[°º]\s*(\d+)", re.IGNORECASE)
+
+# Matches "Fecha de Publicación: 2026-06-20"
+_RE_FECHA = re.compile(r"Fecha\s+de\s+Publicaci[oó]n[:\s]+(\d{4}-\d{2}-\d{2})")
+
+# Matches any id-bearing norma link:
+#   /normas/descargarNrms/{id}  — new format (post-~2024)
+#   /normas/descargarPdf/{id}   — old format (pre-~2024 historical decrees)
+#   /normas/verGratis_gob/{id}  — view link (same numeric id)
+#   /normas/verGratis_gob1/{id} — download Word link (same numeric id)
+_RE_NORMA_ID = re.compile(
+    r"/normas/(?:descargarNrms|descargarPdf|verGratis_gob1?)/(\d+)",
+    re.IGNORECASE,
+)
+
+# Matches download links that carry the PDF (new or old format)
+_RE_PDF_LINK = re.compile(
+    r"/normas/(?:descargarNrms|descargarPdf)/(\d+)",
+    re.IGNORECASE,
+)
+
+_BASE_URL = "http://www.gacetaoficialdebolivia.gob.bo"
 
 
 class BoliviaParser:
@@ -42,81 +70,114 @@ class BoliviaParser:
         """
         Parse HTML from the norma listing page.
 
-        Returns a list of norma dicts — only Decreto Presidencial rows.
+        Returns a list of norma dicts — only Decreto Presidencial cards.
         Each dict contains:
           pais, gaceta_id_externo, numero_decreto, tipo_norma,
           sumario, pdf_url, fecha_publicacion, edicion, estado_extraccion
         """
         soup = BeautifulSoup(html, "lxml")
-        table = soup.find("table", id="tNormas")
-        if table is None:
-            return []
-
-        tbody = table.find("tbody")
-        if tbody is None:
-            return []
-
         rows = []
-        for tr in tbody.find_all("tr"):
-            norma = self._parse_row(tr)
+        for card_body in soup.find_all("div", class_="card-body"):
+            norma = self._parse_card(card_body)
             if norma is not None:
                 rows.append(norma)
         return rows
 
     # ── private ──────────────────────────────────────────────────────────────
 
-    def _parse_row(self, tr) -> Optional[dict]:
-        """Parse a single <tr> and return a norma dict, or None if it should be skipped."""
-        cells = tr.find_all("td")
-        if len(cells) < 7:
+    def _parse_card(self, card_body) -> Optional[dict]:
+        """Parse a single card-body div and return a norma dict, or None to skip."""
+
+        # 1. Find the title in <h6>
+        h6 = card_body.find("h6")
+        if h6 is None:
+            return None
+        title = h6.get_text(" ", strip=True)
+
+        # 2. Filter: keep only Decreto Presidencial
+        if not title.startswith(_TIPO_NORMA_FILTER):
             return None
 
-        tipo_norma = cells[_COL_TIPO].get_text(strip=True)
-        if tipo_norma != _TIPO_NORMA_FILTER:
+        # 3. Extract numero_decreto (digits after "N°")
+        m_numero = _RE_NUMERO.search(title)
+        if m_numero is None:
+            return None
+        numero_decreto = m_numero.group(1)
+
+        # 4. Extract edicion and fecha_publicacion from <p class="card-text">
+        card_text_p = card_body.find("p", class_="card-text")
+        edicion: Optional[str] = None
+        fecha_publicacion: Optional[date] = None
+        if card_text_p is not None:
+            edicion_anchor = card_text_p.find("a")
+            if edicion_anchor is not None:
+                edicion = edicion_anchor.get_text(strip=True) or None
+            card_text_str = card_text_p.get_text(" ", strip=True)
+            m_fecha = _RE_FECHA.search(card_text_str)
+            if m_fecha is not None:
+                fecha_publicacion = _parse_date(m_fecha.group(1))
+
+        # 5. Extract sumario from <div class="contentpaneopen">
+        content_div = card_body.find("div", class_="contentpaneopen")
+        sumario: Optional[str] = None
+        if content_div is not None:
+            raw = content_div.get_text(" ", strip=True)
+            collapsed = re.sub(r"\s+", " ", raw).strip()
+            sumario = collapsed if collapsed else None
+
+        # 6. Extract gaceta_id_externo and pdf_url from the card footer
+        parent_card = card_body.find_parent("div", class_="card")
+        if parent_card is None:
+            return None
+        footer = parent_card.find("div", class_="card-footer")
+        if footer is None:
             return None
 
-        # Extract gaceta_id_externo from the numero link href
-        numero_cell = cells[_COL_NUMERO]
-        link = numero_cell.find("a")
-        if link is None:
-            return None
-        href = link.get("href", "")
-        id_match = _RE_NORMA_ID.search(href)
-        if id_match is None:
-            return None
-        gaceta_id_externo = int(id_match.group(1))
-
-        numero_decreto = link.get_text(strip=True)
-        sumario = cells[_COL_SUMARIO].get_text(strip=True)
-        edicion = cells[_COL_EDICION].get_text(strip=True) or None
-
-        fecha_publicacion = _parse_date(cells[_COL_FECHA].get_text(strip=True))
-
+        gaceta_id_externo: Optional[int] = None
         pdf_url: Optional[str] = None
-        pdf_cell = cells[_COL_PDF]
-        pdf_link = pdf_cell.find("a")
-        if pdf_link:
-            pdf_url = pdf_link.get("href")
+        for anchor in footer.find_all("a"):
+            href = anchor.get("href", "")
+            # Extract the numeric id from any id-bearing link (verGratis_gob,
+            # verGratis_gob1, descargarNrms, descargarPdf — all carry the same id).
+            m_id = _RE_NORMA_ID.search(href)
+            if m_id is None:
+                continue
+            extracted_id = int(m_id.group(1))
+            if gaceta_id_externo is None:
+                gaceta_id_externo = extracted_id
+            # Extract pdf_url from whichever download link is present:
+            #   descargarNrms — new format (post-~2024)
+            #   descargarPdf  — old format (pre-~2024 historical decrees)
+            if pdf_url is None and _RE_PDF_LINK.search(href):
+                pdf_url = _BASE_URL + href
+
+        # Skip cards without a parseable id (cannot dedup without gaceta_id_externo)
+        if gaceta_id_externo is None:
+            return None
 
         return {
             "pais": self.PAIS,
             "gaceta_id_externo": gaceta_id_externo,
             "numero_decreto": numero_decreto,
-            "tipo_norma": tipo_norma,
+            "tipo_norma": _TIPO_NORMA_FILTER,
+            "edicion": edicion,
+            "fecha_publicacion": fecha_publicacion,
             "sumario": sumario,
             "pdf_url": pdf_url,
-            "fecha_publicacion": fecha_publicacion,
-            "edicion": edicion,
             "estado_extraccion": "pendiente",
         }
 
 
 def _parse_date(date_str: str) -> Optional[date]:
-    """Parse 'DD/MM/YYYY' into a Python date, or None if unparseable."""
+    """Parse 'YYYY-MM-DD' into a Python date, or None if unparseable.
+
+    The Bolivia Gaceta Oficial site uses YYYY-MM-DD format.
+    The old DD/MM/YYYY format (used by the fabricated fixture) is NOT accepted.
+    """
     if not date_str:
         return None
     try:
-        day, month, year = date_str.strip().split("/")
+        year, month, day = date_str.strip().split("-")
         return date(int(year), int(month), int(day))
     except (ValueError, AttributeError):
         return None

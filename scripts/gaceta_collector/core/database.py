@@ -10,7 +10,7 @@ GacetaRepository wraps psycopg2 and provides:
 Connection is injected at construction time (dependency injection for testability).
 All DB errors are allowed to propagate — the caller (main.py) handles them.
 """
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 
@@ -80,12 +80,27 @@ class GacetaRepository:
             row = cur.fetchone()
         return row[0] if row else None
 
-    def insert_eventos(self, norma_id: int, pais: str, eventos: list) -> int:
+    def insert_eventos(
+        self,
+        norma_id: int,
+        pais: str,
+        eventos: list,
+        auto_aprobar: bool = False,
+    ) -> int:
         """
         Insert extracted appointment events for a norma.
 
         pais is denormalized from the parent norma — NOT re-derived.
         Returns the count of rows actually inserted.
+
+        Args:
+            auto_aprobar: When True (backfill mode), events are inserted as
+                'aprobado' with revisado_at=NOW() and revisado_por=NULL.
+                NULL revisado_por is the marker that distinguishes auto-approved
+                backfill from human-approved events (human approvals set
+                revisado_por to a user id).
+                When False (default, forward/incremental mode), events are
+                inserted as 'pendiente' for human review, with revisado_at=NULL.
         """
         if not eventos:
             return 0
@@ -101,13 +116,17 @@ class GacetaRepository:
                 entidad,
                 tipo_evento,
                 interino,
-                estado_revision
+                estado_revision,
+                revisado_por,
+                revisado_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         inserted = 0
+        revisado_at = datetime.now() if auto_aprobar else None
         with self._conn.cursor() as cur:
             for ev in eventos:
+                estado = "aprobado" if auto_aprobar else ev.get("estado_revision", "pendiente")
                 cur.execute(
                     sql,
                     (
@@ -120,7 +139,9 @@ class GacetaRepository:
                         ev.get("entidad"),
                         ev.get("tipo_evento", "designacion"),
                         ev.get("interino", False),
-                        ev.get("estado_revision", "pendiente"),
+                        estado,
+                        None,        # revisado_por: NULL — auto-approval marker
+                        revisado_at,
                     ),
                 )
                 inserted += 1
