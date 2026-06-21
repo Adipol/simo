@@ -194,6 +194,70 @@ class TestInsertEventos:
         assert "BO" in params
 
 
+class TestInsertEventosAutoAprobar:
+    """insert_eventos with auto_aprobar=True sets backfill approval fields."""
+
+    def test_auto_aprobar_sets_estado_aprobado(self) -> None:
+        """When auto_aprobar=True, estado_revision='aprobado' is passed to DB."""
+        from core.database import GacetaRepository
+        conn, cursor = _make_conn()
+        repo = GacetaRepository(conn)
+
+        repo.insert_eventos(norma_id=42, pais="BO", eventos=[_sample_evento()], auto_aprobar=True)
+
+        _sql, params = cursor.execute.call_args[0]
+        assert "aprobado" in params
+
+    def test_auto_aprobar_sets_revisado_por_none(self) -> None:
+        """
+        When auto_aprobar=True, revisado_por=None is passed (NULL in DB).
+        NULL is the marker that distinguishes auto-approved backfill from
+        human-approved events (human approvals set revisado_por to a user id).
+        """
+        from core.database import GacetaRepository
+        from datetime import datetime
+        conn, cursor = _make_conn()
+        repo = GacetaRepository(conn)
+
+        repo.insert_eventos(norma_id=42, pais="BO", eventos=[_sample_evento()], auto_aprobar=True)
+
+        _sql, params = cursor.execute.call_args[0]
+        # revisado_por must be None (NULL) even in backfill — marker for auto-approval
+        # revisado_at must be a datetime (not None)
+        revisado_at_values = [p for p in params if isinstance(p, datetime)]
+        revisado_por_candidates = [p for p in params if p is None]
+        assert len(revisado_at_values) >= 1, "Expected at least one datetime (revisado_at) in params"
+        assert len(revisado_por_candidates) >= 1, "Expected revisado_por=None in params"
+
+    def test_auto_aprobar_sets_revisado_at_to_datetime(self) -> None:
+        """When auto_aprobar=True, revisado_at is a datetime (not None)."""
+        from core.database import GacetaRepository
+        from datetime import datetime
+        conn, cursor = _make_conn()
+        repo = GacetaRepository(conn)
+
+        repo.insert_eventos(norma_id=42, pais="BO", eventos=[_sample_evento()], auto_aprobar=True)
+
+        _sql, params = cursor.execute.call_args[0]
+        datetime_values = [p for p in params if isinstance(p, datetime)]
+        assert len(datetime_values) >= 1
+
+    def test_forward_mode_default_keeps_pendiente(self) -> None:
+        """
+        Regression: without auto_aprobar (default False), estado_revision stays 'pendiente'.
+        Forward collection must not be affected by the backfill param.
+        """
+        from core.database import GacetaRepository
+        conn, cursor = _make_conn()
+        repo = GacetaRepository(conn)
+
+        repo.insert_eventos(norma_id=42, pais="BO", eventos=[_sample_evento()])
+
+        _sql, params = cursor.execute.call_args[0]
+        assert "pendiente" in params
+        assert "aprobado" not in params
+
+
 class TestUpdateEstadoExtraccion:
     """update_estado_extraccion updates the norma record in place."""
 

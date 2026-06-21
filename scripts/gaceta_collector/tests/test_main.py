@@ -28,7 +28,7 @@ IDs used (descending, as per real site ordering):
   180123  Decreto Presidencial  — extractable sumario (1 event, interino)
   180120  Decreto Presidencial  — bulk sumario → requiere_detalle (0 events)
 """
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch, call
 
@@ -454,3 +454,295 @@ class TestRunCycleExactCounts:
         assert result.eventos_insertados == 2
         assert result.paginas_procesadas == 1
         assert result.estado == "ok"
+
+
+# ── Backfill-specific fixtures ────────────────────────────────────────────────
+# Two fixture pages for backfill cutoff tests.  All normas are Decreto
+# Presidencial (the only type processed by the Bolivia driver).
+# Dates are RFC-like strings that the real BoliviaParser emits as date objects.
+
+# Page 1: two DPs with dates ABOVE cutoff 2026-06-11 → both should be upserted
+_BACKFILL_PAGE_ABOVE = """<html><body>
+<div class="row"><div class="col-12 m-2">
+  <div class="card h-100 p-2 fondo-paper">
+    <div class="card-body">
+      <p class="card-text texto-default">
+        Publicado en edición: <strong><a href="/edicions/view/3500NEC">3500NEC</a></strong>
+        | Fecha de Publicación: 2026-06-14
+      </p>
+      <h6><b>Decreto Presidencial N° 549</b></h6>
+      <div class="contentpaneopen">
+        <p>Designa a la ciudadana MARIA JOSE GARCIA LUNA como Ministra de Educacion.</p>
+      </div>
+    </div>
+    <div class="card-footer bg-transparent text-end" style="border: none;">
+      <a href="/normas/verGratis_gob/180125">Ver Norma</a> |
+      <a href="/normas/descargarNrms/180125">Descargar PDF</a>
+    </div>
+  </div>
+</div></div>
+<div class="row"><div class="col-12 m-2">
+  <div class="card h-100 p-2 fondo-paper">
+    <div class="card-body">
+      <p class="card-text texto-default">
+        Publicado en edición: <strong><a href="/edicions/view/3499NEC">3499NEC</a></strong>
+        | Fecha de Publicación: 2026-06-12
+      </p>
+      <h6><b>Decreto Presidencial N° 547</b></h6>
+      <div class="contentpaneopen">
+        <p>Designa al ciudadano JUAN CARLOS MAMANI QUISPE como Viceministro de Energias Renovables.</p>
+      </div>
+    </div>
+    <div class="card-footer bg-transparent text-end" style="border: none;">
+      <a href="/normas/verGratis_gob/180123">Ver Norma</a> |
+      <a href="/normas/descargarNrms/180123">Descargar PDF</a>
+    </div>
+  </div>
+</div></div>
+</body></html>"""
+
+# Page 2: first DP with date BELOW cutoff 2026-06-11 → should stop here
+_BACKFILL_PAGE_BELOW = """<html><body>
+<div class="row"><div class="col-12 m-2">
+  <div class="card h-100 p-2 fondo-paper">
+    <div class="card-body">
+      <p class="card-text texto-default">
+        Publicado en edición: <strong><a href="/edicions/view/3498NEC">3498NEC</a></strong>
+        | Fecha de Publicación: 2026-06-09
+      </p>
+      <h6><b>Decreto Presidencial N° 546</b></h6>
+      <div class="contentpaneopen">
+        <p>Designa al ciudadano PEDRO CONDORI QUISPE como Director General de Infraestructura.</p>
+      </div>
+    </div>
+    <div class="card-footer bg-transparent text-end" style="border: none;">
+      <a href="/normas/verGratis_gob/180120">Ver Norma</a> |
+      <a href="/normas/descargarNrms/180120">Descargar PDF</a>
+    </div>
+  </div>
+</div></div>
+</body></html>"""
+
+
+class TestComputeBackfillCutoff:
+    """_compute_backfill_cutoff is a pure function: today - N years."""
+
+    def test_subtracts_exact_years(self) -> None:
+        """5 years back from 2026-06-20 → 2021-06-20."""
+        from main import _compute_backfill_cutoff
+        result = _compute_backfill_cutoff(date(2026, 6, 20), years=5)
+        assert result == date(2021, 6, 20)
+
+    def test_different_year_count(self) -> None:
+        """3 years back from 2026-06-20 → 2023-06-20 (triangulation)."""
+        from main import _compute_backfill_cutoff
+        result = _compute_backfill_cutoff(date(2026, 6, 20), years=3)
+        assert result == date(2023, 6, 20)
+
+    def test_leap_year_feb_29_handled_gracefully(self) -> None:
+        """Feb 29 in a leap year minus 5 years → Feb 28 (non-leap year)."""
+        from main import _compute_backfill_cutoff
+        # 2024 is a leap year; 2019 is not
+        result = _compute_backfill_cutoff(date(2024, 2, 29), years=5)
+        assert result.year == 2019
+        assert result.month == 2
+        # Feb 28 is the nearest valid date in non-leap year
+        assert result.day == 28
+
+
+class TestBackfillMode:
+    """run_cycle(backfill=True) — historical backfill behavior."""
+
+    def test_backfill_ignores_cursor_processes_all_normas(self) -> None:
+        """
+        In backfill mode, normas below the incremental cursor are NOT skipped.
+        With cursor=180124, forward mode would stop at 180123.
+        Backfill must continue and process all 3 Decreto Presidencial normas.
+        """
+        from main import run_cycle
+        from config.settings import Settings, GacetaConfig, DatabaseConfig
+
+        mock_conn = MagicMock()
+        mock_repo = MagicMock()
+        # Cursor at 180124 — in forward mode this would skip 180123 and 180120
+        mock_repo.get_ultimo_gaceta_id.return_value = 180124
+        mock_repo.upsert_norma.return_value = 42
+        mock_repo.insert_eventos.return_value = 1
+        mock_repo.update_estado_extraccion.return_value = None
+
+        mock_client = MagicMock()
+        mock_client.get.return_value = FIXTURE_HTML
+
+        # 1-page backfill cap so we only fetch one page; desde_fecha far enough
+        # in the past that no date-based cutoff triggers within the fixture.
+        settings = Settings(db=DatabaseConfig(), gaceta=GacetaConfig(backfill_max_pages=1))
+
+        with patch("main.GacetaRepository", return_value=mock_repo), \
+             patch("main.GacetaClient", return_value=mock_client):
+            result = run_cycle(
+                conn=mock_conn,
+                pais="BO",
+                backfill=True,
+                desde_fecha=date(2020, 1, 1),
+                settings=settings,
+            )
+
+        # All 3 Decreto Presidencial normas processed (cursor ignored)
+        assert mock_repo.upsert_norma.call_count == 3
+
+    def test_backfill_stops_when_fecha_crosses_cutoff(self) -> None:
+        """
+        Backfill stops pagination when norma.fecha_publicacion < desde_fecha.
+        Page 1 (dates 2026-06-14, 2026-06-12) is above cutoff 2026-06-11.
+        Page 2 first norma (2026-06-09) is below cutoff → stop, do not upsert.
+        """
+        from main import run_cycle
+
+        mock_conn = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.get_ultimo_gaceta_id.return_value = None
+        mock_repo.upsert_norma.return_value = 42
+        mock_repo.insert_eventos.return_value = 1
+        mock_repo.update_estado_extraccion.return_value = None
+
+        mock_client = MagicMock()
+        # Page 1: above cutoff; Page 2: below cutoff
+        mock_client.get.side_effect = [_BACKFILL_PAGE_ABOVE, _BACKFILL_PAGE_BELOW]
+
+        cutoff = date(2026, 6, 11)
+        with patch("main.GacetaRepository", return_value=mock_repo), \
+             patch("main.GacetaClient", return_value=mock_client):
+            result = run_cycle(
+                conn=mock_conn,
+                pais="BO",
+                backfill=True,
+                desde_fecha=cutoff,
+            )
+
+        # Both pages fetched (cutoff seen on page 2)
+        assert mock_client.get.call_count == 2
+        # Only page 1's 2 normas upserted (page 2 first norma triggers cutoff stop)
+        assert mock_repo.upsert_norma.call_count == 2
+
+    def test_backfill_respects_backfill_max_pages_cap(self) -> None:
+        """
+        Backfill uses settings.gaceta.backfill_max_pages as the page cap.
+        With backfill_max_pages=2 and 3 available pages, only 2 pages are fetched.
+        """
+        from main import run_cycle
+        from config.settings import Settings, GacetaConfig, DatabaseConfig
+
+        mock_conn = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.get_ultimo_gaceta_id.return_value = None
+        mock_repo.upsert_norma.return_value = 42
+        mock_repo.insert_eventos.return_value = 1
+        mock_repo.update_estado_extraccion.return_value = None
+
+        mock_client = MagicMock()
+        mock_client.get.return_value = FIXTURE_HTML
+
+        # Settings with backfill_max_pages=2
+        settings = Settings(
+            db=DatabaseConfig(),
+            gaceta=GacetaConfig(backfill_max_pages=2),
+        )
+
+        with patch("main.GacetaRepository", return_value=mock_repo), \
+             patch("main.GacetaClient", return_value=mock_client):
+            run_cycle(
+                conn=mock_conn,
+                pais="BO",
+                backfill=True,
+                desde_fecha=date(2020, 1, 1),
+                settings=settings,
+            )
+
+        # Safety cap: only 2 pages fetched even though content is available
+        assert mock_client.get.call_count == 2
+
+    def test_backfill_passes_auto_aprobar_true_to_insert_eventos(self) -> None:
+        """
+        In backfill mode, insert_eventos must be called with auto_aprobar=True
+        so events are stored as 'aprobado' (not 'pendiente').
+        """
+        from main import run_cycle
+
+        mock_conn = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.get_ultimo_gaceta_id.return_value = None
+        mock_repo.upsert_norma.return_value = 42
+        mock_repo.insert_eventos.return_value = 1
+        mock_repo.update_estado_extraccion.return_value = None
+
+        mock_client = MagicMock()
+        mock_client.get.return_value = FIXTURE_HTML
+
+        with patch("main.GacetaRepository", return_value=mock_repo), \
+             patch("main.GacetaClient", return_value=mock_client):
+            run_cycle(
+                conn=mock_conn,
+                pais="BO",
+                max_pages=1,
+                backfill=True,
+                desde_fecha=date(2020, 1, 1),
+            )
+
+        # At least one insert_eventos call with auto_aprobar=True
+        assert mock_repo.insert_eventos.called
+        for call_args in mock_repo.insert_eventos.call_args_list:
+            assert call_args.kwargs.get("auto_aprobar") is True, (
+                f"Expected auto_aprobar=True in backfill, got {call_args}"
+            )
+
+    def test_forward_mode_cursor_stop_regression(self) -> None:
+        """
+        Regression: forward mode (backfill=False) still stops at the cursor.
+        Cursor=180124 → only 180125 is new; 180123 and 180120 are skipped.
+        """
+        from main import run_cycle
+
+        mock_conn = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.get_ultimo_gaceta_id.return_value = 180124
+        mock_repo.upsert_norma.return_value = 42
+        mock_repo.insert_eventos.return_value = 1
+        mock_repo.update_estado_extraccion.return_value = None
+
+        mock_client = MagicMock()
+        mock_client.get.return_value = FIXTURE_HTML
+
+        with patch("main.GacetaRepository", return_value=mock_repo), \
+             patch("main.GacetaClient", return_value=mock_client):
+            result = run_cycle(conn=mock_conn, pais="BO", max_pages=1, backfill=False)
+
+        # Only 1 new norma (180125 > 180124); cursor stop triggers on 180123
+        assert mock_repo.upsert_norma.call_count == 1
+
+    def test_forward_mode_eventos_stay_pendiente_regression(self) -> None:
+        """
+        Regression: forward mode events are NOT auto-approved.
+        insert_eventos must be called WITHOUT auto_aprobar=True (default False).
+        """
+        from main import run_cycle
+
+        mock_conn = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.get_ultimo_gaceta_id.return_value = None
+        mock_repo.upsert_norma.return_value = 42
+        mock_repo.insert_eventos.return_value = 1
+        mock_repo.update_estado_extraccion.return_value = None
+
+        mock_client = MagicMock()
+        mock_client.get.return_value = FIXTURE_HTML
+
+        with patch("main.GacetaRepository", return_value=mock_repo), \
+             patch("main.GacetaClient", return_value=mock_client):
+            run_cycle(conn=mock_conn, pais="BO", max_pages=1, backfill=False)
+
+        # In forward mode, auto_aprobar must be False (default) — not True
+        for call_args in mock_repo.insert_eventos.call_args_list:
+            auto_aprobar = call_args.kwargs.get("auto_aprobar", False)
+            assert auto_aprobar is False, (
+                f"Forward mode must not auto-approve events, got auto_aprobar={auto_aprobar}"
+            )

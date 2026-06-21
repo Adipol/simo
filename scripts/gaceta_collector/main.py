@@ -4,17 +4,26 @@ gaceta_collector/main.py — One-shot collection cycle.
 
 Usage:
     python main.py [--once] [--pais BO]
+    python main.py --backfill [--desde-fecha YYYY-MM-DD] [--pais BO]
 
 Fetches pages from the Bolivia Gaceta Oficial, parses Decreto Presidencial
 rows, extracts appointments, and persists to gaceta_normas + gaceta_eventos_pep.
 Writes a log_scripts row with the result.
+
+Modes:
+  Incremental (default): fetches recent pages, stops at known IDs (cursor).
+    Events land as estado_revision='pendiente' for human review.
+  Backfill (--backfill): ignores the cursor; paginates back in time until
+    norma.fecha_publicacion < desde_fecha (cutoff).  Events are auto-approved
+    (estado_revision='aprobado', revisado_at=now, revisado_por=NULL) to avoid
+    flooding the human review queue with historical decrees.
 """
 import argparse
 import logging
 import os
 import sys
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -71,6 +80,29 @@ class RunResult:
     mensaje_error: Optional[str] = None
 
 
+# ── Public helpers ────────────────────────────────────────────────────────────
+
+def _compute_backfill_cutoff(today: date, years: int) -> date:
+    """
+    Return the backfill cutoff date: today minus `years` years.
+
+    Handles the Feb-29 edge case gracefully by falling back to Feb-28 when
+    the target year is not a leap year.
+
+    Args:
+        today: The reference date (usually date.today()).
+        years: Number of years to look back.
+
+    Returns:
+        A date `years` years before `today`.
+    """
+    try:
+        return today.replace(year=today.year - years)
+    except ValueError:
+        # today is Feb 29 but target year is not a leap year
+        return today.replace(year=today.year - years, day=28)
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def run_cycle(
@@ -78,6 +110,8 @@ def run_cycle(
     pais: str = "BO",
     max_pages: Optional[int] = None,
     settings: Optional[Settings] = None,
+    backfill: bool = False,
+    desde_fecha: Optional[date] = None,
 ) -> RunResult:
     """
     Execute one full collection cycle for `pais`.
@@ -85,8 +119,13 @@ def run_cycle(
     Args:
         conn: Open psycopg2 connection (autocommit or explicit transaction mode).
         pais: ISO-2 country code. Currently only 'BO' is supported.
-        max_pages: Override Settings.gaceta.max_pages for this run.
+        max_pages: Override Settings.gaceta.max_pages for this run (forward mode only).
         settings: Optional Settings instance (falls back to defaults).
+        backfill: When True, run in backfill mode: ignore the incremental cursor,
+            paginate until desde_fecha cutoff, auto-approve events.
+        desde_fecha: Backfill stop date.  Normas with fecha_publicacion < desde_fecha
+            are skipped and pagination halts.  When None and backfill=True, defaults
+            to today minus settings.gaceta.backfill_years.
 
     Returns:
         RunResult with counts.
@@ -100,7 +139,15 @@ def run_cycle(
     if settings is None:
         settings = Settings()
 
-    _max_pages = max_pages if max_pages is not None else settings.gaceta.max_pages
+    if backfill:
+        _max_pages = settings.gaceta.backfill_max_pages
+        if desde_fecha is None:
+            desde_fecha = _compute_backfill_cutoff(date.today(), settings.gaceta.backfill_years)
+        log.info(
+            f"Backfill mode | país={pais} | cutoff={desde_fecha} | max_pages={_max_pages}"
+        )
+    else:
+        _max_pages = max_pages if max_pages is not None else settings.gaceta.max_pages
 
     client = GacetaClient(settings.gaceta)
     repo = GacetaRepository(conn)
@@ -110,9 +157,13 @@ def run_cycle(
     result = RunResult(pais=pais)
 
     try:
-        # Incremental cursor
-        cursor_id = repo.get_ultimo_gaceta_id(pais)
-        log.info(f"Cursor for {pais}: {cursor_id} (None = first run)")
+        # Incremental cursor — used only in forward mode.
+        # In backfill mode we skip the cursor: upsert_norma's ON CONFLICT DO NOTHING
+        # handles deduplication safely for re-runs.
+        cursor_id = repo.get_ultimo_gaceta_id(pais) if not backfill else None
+        log.info(f"Cursor for {pais}: {cursor_id} (None = first run or backfill)")
+
+        stop_pagination = False
 
         for page_num in range(1, _max_pages + 1):
             url = f"{_BOLIVIA_BASE}{_BOLIVIA_LIST_PATH}?page={page_num}"
@@ -125,16 +176,31 @@ def run_cycle(
                 break
 
             result.paginas_procesadas += 1
-            reached_known = False
 
             for norma in rows:
                 gid = norma["gaceta_id_externo"]
 
-                # Skip known normas (incremental)
-                if cursor_id is not None and gid <= cursor_id:
-                    log.debug(f"Norma {gid} already known (cursor={cursor_id}) — stopping")
-                    reached_known = True
-                    break
+                if not backfill:
+                    # Forward/incremental: stop at known IDs
+                    if cursor_id is not None and gid <= cursor_id:
+                        log.debug(
+                            f"Norma {gid} already known (cursor={cursor_id}) — stopping"
+                        )
+                        stop_pagination = True
+                        break
+                else:
+                    # Backfill: stop when fecha_publicacion crosses the cutoff.
+                    # Normas without a fecha are skipped gracefully.
+                    fecha = norma.get("fecha_publicacion")
+                    if fecha is None:
+                        log.debug(f"Norma {gid} has no fecha_publicacion — skipping")
+                        continue
+                    if fecha < desde_fecha:
+                        log.debug(
+                            f"Norma {gid} fecha {fecha} < cutoff {desde_fecha} — stopping backfill"
+                        )
+                        stop_pagination = True
+                        break
 
                 # Extract events from sumario (pure function — outside the DB transaction)
                 extract_result = extract_eventos(norma.get("sumario", ""))
@@ -161,6 +227,7 @@ def run_cycle(
                             norma_id=norma_id,
                             pais=norma["pais"],
                             eventos=extract_result.eventos,
+                            auto_aprobar=backfill,
                         )
                         result.eventos_insertados += n_inserted
 
@@ -176,11 +243,11 @@ def run_cycle(
                     conn.autocommit = prev_autocommit
                     raise
 
-            if reached_known:
+            if stop_pagination:
                 break
 
         log.info(
-            f"Cycle done: {result.normas_nuevas} new normas, "
+            f"{'Backfill' if backfill else 'Cycle'} done: {result.normas_nuevas} new normas, "
             f"{result.eventos_insertados} eventos, "
             f"{result.paginas_procesadas} pages"
         )
@@ -191,17 +258,29 @@ def run_cycle(
         result.mensaje_error = str(exc)
 
     fin = datetime.now()
-    _log_run(conn, inicio=inicio, fin=fin, result=result)
+    script_name = "gaceta_backfill" if backfill else "gaceta"
+    _log_run(conn, inicio=inicio, fin=fin, result=result, script=script_name)
     return result
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────
 
-def _log_run(conn, inicio: datetime, fin: datetime, result: RunResult) -> None:
+def _log_run(
+    conn,
+    inicio: datetime,
+    fin: datetime,
+    result: RunResult,
+    script: str = "gaceta",
+) -> None:
     """
     Write a log_scripts row for this cycle.
     Maps run result to log_scripts.estado allowed values:
       ok → completado, error → error
+
+    Args:
+        script: Script name tag for the log row. Use 'gaceta' for incremental
+            runs and 'gaceta_backfill' for historical backfill runs so operators
+            can distinguish them in the logs.
     """
     estado_db = "completado" if result.estado == "ok" else "error"
     duracion = (fin - inicio).total_seconds()
@@ -218,7 +297,7 @@ def _log_run(conn, inicio: datetime, fin: datetime, result: RunResult) -> None:
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
-                    "gaceta",
+                    script,
                     inicio,
                     fin,
                     estado_db,
@@ -239,17 +318,62 @@ def _log_run(conn, inicio: datetime, fin: datetime, result: RunResult) -> None:
 def main() -> None:
     """CLI entry point for one-shot gaceta collection."""
     parser = argparse.ArgumentParser(
-        description="Gaceta Oficial collector — one-shot cycle"
+        description="Gaceta Oficial collector — one-shot cycle",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  # Forward incremental (default):\n"
+            "  python main.py --once --pais BO\n\n"
+            "  # Historical backfill (default cutoff = today - GACETA_BACKFILL_YEARS):\n"
+            "  python main.py --backfill --pais BO\n\n"
+            "  # Backfill with explicit cutoff:\n"
+            "  python main.py --backfill --desde-fecha 2024-01-01 --pais BO\n"
+        ),
     )
-    parser.add_argument("--once", action="store_true", help="Run once and exit (default behavior)")
+    parser.add_argument(
+        "--once", action="store_true", help="Run once and exit (default behavior)"
+    )
     parser.add_argument("--pais", default="BO", help="Country code (default: BO)")
+    parser.add_argument(
+        "--backfill",
+        action="store_true",
+        help=(
+            "Run historical backfill instead of incremental collection. "
+            "Events are auto-approved (estado_revision=aprobado) to avoid "
+            "flooding the human review queue."
+        ),
+    )
+    parser.add_argument(
+        "--desde-fecha",
+        dest="desde_fecha",
+        metavar="YYYY-MM-DD",
+        help=(
+            "Backfill cutoff date (inclusive start of history to collect). "
+            "Normas published before this date are not collected. "
+            "Defaults to today minus GACETA_BACKFILL_YEARS (env var, default 5 years)."
+        ),
+    )
     args = parser.parse_args()
+
+    # Parse optional --desde-fecha argument
+    desde_fecha: Optional[date] = None
+    if args.desde_fecha:
+        try:
+            desde_fecha = date.fromisoformat(args.desde_fecha)
+        except ValueError as exc:
+            log.error(f"Invalid --desde-fecha value '{args.desde_fecha}': {exc}")
+            sys.exit(1)
 
     settings = Settings()
     log.info("=" * 60)
     log.info("Gaceta Collector starting")
-    log.info(f"  País   : {args.pais}")
-    log.info(f"  MaxPag : {settings.gaceta.max_pages}")
+    log.info(f"  País     : {args.pais}")
+    log.info(f"  Mode     : {'backfill' if args.backfill else 'incremental'}")
+    if args.backfill:
+        log.info(f"  MaxPag   : {settings.gaceta.backfill_max_pages} (backfill cap)")
+        log.info(f"  DesdeFecha: {desde_fecha or f'today - {settings.gaceta.backfill_years}y'}")
+    else:
+        log.info(f"  MaxPag   : {settings.gaceta.max_pages}")
     log.info("=" * 60)
 
     try:
@@ -260,7 +384,13 @@ def main() -> None:
         sys.exit(1)
 
     try:
-        result = run_cycle(conn=conn, pais=args.pais, settings=settings)
+        result = run_cycle(
+            conn=conn,
+            pais=args.pais,
+            settings=settings,
+            backfill=args.backfill,
+            desde_fecha=desde_fecha,
+        )
         log.info(f"Done: {result}")
         sys.exit(0 if result.estado == "ok" else 1)
     finally:

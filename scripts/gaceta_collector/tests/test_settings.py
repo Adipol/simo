@@ -117,3 +117,42 @@ class TestSettingsReadsEnvVars:
             from config.settings import Settings
             s = Settings()
             assert s.db.password == "secret123"
+
+
+class TestBackfillSettings:
+    """GacetaConfig includes backfill-specific settings."""
+
+    def test_backfill_years_default_is_5(self) -> None:
+        """
+        GACETA_BACKFILL_YEARS defaults to 5.
+        Reason: Bolivian PEP regulation retains PEP status for 5 years after
+        leaving office, so the baseline must cover everyone who held office in
+        the last 5 years.
+        """
+        env = {k: v for k, v in os.environ.items() if k != "GACETA_BACKFILL_YEARS"}
+        with patch.dict(os.environ, env, clear=True):
+            from config.settings import GacetaConfig
+            cfg = GacetaConfig()
+            assert cfg.backfill_years == 5
+
+    def test_backfill_max_pages_default_is_60(self) -> None:
+        """GACETA_BACKFILL_MAX_PAGES defaults to 60 (safety cap for historical crawl)."""
+        env = {k: v for k, v in os.environ.items() if k != "GACETA_BACKFILL_MAX_PAGES"}
+        with patch.dict(os.environ, env, clear=True):
+            from config.settings import GacetaConfig
+            cfg = GacetaConfig()
+            assert cfg.backfill_max_pages == 60
+
+    def test_backfill_years_from_env(self) -> None:
+        """GACETA_BACKFILL_YEARS env var is parsed as integer."""
+        with patch.dict(os.environ, {"GACETA_BACKFILL_YEARS": "3"}):
+            from config.settings import GacetaConfig
+            cfg = GacetaConfig()
+            assert cfg.backfill_years == 3
+
+    def test_backfill_max_pages_from_env(self) -> None:
+        """GACETA_BACKFILL_MAX_PAGES env var is parsed as integer."""
+        with patch.dict(os.environ, {"GACETA_BACKFILL_MAX_PAGES": "100"}):
+            from config.settings import GacetaConfig
+            cfg = GacetaConfig()
+            assert cfg.backfill_max_pages == 100
