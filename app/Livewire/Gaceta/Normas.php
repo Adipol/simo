@@ -8,6 +8,7 @@ use App\Models\GacetaEventoPep;
 use App\Models\GacetaNorma;
 use Illuminate\Contracts\View\View;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Str;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
@@ -145,7 +146,7 @@ final class Normas extends Component
             'gaceta_norma_id'           => $normaId,
             'pais'                       => $norma->pais,
             'persona_nombre'             => $this->personaNombre,
-            'persona_nombre_normalizado' => mb_strtoupper($this->personaNombre),
+            'persona_nombre_normalizado' => Str::lower(Str::ascii($this->personaNombre)),
             'cargo'                      => $this->cargo,
             'interino'                   => $this->interino,
             'tipo_evento'                => 'designacion',

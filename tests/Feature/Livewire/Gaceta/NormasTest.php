@@ -383,6 +383,54 @@ class NormasTest extends TestCase
     }
 
     /**
+     * agregarEvento() normalizes persona_nombre_normalizado to lowercase + ASCII
+     * (accent-stripped), consistent with the Python extractor output.
+     *
+     * SCN-T5-norm.1 / REQ-NORM-01
+     */
+    public function test_gaceta_normas_agregar_evento_normaliza_nombre_a_lowercase_ascii(): void
+    {
+        $admin = $this->makeAdmin();
+        $norma = $this->makeNorma('requiere_detalle', 'BO', 1);
+
+        Livewire::actingAs($admin)
+            ->test(Normas::class)
+            ->set('personaNombre', 'José Pérez Gutiérrez')
+            ->set('cargo', 'Ministro de Defensa')
+            ->call('agregarEvento', $norma->id);
+
+        $this->assertDatabaseHas('gaceta_eventos_pep', [
+            'gaceta_norma_id'            => $norma->id,
+            'persona_nombre'             => 'José Pérez Gutiérrez',
+            'persona_nombre_normalizado' => 'jose perez gutierrez',
+        ]);
+    }
+
+    /**
+     * Triangulation: normalization works for names with different accent patterns
+     * (e.g. tilde on ñ, acute on e/a/i).
+     *
+     * SCN-T5-norm.2 / REQ-NORM-01
+     */
+    public function test_gaceta_normas_agregar_evento_normaliza_nombre_variantes_acentos(): void
+    {
+        $admin = $this->makeAdmin();
+        $norma = $this->makeNorma('requiere_detalle', 'BO', 1);
+
+        Livewire::actingAs($admin)
+            ->test(Normas::class)
+            ->set('personaNombre', 'Ricardo Erick Sanjinés Chávez')
+            ->set('cargo', 'Comandante en Jefe')
+            ->call('agregarEvento', $norma->id);
+
+        $this->assertDatabaseHas('gaceta_eventos_pep', [
+            'gaceta_norma_id'            => $norma->id,
+            'persona_nombre'             => 'Ricardo Erick Sanjinés Chávez',
+            'persona_nombre_normalizado' => 'ricardo erick sanjines chavez',
+        ]);
+    }
+
+    /**
      * Triangulation: validation fails when cargo is blank.
      */
     public function test_gaceta_normas_agregar_evento_validation_fails_when_cargo_blank(): void
