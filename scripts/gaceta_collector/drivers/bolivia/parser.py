@@ -12,9 +12,12 @@ id="tNormas". Each decree is rendered as a <div class="card-body"> with:
   - <div class="card-footer"> for download/view links (gaceta_id_externo lives here)
 
 Returns ONLY rows with tipo_norma == 'Decreto Presidencial'.
-gaceta_id_externo is the numeric id from /normas/descargarNrms/{id}.
-pdf_url is the absolute URL for that same link.
-Cards without a /normas/descargarNrms/ link are skipped (no id = cannot dedup).
+gaceta_id_externo is the numeric id present in any footer link (descargarNrms,
+descargarPdf, verGratis_gob, verGratis_gob1 — all carry the same id).
+pdf_url is the absolute URL of the download link present in the footer:
+  - /normas/descargarNrms/{id} for post-~2024 cards (new format)
+  - /normas/descargarPdf/{id}  for pre-~2024 historical cards (old format)
+Cards with no id-bearing footer link are skipped (no id = cannot dedup).
 pais is always 'BO'.
 
 Date format: YYYY-MM-DD (the site changed from DD/MM/YYYY; old format is rejected).
@@ -35,9 +38,19 @@ _RE_NUMERO = re.compile(r"Decreto Presidencial\s+N[°º]\s*(\d+)", re.IGNORECASE
 # Matches "Fecha de Publicación: 2026-06-20"
 _RE_FECHA = re.compile(r"Fecha\s+de\s+Publicaci[oó]n[:\s]+(\d{4}-\d{2}-\d{2})")
 
-# Matches /normas/descargarNrms/{id} or /normas/verGratis_gob/{id} or verGratis_gob1/{id}
+# Matches any id-bearing norma link:
+#   /normas/descargarNrms/{id}  — new format (post-~2024)
+#   /normas/descargarPdf/{id}   — old format (pre-~2024 historical decrees)
+#   /normas/verGratis_gob/{id}  — view link (same numeric id)
+#   /normas/verGratis_gob1/{id} — download Word link (same numeric id)
 _RE_NORMA_ID = re.compile(
-    r"/normas/(?:descargarNrms|verGratis_gob1?)/(\d+)",
+    r"/normas/(?:descargarNrms|descargarPdf|verGratis_gob1?)/(\d+)",
+    re.IGNORECASE,
+)
+
+# Matches download links that carry the PDF (new or old format)
+_RE_PDF_LINK = re.compile(
+    r"/normas/(?:descargarNrms|descargarPdf)/(\d+)",
     re.IGNORECASE,
 )
 
@@ -124,13 +137,18 @@ class BoliviaParser:
         pdf_url: Optional[str] = None
         for anchor in footer.find_all("a"):
             href = anchor.get("href", "")
+            # Extract the numeric id from any id-bearing link (verGratis_gob,
+            # verGratis_gob1, descargarNrms, descargarPdf — all carry the same id).
             m_id = _RE_NORMA_ID.search(href)
             if m_id is None:
                 continue
             extracted_id = int(m_id.group(1))
             if gaceta_id_externo is None:
                 gaceta_id_externo = extracted_id
-            if "descargarNrms" in href and pdf_url is None:
+            # Extract pdf_url from whichever download link is present:
+            #   descargarNrms — new format (post-~2024)
+            #   descargarPdf  — old format (pre-~2024 historical decrees)
+            if pdf_url is None and _RE_PDF_LINK.search(href):
                 pdf_url = _BASE_URL + href
 
         # Skip cards without a parseable id (cannot dedup without gaceta_id_externo)

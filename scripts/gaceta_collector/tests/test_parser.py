@@ -424,3 +424,155 @@ class TestBoliviaDateParsing:
         assert result is None, (
             "DD/MM/YYYY format must not be accepted — real site uses YYYY-MM-DD"
         )
+
+
+# ---------------------------------------------------------------------------
+# Old-format cards: /normas/descargarPdf/{id} (pre-~2024 historical decrees)
+# Fixture origin: http://www.gacetaoficialdebolivia.gob.bo/normas/listadonor/11?page=23
+# Fetched: 2026-06-20  (50 normas total: 16 Decreto Presidencial + 34 Decreto Supremo)
+# ALL cards on this page use descargarPdf (not descargarNrms) in their footer.
+# ---------------------------------------------------------------------------
+
+OLD_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "bolivia_listadonor_page23.html"
+
+# Known values from the REAL old fixture (page 23, 2021-07-22)
+OLD_DP_ID = 168529          # first Decreto Presidencial on page 23
+OLD_DP_NUMERO = "4549"
+OLD_DP_DATE = date(2021, 7, 22)
+OLD_DP_PDF_URL = f"{BASE_URL}/normas/descargarPdf/{OLD_DP_ID}"
+OLD_PAGE_DP_COUNT = 16      # Decreto Presidencial rows on page 23
+
+
+def _load_old_fixture() -> str:
+    return OLD_FIXTURE_PATH.read_text(encoding="utf-8")
+
+
+def _make_old_format_card_html(gaceta_id: int = 168529) -> str:
+    """
+    Build minimal card HTML matching the REAL old-format DOM (page 23).
+    Footer uses /normas/descargarPdf/{id} — no descargarNrms link present.
+    """
+    return f"""
+    <html><body>
+    <div class="row">
+      <div class="col-12 m-2">
+        <div class="card h-100 card p-2 fondo-paper" style="border-radius: 20px;">
+          <div class="card-body">
+            <p class="card-text texto-default">
+              Publicado en edición: <strong><a href="/edicions/view/1407NEC">1407NEC</a></strong>
+              | Fecha de Publicación: 2021-07-22
+            </p>
+            <h6><b>Decreto Presidencial N° 4549</b></h6>
+            <div class="contentpaneopen">
+              <p align="justify">Designa MINISTRA INTERINA DE RELACIONES EXTERIORES.</p>
+            </div>
+          </div>
+          <div class="card-footer bg-transparent text-end" style="border: none;">
+            <a href="/normas/verGratis_gob/{gaceta_id}">Ver Norma</a>
+            |
+            <a href="/normas/verGratis_gob1/{gaceta_id}" target="_blank">Descargar Word</a>
+            |
+            <a href="/normas/descargarPdf/{gaceta_id}" target="download" title="Descargar Documento en PDF">
+              Descargar PDF
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+    </body></html>
+    """
+
+
+class TestBoliviaParserOldFormat:
+    """
+    Parser handles old-format cards that use /normas/descargarPdf/{id}.
+
+    Pre-~2024 historical decrees render descargarPdf (not descargarNrms) in the
+    card footer.  The parser must extract pdf_url from whichever download link is
+    present.  gaceta_id_externo comes from any id-bearing link (same numeric id).
+
+    RED: these tests FAIL before the fix because the parser only looks for
+    'descargarNrms' when building pdf_url, leaving it NULL for old cards.
+    """
+
+    def test_old_format_inline_pdf_url_is_descargarPdf_absolute(self) -> None:
+        """
+        Inline old-format card: pdf_url is the absolute descargarPdf URL (not None).
+        RED: fails because parser only checks 'descargarNrms' for pdf_url.
+        """
+        from drivers.bolivia.parser import BoliviaParser
+        parser = BoliviaParser()
+        html = _make_old_format_card_html(gaceta_id=OLD_DP_ID)
+        rows = parser.parse_listing(html)
+
+        assert len(rows) == 1, f"Expected 1 row from old-format card, got {len(rows)}"
+        assert rows[0]["pdf_url"] == OLD_DP_PDF_URL, (
+            f"Expected pdf_url={OLD_DP_PDF_URL!r}, got {rows[0]['pdf_url']!r}"
+        )
+
+    def test_old_format_inline_gaceta_id_externo_is_correct(self) -> None:
+        """
+        Old-format card: gaceta_id_externo is extracted from any id-bearing link.
+        Triangulation: id must be correct even when descargarNrms is absent.
+        """
+        from drivers.bolivia.parser import BoliviaParser
+        parser = BoliviaParser()
+        html = _make_old_format_card_html(gaceta_id=OLD_DP_ID)
+        rows = parser.parse_listing(html)
+
+        assert len(rows) == 1
+        assert rows[0]["gaceta_id_externo"] == OLD_DP_ID, (
+            f"Expected gaceta_id_externo={OLD_DP_ID}, got {rows[0]['gaceta_id_externo']!r}"
+        )
+
+    def test_real_old_page_yields_non_null_pdf_url_for_all_dp_rows(self) -> None:
+        """
+        Real old page (page 23): ALL Decreto Presidencial rows must have non-null pdf_url.
+        RED: currently all 16 pdf_url values are None because descargarPdf is not recognized.
+        """
+        from drivers.bolivia.parser import BoliviaParser
+        parser = BoliviaParser()
+        html = _load_old_fixture()
+        rows = parser.parse_listing(html)
+
+        assert len(rows) == OLD_PAGE_DP_COUNT, (
+            f"Expected {OLD_PAGE_DP_COUNT} DP rows from old page, got {len(rows)}"
+        )
+        null_pdf = [r for r in rows if r["pdf_url"] is None]
+        assert null_pdf == [], (
+            f"{len(null_pdf)} rows still have pdf_url=None after fix: "
+            f"{[r['gaceta_id_externo'] for r in null_pdf]}"
+        )
+
+    def test_real_old_page_dp1_pdf_url_is_descargarPdf(self) -> None:
+        """
+        Real old page: first DP (id=168529) pdf_url must be the descargarPdf absolute URL.
+        """
+        from drivers.bolivia.parser import BoliviaParser
+        parser = BoliviaParser()
+        html = _load_old_fixture()
+        rows = parser.parse_listing(html)
+
+        dp1 = next((r for r in rows if r["gaceta_id_externo"] == OLD_DP_ID), None)
+        assert dp1 is not None, f"Row with id {OLD_DP_ID} not found"
+        assert dp1["pdf_url"] == OLD_DP_PDF_URL, (
+            f"Expected {OLD_DP_PDF_URL!r}, got {dp1['pdf_url']!r}"
+        )
+
+    def test_new_format_descargarNrms_pdf_url_regression(self) -> None:
+        """
+        Regression: new-format cards (descargarNrms) still produce the correct pdf_url.
+        Triangulation: both formats must work after the fix.
+        """
+        from drivers.bolivia.parser import BoliviaParser
+        parser = BoliviaParser()
+        # Use the real new-format fixture (page 1)
+        html = _load_fixture()
+        rows = parser.parse_listing(html)
+
+        # DP1 from page 1 uses descargarNrms — must still have correct pdf_url
+        dp1 = next((r for r in rows if r["gaceta_id_externo"] == DP1_ID), None)
+        assert dp1 is not None
+        assert dp1["pdf_url"] == DP1_PDF_URL, (
+            f"Regression: new-format pdf_url broken. Expected {DP1_PDF_URL!r}, got {dp1['pdf_url']!r}"
+        )
