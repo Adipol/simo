@@ -11,7 +11,7 @@
     </div>
 
     {{-- Tarjetas de estado actual --}}
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
 
         {{-- Scraper --}}
         <div class="simo-card">
@@ -43,7 +43,7 @@
                 <div class="mb-4 p-3 bg-blue-50 rounded-xl border border-blue-100"
                      x-data="{
                          inicio: {{ $scraperInicioTs }},
-                         timeout: {{ $scraperTimeoutSeg ?? 1800 }},
+                         timeout: {{ $scraperTimeoutSeg }},
                          elapsed: 0,
                          pct: 0,
                          fmt(s) {
@@ -68,7 +68,7 @@
                         <div class="bg-blue-500 h-1.5 rounded-full transition-none"
                              :style="'width:' + pct + '%'"></div>
                     </div>
-                    <div class="text-[10px] text-blue-400 mt-1" x-text="'~' + pct + '% del timeout máximo ({{ intdiv($scraperTimeoutSeg ?? 1800, 60) }} min)'"></div>
+                    <div class="text-[10px] text-blue-400 mt-1" x-text="'~' + pct + '% del timeout máximo ({{ intdiv($scraperTimeoutSeg, 60) }} min)'"></div>
                 </div>
             @endif
 
@@ -81,14 +81,7 @@
                     </div>
                     <div class="bg-zinc-50 border border-zinc-100 rounded-lg p-3">
                         <dt class="text-xs text-zinc-400 mb-1">Estado</dt>
-                        <dd>
-                            <span class="simo-badge
-                                {{ $scraperUltimo->estado === 'completado'   ? 'bg-green-50 text-green-700'   :
-                                   ($scraperUltimo->estado === 'error'        ? 'bg-red-50 text-red-700'       :
-                                   ($scraperUltimo->estado === 'interrumpido' ? 'bg-orange-50 text-orange-600' : 'bg-amber-50 text-amber-700')) }}">
-                                {{ ucfirst($scraperUltimo->estado) }}
-                            </span>
-                        </dd>
+                        <dd><x-simo-log-estado-badge :estado="$scraperUltimo->estado" /></dd>
                     </div>
                     <div class="bg-zinc-50 border border-zinc-100 rounded-lg p-3">
                         <dt class="text-xs text-zinc-400 mb-1">Sitios procesados</dt>
@@ -155,14 +148,7 @@
                     </div>
                     <div class="bg-zinc-50 border border-zinc-100 rounded-lg p-3">
                         <dt class="text-xs text-zinc-400 mb-1">Estado</dt>
-                        <dd>
-                            <span class="simo-badge
-                                {{ $pepUltimo->estado === 'completado'   ? 'bg-green-50 text-green-700'   :
-                                   ($pepUltimo->estado === 'error'        ? 'bg-red-50 text-red-700'       :
-                                   ($pepUltimo->estado === 'interrumpido' ? 'bg-orange-50 text-orange-600' : 'bg-amber-50 text-amber-700')) }}">
-                                {{ ucfirst($pepUltimo->estado) }}
-                            </span>
-                        </dd>
+                        <dd><x-simo-log-estado-badge :estado="$pepUltimo->estado" /></dd>
                     </div>
                     <div class="bg-zinc-50 border border-zinc-100 rounded-lg p-3">
                         <dt class="text-xs text-zinc-400 mb-1">Fuentes procesadas</dt>
@@ -194,6 +180,79 @@
                 <p class="text-sm text-zinc-400 text-center py-4">Sin registros aun.</p>
             @endif
         </div>
+
+        {{-- Gaceta Oficial --}}
+        <div class="simo-card">
+            <div class="flex items-start justify-between mb-4">
+                <div class="flex items-center gap-3">
+                    <div class="w-9 h-9 rounded-lg bg-amber-50 flex items-center justify-center">
+                        <svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                                d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h2 class="font-semibold text-gray-800">Gaceta Oficial</h2>
+                        <p class="text-xs text-gray-400">
+                            @if($gacetaConfig)
+                                Cada {{ $gacetaConfig->intervaloLabel() }}
+                            @else
+                                Collector de decretos
+                            @endif
+                        </p>
+                    </div>
+                </div>
+                @if($gacetaEjecutando)
+                    <span class="simo-badge bg-green-50 text-green-700">
+                        <span class="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
+                        Ejecutando
+                    </span>
+                @else
+                    <span class="simo-badge bg-zinc-100 text-zinc-500 border-zinc-200">Inactivo</span>
+                @endif
+            </div>
+
+            @if($gacetaUltimo)
+                <dl class="grid grid-cols-2 gap-3">
+                    <div class="bg-zinc-50 border border-zinc-100 rounded-lg p-3">
+                        <dt class="text-xs text-zinc-400 mb-1">Ultima ejecucion</dt>
+                        <dd class="text-sm font-medium text-zinc-800">{{ $gacetaUltimo->inicio->format('d/m/Y H:i') }}</dd>
+                        <dd class="text-xs text-zinc-400">{{ $gacetaUltimo->inicio->diffForHumans() }}</dd>
+                    </div>
+                    <div class="bg-zinc-50 border border-zinc-100 rounded-lg p-3">
+                        <dt class="text-xs text-zinc-400 mb-1">Estado</dt>
+                        <dd><x-simo-log-estado-badge :estado="$gacetaUltimo->estado" /></dd>
+                    </div>
+                    <div class="bg-zinc-50 border border-zinc-100 rounded-lg p-3">
+                        <dt class="text-xs text-zinc-400 mb-1">Normas procesadas</dt>
+                        <dd class="text-sm font-semibold text-zinc-800">{{ number_format($gacetaUltimo->items_procesados) }}</dd>
+                    </div>
+                    <div class="bg-zinc-50 border border-zinc-100 rounded-lg p-3">
+                        <dt class="text-xs text-zinc-400 mb-1">Nuevas encontradas</dt>
+                        <dd class="text-sm font-semibold text-zinc-800">{{ number_format($gacetaUltimo->items_resultado) }}</dd>
+                    </div>
+                    <div class="bg-zinc-50 border border-zinc-100 rounded-lg p-3">
+                        <dt class="text-xs text-zinc-400 mb-1">Errores</dt>
+                        <dd class="text-sm font-semibold {{ $gacetaUltimo->errores > 0 ? 'text-red-600' : 'text-zinc-800' }}">
+                            {{ $gacetaUltimo->errores }}
+                        </dd>
+                    </div>
+                    @if($gacetaUltimo->duracion_segundos)
+                    <div class="bg-zinc-50 border border-zinc-100 rounded-lg p-3">
+                        <dt class="text-xs text-zinc-400 mb-1">Duracion</dt>
+                        <dd class="text-sm font-semibold text-zinc-800">{{ round($gacetaUltimo->duracion_segundos, 1) }}s</dd>
+                    </div>
+                    @endif
+                </dl>
+                @if($gacetaUltimo->mensaje_error)
+                    <div class="mt-3 bg-red-50 border border-red-100 text-red-700 text-xs px-3 py-2 rounded-lg">
+                        {{ $gacetaUltimo->mensaje_error }}
+                    </div>
+                @endif
+            @else
+                <p class="text-sm text-zinc-400 text-center py-4">Sin registros aun.</p>
+            @endif
+        </div>
     </div>
 
     {{-- Historial --}}
@@ -205,6 +264,8 @@
                     <option value="">Todos los scripts</option>
                     <option value="scraper">Scraper</option>
                     <option value="pep_monitor">PEP Monitor</option>
+                    <option value="gaceta">Gaceta</option>
+                    <option value="gaceta_backfill">Gaceta Backfill</option>
                 </select>
                 <select wire:model.live="filtroEstado" class="simo-select text-xs py-1.5">
                     <option value="">Todos los estados</option>
@@ -231,21 +292,23 @@
             </thead>
             <tbody>
                 @forelse($logs as $log)
-                    <tr>
+                    <tr wire:key="log-{{ $log->id }}">
                         <td>
-                            <span class="simo-badge {{ $log->script === 'scraper' ? 'bg-blue-50 text-blue-700' : 'bg-purple-50 text-purple-700' }}">
-                                {{ $log->script === 'scraper' ? 'Scraper' : 'PEP' }}
-                            </span>
+                            @php
+                                [$badgeClass, $badgeLabel] = match($log->script) {
+                                    'scraper'         => ['bg-blue-50 text-blue-700', 'Scraper'],
+                                    'pep_monitor'     => ['bg-purple-50 text-purple-700', 'PEP'],
+                                    'gaceta'          => ['bg-amber-50 text-amber-700', 'Gaceta'],
+                                    'gaceta_backfill' => ['bg-orange-50 text-orange-700', 'Gaceta BF'],
+                                    default           => ['bg-zinc-50 text-zinc-700', $log->script],
+                                };
+                            @endphp
+                            <span class="simo-badge {{ $badgeClass }}">{{ $badgeLabel }}</span>
                         </td>
                         <td class="text-xs text-zinc-500">{{ $log->inicio->format('d/m/y H:i:s') }}</td>
                         <td class="text-xs text-zinc-500">{{ $log->fin ? $log->fin->format('d/m/y H:i:s') : '—' }}</td>
                         <td>
-                            <span class="simo-badge
-                                {{ $log->estado === 'completado'   ? 'bg-green-50 text-green-700'   :
-                                   ($log->estado === 'error'        ? 'bg-red-50 text-red-700'       :
-                                   ($log->estado === 'interrumpido' ? 'bg-orange-50 text-orange-600' : 'bg-amber-50 text-amber-700')) }}">
-                                {{ $log->estado }}
-                            </span>
+                            <x-simo-log-estado-badge :estado="$log->estado" />
                             @if($log->mensaje_error)
                                 <div class="text-xs text-red-400 mt-0.5 max-w-[180px] truncate" title="{{ $log->mensaje_error }}">
                                     {{ Str::limit($log->mensaje_error, 40) }}
