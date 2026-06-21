@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
@@ -27,6 +29,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property string|null $pdf_archivado_path
  * @property array|null  $raw_json
  * @property string      $estado_extraccion
+ * @property int|null    $revisado_por
+ * @property \Illuminate\Support\Carbon|null $revisado_at
  * @property \Illuminate\Support\Carbon $created_at
  * @property \Illuminate\Support\Carbon $updated_at
  */
@@ -47,12 +51,15 @@ class GacetaNorma extends Model
         'pdf_archivado_path',
         'raw_json',
         'estado_extraccion',
+        'revisado_por',
+        'revisado_at',
     ];
 
     protected $casts = [
         'fecha_publicacion' => 'date',
         'raw_json'          => 'array',
         'gaceta_id_externo' => 'integer',
+        'revisado_at'       => 'datetime',
     ];
 
     // =========================================================================
@@ -62,6 +69,11 @@ class GacetaNorma extends Model
     public function eventosPep(): HasMany
     {
         return $this->hasMany(GacetaEventoPep::class, 'gaceta_norma_id');
+    }
+
+    public function revisadoPor(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'revisado_por');
     }
 
     // =========================================================================
