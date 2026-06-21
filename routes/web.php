@@ -7,6 +7,7 @@ use App\Livewire\Admin\PrecisionDashboard;
 use App\Livewire\Configuracion\Paises;
 use App\Livewire\Gaceta\Eventos as GacetaEventos;
 use App\Livewire\Gaceta\Normas as GacetaNormas;
+use App\Livewire\Gaceta\Personas as GacetaPersonas;
 use App\Livewire\Dashboard;
 use App\Livewire\Pep\Cambios;
 use App\Livewire\Pep\Fuentes;
@@ -87,6 +88,11 @@ Route::middleware(['auth', 'usuario.activo'])->group(function () {
     Route::get('/gaceta/normas', GacetaNormas::class)
         ->middleware('permission:gestionar resultados')
         ->name('gaceta.normas');
+
+    // Gaceta — perfil de persona PEP (vista agrupada por persona) (admin y supervisor)
+    Route::get('/gaceta/personas', GacetaPersonas::class)
+        ->middleware('permission:gestionar resultados')
+        ->name('gaceta.personas');
 
     // Perfil (Breeze)
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
