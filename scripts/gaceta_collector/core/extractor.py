@@ -189,6 +189,28 @@ _RE_INTERINO_IN_CARGO = re.compile(r"\bINTERIN[OA]\b", re.IGNORECASE)
 # 'mientras dure la ausencia' anywhere in the segment -> also signals interino.
 _RE_AUSENCIA = re.compile(r"mientras\s+dure\s+la\s+ausencia", re.IGNORECASE | re.UNICODE)
 
+# Referenced titular cargo for Pattern B interim decrees.
+#
+# Structure after the appointee name:
+#   '<Name>, <Cargo Titular>, mientras dure la ausencia...'
+# The titular cargo is the appointee's PERMANENT role mentioned as context.
+# It sits between the comma after the name and the ', mientras dure' clause.
+#
+# Applied to segment text starting from match.end('nombre'), which points to
+# the character right after the last char of the extracted name (before the
+# trailing terminator consumed by _RE_APPOINTMENT_B).
+#
+# Charclass for titular cargo: Title Case text — accepts both uppercase and
+# lowercase accented chars.  Non-greedy '+?' stops at the earliest ', mientras'.
+# The pattern requires a comma BEFORE 'mientras' so that ', mientras dure'
+# alone (no titular phrase) does NOT match.
+_RE_CARGO_REFERENCIADO = re.compile(
+    r"\s*,\s*"
+    r"([A-Za-záéíóúñüÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕàèìòùâêîôûãõ][^,\n]+?)"
+    r"\s*,\s*mientras\s+dure",
+    re.IGNORECASE | re.UNICODE,
+)
+
 
 # ── Data model ────────────────────────────────────────────────────────────────
 
@@ -338,6 +360,7 @@ def _build_evento_from_match(match, full_sumario: str) -> dict:
         "entidad": entidad,
         "tipo_evento": "designacion",
         "interino": interino,
+        "cargo_referenciado": None,  # Pattern A has no titular-reference phrase
         "estado_revision": "pendiente",
     }
 
@@ -366,6 +389,17 @@ def _build_evento_from_match_b(match, segment: str) -> dict:
         or _RE_AUSENCIA.search(segment)
     )
 
+    # Extract the referenced titular cargo when present.
+    # Looks at the segment text starting from the end of the nombre group,
+    # searching for ', <Cargo Titular>, mientras dure'.
+    # Returns None when the phrase is absent (permanent appointment or interim
+    # without a titular-context clause).
+    cargo_referenciado: str | None = None
+    after_nombre = segment[match.end("nombre"):]
+    ref_match = _RE_CARGO_REFERENCIADO.match(after_nombre)
+    if ref_match:
+        cargo_referenciado = ref_match.group(1).strip()
+
     return {
         "persona_nombre": persona_nombre,
         "persona_nombre_normalizado": _normalize_name(persona_nombre),
@@ -374,6 +408,7 @@ def _build_evento_from_match_b(match, segment: str) -> dict:
         "entidad": None,
         "tipo_evento": "designacion",
         "interino": interino,
+        "cargo_referenciado": cargo_referenciado,
         "estado_revision": "pendiente",
     }
 
