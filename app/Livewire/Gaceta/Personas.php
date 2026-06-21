@@ -118,7 +118,7 @@ final class Personas extends Component
                     JOIN gaceta_normas n2 ON n2.id = e2.gaceta_norma_id
                     WHERE e2.persona_nombre_normalizado = e.persona_nombre_normalizado
                       AND e2.estado_revision != 'rechazado'
-                    ORDER BY n2.fecha_publicacion DESC
+                    ORDER BY n2.fecha_publicacion DESC, e2.id DESC
                     LIMIT 1
                 ) AS persona_nombre,
                 (
@@ -128,12 +128,12 @@ final class Personas extends Component
                     WHERE e3.persona_nombre_normalizado = e.persona_nombre_normalizado
                       AND e3.estado_revision != 'rechazado'
                       AND e3.interino = false
-                    ORDER BY n3.fecha_publicacion DESC
+                    ORDER BY n3.fecha_publicacion DESC, e3.id DESC
                     LIMIT 1
                 ) AS cargo_titular",
             )
             ->groupBy('e.persona_nombre_normalizado')
-            ->orderByRaw('MAX(n.fecha_publicacion) DESC')
+            ->orderByRaw('MAX(n.fecha_publicacion) DESC, e.persona_nombre_normalizado ASC')
             ->paginate(20);
     }
 
@@ -160,6 +160,7 @@ final class Personas extends Component
             ->where('estado_revision', '!=', 'rechazado')
             ->join('gaceta_normas', 'gaceta_normas.id', '=', 'gaceta_eventos_pep.gaceta_norma_id')
             ->orderBy('gaceta_normas.fecha_publicacion', 'desc')
+            ->orderBy('gaceta_eventos_pep.id', 'desc')
             ->select('gaceta_eventos_pep.*')
             ->get();
     }
