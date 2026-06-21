@@ -24,6 +24,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property string|null $entidad
  * @property string      $tipo_evento                  designacion | cese
  * @property bool        $interino
+ * @property string|null $cargo_referenciado           Appointee's permanent role mentioned in interim decree; null when not present
  * @property string      $estado_revision              pendiente | requiere_revision | aprobado | rechazado
  * @property int|null    $revisado_por                 Seam: user_id set by Livewire in PR3
  * @property \Illuminate\Support\Carbon|null $revisado_at
@@ -44,6 +45,7 @@ class GacetaEventoPep extends Model
         'entidad',
         'tipo_evento',
         'interino',
+        'cargo_referenciado',
         'estado_revision',
         'revisado_por',
         'revisado_at',
