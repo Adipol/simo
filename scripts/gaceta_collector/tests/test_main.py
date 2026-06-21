@@ -909,3 +909,265 @@ class TestRunCycleUniqueViolation:
             f"Expected estado='error' for OperationalError, got {result.estado!r}"
         )
         assert "connection reset" in (result.mensaje_error or "")
+
+
+# ── Out-of-order outlier fixtures ─────────────────────────────────────────────
+# Bolivia's listing is NOT strictly date-descending: occasional old decrees appear
+# mixed in pages that are otherwise recent (confirmed live: page 16 of a 5-year
+# backfill had a 2010 decree mixed with 2023 ones).
+# Cutoff used in TestBackfillOutOfOrderRobustness: 2021-06-01.
+
+# Page with an outlier: [2023-03-09, 2010-01-20 (outlier), 2023-03-06].
+# The page's max fecha is 2023-03-09 ≥ cutoff → pagination must continue.
+_BACKFILL_PAGE_WITH_OUTLIER = """<html><body>
+<div class="row"><div class="col-12 m-2">
+  <div class="card h-100 p-2 fondo-paper">
+    <div class="card-body">
+      <p class="card-text texto-default">
+        Publicado en edición: <strong><a href="/edicions/view/4000NEC">4000NEC</a></strong>
+        | Fecha de Publicación: 2023-03-09
+      </p>
+      <h6><b>Decreto Presidencial N° 801</b></h6>
+      <div class="contentpaneopen">
+        <p>Designa a ROSA LAURA QUISPE como Ministra de Salud.</p>
+      </div>
+    </div>
+    <div class="card-footer bg-transparent text-end" style="border: none;">
+      <a href="/normas/verGratis_gob/200001">Ver Norma</a> |
+      <a href="/normas/descargarNrms/200001">Descargar PDF</a>
+    </div>
+  </div>
+</div></div>
+<div class="row"><div class="col-12 m-2">
+  <div class="card h-100 p-2 fondo-paper">
+    <div class="card-body">
+      <p class="card-text texto-default">
+        Publicado en edición: <strong><a href="/edicions/view/1000NEC">1000NEC</a></strong>
+        | Fecha de Publicación: 2010-01-20
+      </p>
+      <h6><b>Decreto Presidencial N° 100</b></h6>
+      <div class="contentpaneopen">
+        <p>Designa a PEDRO MAMANI como Director General de Infraestructura.</p>
+      </div>
+    </div>
+    <div class="card-footer bg-transparent text-end" style="border: none;">
+      <a href="/normas/verGratis_gob/200002">Ver Norma</a> |
+      <a href="/normas/descargarNrms/200002">Descargar PDF</a>
+    </div>
+  </div>
+</div></div>
+<div class="row"><div class="col-12 m-2">
+  <div class="card h-100 p-2 fondo-paper">
+    <div class="card-body">
+      <p class="card-text texto-default">
+        Publicado en edición: <strong><a href="/edicions/view/3999NEC">3999NEC</a></strong>
+        | Fecha de Publicación: 2023-03-06
+      </p>
+      <h6><b>Decreto Presidencial N° 800</b></h6>
+      <div class="contentpaneopen">
+        <p>Designa a CARLOS CONDORI QUISPE como Viceministro de Deportes.</p>
+      </div>
+    </div>
+    <div class="card-footer bg-transparent text-end" style="border: none;">
+      <a href="/normas/verGratis_gob/200003">Ver Norma</a> |
+      <a href="/normas/descargarNrms/200003">Descargar PDF</a>
+    </div>
+  </div>
+</div></div>
+</body></html>"""
+
+# Page entirely older than the 2021-06-01 cutoff (max fecha 2019-01-15).
+# Represents what the backfill encounters once it has gone past the window.
+_BACKFILL_PAGE_ALL_OLD = """<html><body>
+<div class="row"><div class="col-12 m-2">
+  <div class="card h-100 p-2 fondo-paper">
+    <div class="card-body">
+      <p class="card-text texto-default">
+        Publicado en edición: <strong><a href="/edicions/view/2500NEC">2500NEC</a></strong>
+        | Fecha de Publicación: 2019-01-15
+      </p>
+      <h6><b>Decreto Presidencial N° 301</b></h6>
+      <div class="contentpaneopen">
+        <p>Designa a ANA BEATRIZ FLORES como Directora de Presupuesto.</p>
+      </div>
+    </div>
+    <div class="card-footer bg-transparent text-end" style="border: none;">
+      <a href="/normas/verGratis_gob/100001">Ver Norma</a> |
+      <a href="/normas/descargarNrms/100001">Descargar PDF</a>
+    </div>
+  </div>
+</div></div>
+<div class="row"><div class="col-12 m-2">
+  <div class="card h-100 p-2 fondo-paper">
+    <div class="card-body">
+      <p class="card-text texto-default">
+        Publicado en edición: <strong><a href="/edicions/view/2400NEC">2400NEC</a></strong>
+        | Fecha de Publicación: 2018-06-20
+      </p>
+      <h6><b>Decreto Presidencial N° 200</b></h6>
+      <div class="contentpaneopen">
+        <p>Designa a MARIO GUZMAN como Ministro de Obras Publicas.</p>
+      </div>
+    </div>
+    <div class="card-footer bg-transparent text-end" style="border: none;">
+      <a href="/normas/verGratis_gob/100002">Ver Norma</a> |
+      <a href="/normas/descargarNrms/100002">Descargar PDF</a>
+    </div>
+  </div>
+</div></div>
+</body></html>"""
+
+
+class TestBackfillOutOfOrderRobustness:
+    """
+    run_cycle(backfill=True) must NOT stop pagination on a single old out-of-order decree.
+
+    Stop must happen at PAGE granularity: only when the page's MAX fecha_publicacion
+    is below the cutoff (meaning the ENTIRE page is older than the backfill window).
+    A single old outlier on an otherwise-recent page must be SKIPPED (not persisted)
+    but must NOT trigger the pagination stop.
+
+    Confirmed real bug: Bolivia's listing (e.g. page 16 in a 5-year backfill)
+    contained a 2010 decree mixed with 2023 ones.  The pre-fix code stopped the
+    ENTIRE backfill on that outlier, leaving a 2021-mid-2022 coverage gap.
+    """
+
+    def test_outlier_on_page_does_not_stop_pagination(self) -> None:
+        """
+        RED: page 1 has [2023-03-09, 2010-01-20 (outlier), 2023-03-06], cutoff=2021-06-01.
+        - The 2010 outlier must be SKIPPED (not persisted).
+        - The 2023 normas on the SAME page must be persisted.
+        - Pagination must CONTINUE to page 2 (the outlier must NOT stop it).
+
+        Fails before fix: fecha < cutoff triggers `break` instead of `continue`,
+        stopping the inner loop on the outlier and preventing page 2 from being fetched.
+        """
+        from main import run_cycle
+        from config.settings import Settings, GacetaConfig, DatabaseConfig
+
+        mock_conn = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.get_ultimo_gaceta_id.return_value = None
+        mock_repo.upsert_norma.return_value = 42
+        mock_repo.insert_eventos.return_value = 1
+        mock_repo.update_estado_extraccion.return_value = None
+
+        mock_client = MagicMock()
+        # Page 1: outlier mixed page; Page 2: recent normas.
+        mock_client.get.side_effect = [_BACKFILL_PAGE_WITH_OUTLIER, _BACKFILL_PAGE_ABOVE]
+
+        # Cap at 2 pages so the test is deterministic (no 3rd-page fetch).
+        settings = Settings(db=DatabaseConfig(), gaceta=GacetaConfig(backfill_max_pages=2))
+        cutoff = date(2021, 6, 1)
+
+        with patch("main.GacetaRepository", return_value=mock_repo), \
+             patch("main.GacetaClient", return_value=mock_client):
+            result = run_cycle(
+                conn=mock_conn,
+                pais="BO",
+                backfill=True,
+                desde_fecha=cutoff,
+                settings=settings,
+            )
+
+        # Both pages must be fetched — the outlier must NOT have stopped pagination.
+        assert mock_client.get.call_count == 2, (
+            f"Expected 2 pages fetched (outlier must not stop pagination), "
+            f"got {mock_client.get.call_count}"
+        )
+        # Page 1: 2 valid (200001, 200003); page 2: 2 valid (180125, 180123) = 4 total.
+        # The 2010 outlier (200002) must not be counted.
+        assert mock_repo.upsert_norma.call_count == 4, (
+            f"Expected 4 upserts (2 from page 1 + 2 from page 2, outlier skipped), "
+            f"got {mock_repo.upsert_norma.call_count}"
+        )
+
+    def test_page_fully_below_cutoff_stops_pagination(self) -> None:
+        """
+        Regression: when an entire page is older than the cutoff (max fecha < cutoff),
+        pagination stops after that page — no normas from that page are persisted.
+
+        This behavior must be preserved by the fix (the page-level stop must still
+        fire when ALL normas on a page are below the cutoff).
+        """
+        from main import run_cycle
+
+        mock_conn = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.get_ultimo_gaceta_id.return_value = None
+        mock_repo.upsert_norma.return_value = 42
+        mock_repo.insert_eventos.return_value = 1
+        mock_repo.update_estado_extraccion.return_value = None
+
+        mock_client = MagicMock()
+        # Page 1: above cutoff; Page 2: all old (max 2019-01-15 < 2021-06-01) → stop.
+        mock_client.get.side_effect = [_BACKFILL_PAGE_ABOVE, _BACKFILL_PAGE_ALL_OLD]
+
+        cutoff = date(2021, 6, 1)
+        with patch("main.GacetaRepository", return_value=mock_repo), \
+             patch("main.GacetaClient", return_value=mock_client):
+            result = run_cycle(
+                conn=mock_conn,
+                pais="BO",
+                backfill=True,
+                desde_fecha=cutoff,
+            )
+
+        # Exactly 2 pages fetched: page 1 (above) + page 2 (all old → stop).
+        assert mock_client.get.call_count == 2, (
+            f"Expected 2 pages fetched (stop after all-old page), "
+            f"got {mock_client.get.call_count}"
+        )
+        # Only page 1's normas persisted (2 normas from _BACKFILL_PAGE_ABOVE).
+        assert mock_repo.upsert_norma.call_count == 2, (
+            f"Expected 2 upserts (page 1 only, page 2 all old → skipped), "
+            f"got {mock_repo.upsert_norma.call_count}"
+        )
+
+    def test_mixed_page_continues_then_all_old_page_stops(self) -> None:
+        """
+        RED: page 1 has mixed fechas [2023-03-09, 2010-01-20 (outlier), 2023-03-06],
+        cutoff=2021-06-01. Page 2 is all old (max 2019-01-15 < cutoff).
+
+        Expected:
+        - Page 1: 2 valid normas persisted (2023 ones); outlier skipped.
+          Page max_fecha = 2023-03-09 ≥ cutoff → pagination continues.
+        - Page 2 is fetched. All normas skipped (all old).
+          Page max_fecha = 2019-01-15 < cutoff → pagination stops.
+        - Total: client.get called 2 times, upsert_norma called 2 times.
+
+        Fails before fix: outlier on page 1 triggers `break`, page 2 is never fetched.
+        """
+        from main import run_cycle
+
+        mock_conn = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.get_ultimo_gaceta_id.return_value = None
+        mock_repo.upsert_norma.return_value = 42
+        mock_repo.insert_eventos.return_value = 1
+        mock_repo.update_estado_extraccion.return_value = None
+
+        mock_client = MagicMock()
+        # Page 1: outlier mixed page; Page 2: all old.
+        mock_client.get.side_effect = [_BACKFILL_PAGE_WITH_OUTLIER, _BACKFILL_PAGE_ALL_OLD]
+
+        cutoff = date(2021, 6, 1)
+        with patch("main.GacetaRepository", return_value=mock_repo), \
+             patch("main.GacetaClient", return_value=mock_client):
+            result = run_cycle(
+                conn=mock_conn,
+                pais="BO",
+                backfill=True,
+                desde_fecha=cutoff,
+            )
+
+        # Both pages fetched: page 1 max_fecha ≥ cutoff → continues; page 2 all old → stops.
+        assert mock_client.get.call_count == 2, (
+            f"Expected 2 pages fetched (mixed page continues, all-old page stops), "
+            f"got {mock_client.get.call_count}"
+        )
+        # 2 valid normas from page 1 (outlier skipped); 0 from all-old page 2.
+        assert mock_repo.upsert_norma.call_count == 2, (
+            f"Expected 2 upserts (2 valid from page 1, outlier skipped, "
+            f"0 from all-old page 2), got {mock_repo.upsert_norma.call_count}"
+        )
