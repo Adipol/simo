@@ -6,6 +6,7 @@ use App\Http\Controllers\ProfileController;
 use App\Livewire\Admin\PrecisionDashboard;
 use App\Livewire\Configuracion\Paises;
 use App\Livewire\Gaceta\Eventos as GacetaEventos;
+use App\Livewire\Gaceta\Normas as GacetaNormas;
 use App\Livewire\Dashboard;
 use App\Livewire\Pep\Cambios;
 use App\Livewire\Pep\Fuentes;
@@ -81,6 +82,11 @@ Route::middleware(['auth', 'usuario.activo'])->group(function () {
     Route::get('/gaceta/eventos', GacetaEventos::class)
         ->middleware('permission:gestionar resultados')
         ->name('gaceta.eventos');
+
+    // Gaceta — cola de normas flaggeadas para revision manual (admin y supervisor)
+    Route::get('/gaceta/normas', GacetaNormas::class)
+        ->middleware('permission:gestionar resultados')
+        ->name('gaceta.normas');
 
     // Perfil (Breeze)
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
