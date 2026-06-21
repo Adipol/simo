@@ -238,6 +238,18 @@ def run_cycle(
                     result.normas_nuevas += 1
                     conn.autocommit = prev_autocommit
 
+                except psycopg2.errors.UniqueViolation:
+                    # Treat a unique-constraint collision as a duplicate-skip, NOT a crash.
+                    # This covers the (pais, numero_decreto) constraint which is NOT handled
+                    # by the ON CONFLICT (pais, gaceta_id_externo) clause in upsert_norma.
+                    # Roll back this norma's transaction and continue to the next one.
+                    conn.rollback()
+                    conn.autocommit = prev_autocommit
+                    log.warning(
+                        f"Norma {gid} skipped: unique constraint collision "
+                        f"(likely numero_decreto duplicate) — treating as duplicate"
+                    )
+                    continue
                 except Exception:
                     conn.rollback()
                     conn.autocommit = prev_autocommit

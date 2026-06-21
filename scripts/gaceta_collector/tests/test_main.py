@@ -746,3 +746,166 @@ class TestBackfillMode:
             assert auto_aprobar is False, (
                 f"Forward mode must not auto-approve events, got auto_aprobar={auto_aprobar}"
             )
+
+
+class TestRunCycleUniqueViolation:
+    """
+    WARNING #2 — numero_decreto unique constraint collision must be a SKIP, not a crash.
+
+    gaceta_normas has TWO unique constraints:
+      1. (pais, gaceta_id_externo) — handled by ON CONFLICT DO NOTHING in upsert_norma
+      2. (pais, numero_decreto)    — NOT handled by ON CONFLICT; raises UniqueViolation
+                                     on the second INSERT path
+
+    A UniqueViolation on constraint #2 must be treated as a duplicate-skip:
+    roll back that norma's transaction, log it, and CONTINUE to the next norma.
+    The cycle must end with estado='ok', not 'error'.
+
+    Non-unique exceptions (e.g. programming errors, connection drops) must STILL
+    abort the cycle (estado='error').
+
+    RED: these tests FAIL before the fix because the inner except clause re-raises
+    ALL exceptions unconditionally, which bubbles into the outer error handler
+    and sets estado='error'.
+    """
+
+    # FIXTURE_HTML (imported from module scope) has 3 DP normas: 180125, 180123, 180120.
+    # We simulate UniqueViolation on the FIRST upsert (180125) so the remaining
+    # two (180123, 180120) are still processed — proving the cycle continues.
+
+    def test_unique_violation_on_upsert_is_skipped_not_error(self) -> None:
+        """
+        UniqueViolation from upsert_norma (numero_decreto collision) → skip that
+        norma and continue.  Cycle ends estado='ok', not 'error'.
+
+        RED: fails because inner except re-raises all exceptions, bubbling to the
+        outer handler which sets estado='error'.
+        """
+        import psycopg2.errors
+        from main import run_cycle
+
+        mock_conn = MagicMock()
+        mock_conn.autocommit = True
+
+        mock_repo = MagicMock()
+        mock_repo.get_ultimo_gaceta_id.return_value = None
+        # First upsert raises UniqueViolation; remaining return a new id
+        mock_repo.upsert_norma.side_effect = [
+            psycopg2.errors.UniqueViolation("duplicate key value violates unique constraint"),
+            42,
+            43,
+        ]
+        mock_repo.insert_eventos.return_value = 1
+        mock_repo.update_estado_extraccion.return_value = None
+
+        mock_client = MagicMock()
+        mock_client.get.return_value = FIXTURE_HTML
+
+        with patch("main.GacetaRepository", return_value=mock_repo), \
+             patch("main.GacetaClient", return_value=mock_client), \
+             patch("main._log_run"):
+            result = run_cycle(conn=mock_conn, pais="BO", max_pages=1)
+
+        # Cycle must end successfully — UniqueViolation is a skip, not a crash
+        assert result.estado == "ok", (
+            f"Expected estado='ok' after UniqueViolation skip, got {result.estado!r}"
+        )
+        # The dup norma (id 0) is rolled back; the other 2 are processed
+        assert result.normas_nuevas == 2, (
+            f"Expected 2 normas_nuevas (skipped 1 dup), got {result.normas_nuevas}"
+        )
+        # rollback called once (for the UniqueViolation norma)
+        mock_conn.rollback.assert_called()
+
+    def test_unique_violation_dup_norma_eventos_not_inserted(self) -> None:
+        """
+        When upsert_norma raises UniqueViolation, insert_eventos must NOT be called
+        for that norma (the transaction is rolled back, no partial writes).
+
+        Triangulation: proves the rollback guard covers eventos too.
+        """
+        import psycopg2.errors
+        from main import run_cycle
+
+        mock_conn = MagicMock()
+        mock_conn.autocommit = True
+
+        mock_repo = MagicMock()
+        mock_repo.get_ultimo_gaceta_id.return_value = None
+        # Only one norma; upsert raises UniqueViolation
+        mock_repo.upsert_norma.side_effect = psycopg2.errors.UniqueViolation(
+            "duplicate key value"
+        )
+
+        mock_client = MagicMock()
+        mock_client.get.return_value = FIXTURE_HTML
+
+        with patch("main.GacetaRepository", return_value=mock_repo), \
+             patch("main.GacetaClient", return_value=mock_client), \
+             patch("main._log_run"):
+            result = run_cycle(conn=mock_conn, pais="BO", max_pages=1)
+
+        # insert_eventos must NOT be called for any of the dup normas
+        mock_repo.insert_eventos.assert_not_called()
+        # Cycle is still ok (all 3 normas skipped as dup → normas_nuevas=0 but no error)
+        assert result.estado == "ok"
+        assert result.normas_nuevas == 0
+
+    def test_unique_violation_restores_autocommit(self) -> None:
+        """
+        After a UniqueViolation skip, autocommit must be restored to its pre-call
+        value (True).  Guards against leaving conn.autocommit=False permanently.
+        """
+        import psycopg2.errors
+        from main import run_cycle
+
+        mock_conn = MagicMock()
+        mock_conn.autocommit = True
+
+        mock_repo = MagicMock()
+        mock_repo.get_ultimo_gaceta_id.return_value = None
+        mock_repo.upsert_norma.side_effect = psycopg2.errors.UniqueViolation(
+            "duplicate key value"
+        )
+
+        mock_client = MagicMock()
+        mock_client.get.return_value = FIXTURE_HTML
+
+        with patch("main.GacetaRepository", return_value=mock_repo), \
+             patch("main.GacetaClient", return_value=mock_client), \
+             patch("main._log_run"):
+            run_cycle(conn=mock_conn, pais="BO", max_pages=1)
+
+        assert mock_conn.autocommit == True, (  # noqa: E712
+            f"Expected autocommit=True after UniqueViolation skip, got {mock_conn.autocommit!r}"
+        )
+
+    def test_non_unique_exception_still_aborts_cycle(self) -> None:
+        """
+        Regression: a non-UniqueViolation exception (e.g. OperationalError, programming
+        error) still aborts the cycle with estado='error'.
+        Only UniqueViolation is swallowed; all other DB errors must propagate.
+        """
+        import psycopg2
+        from main import run_cycle
+
+        mock_conn = MagicMock()
+        mock_conn.autocommit = True
+
+        mock_repo = MagicMock()
+        mock_repo.get_ultimo_gaceta_id.return_value = None
+        mock_repo.upsert_norma.side_effect = psycopg2.OperationalError("connection reset")
+
+        mock_client = MagicMock()
+        mock_client.get.return_value = FIXTURE_HTML
+
+        with patch("main.GacetaRepository", return_value=mock_repo), \
+             patch("main.GacetaClient", return_value=mock_client), \
+             patch("main._log_run"):
+            result = run_cycle(conn=mock_conn, pais="BO", max_pages=1)
+
+        # Non-unique error must still set estado='error'
+        assert result.estado == "error", (
+            f"Expected estado='error' for OperationalError, got {result.estado!r}"
+        )
+        assert "connection reset" in (result.mensaje_error or "")
