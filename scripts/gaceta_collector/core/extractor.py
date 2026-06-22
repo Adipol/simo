@@ -14,6 +14,9 @@ Design decisions:
 - Two extraction patterns for the real gazette:
     Pattern A (name-first, ~13%):
         Designa al ciudadano <NAME>, como <CARGO>, quien tomara posesion...
+        Designa al ciudadano <NAME>, en el cargo de <CARGO>, ...  (Round 9 Gap 1)
+        Designa al Gral. <NAME>, como <CARGO>, ...  (Round 9 Gap 2, sub-case A)
+        Designa al ciudadano GRAL. <NAME>, en el cargo de <CARGO>  (Round 9 Gap 2, sub-case B)
     Pattern B (cargo-first, ~63%):
         Designese <CARGO>, al ciudadano <Name>, Cargo actual, mientras dure...
         Also: Designa <CARGO>, al ciudadano <Name>  (Designa + cargo-first variant)
@@ -27,6 +30,31 @@ Design decisions:
 - Never silently drops a norma -- every case is classified.
 - Pure function; no I/O.
 
+Round 9 extensions:
+  Gap 1 — 'en el cargo de' connector:
+    Some real military/police decrees use 'en el cargo de' instead of 'como' as
+    the connector between name and cargo.  The connector alternation in
+    _RE_APPOINTMENT now accepts both.  INTERINO detection via the named group
+    applies only to the 'como INTERINO ...' form; 'en el cargo de INTERINO ...'
+    is rare and handled conservatively (interino=False unless the keyword follows
+    the connector).
+  Gap 2 — Military rank abbreviations (Round 9):
+    Sub-case A: rank token(s) REPLACE 'ciudadano' entirely — e.g., 'al Gral. NAME'.
+      Requires extending the citizen-prefix alternation to accept one or more
+      2+-letter tokens ending in a period (e.g., 'Gral.', 'Gral. Cmdte.',
+      'Cnl.', 'My.').
+    Sub-case B: rank token(s) appear AFTER 'ciudadano' as part of the name —
+      e.g., 'al ciudadano GRAL. LIONEL VALENZUELA ROCHA'.  Requires allowing an
+      optional rank-prefix run at the start of the nombre group.
+    Design decision: the rank abbreviation is INCLUDED in persona_nombre (Option a).
+      persona_nombre_normalizado retains the rank in lowercase ASCII form
+      (e.g., 'gral. lionel valenzuela rocha').  This preserves display fidelity;
+      the core surname tokens remain present for PEP/OPI fuzzy matching.
+      Single-letter initials (e.g., 'P.') are deliberately NOT treated as rank
+      tokens (minimum 2-letter requirement) so that middle-initial names like
+      'JUAN P. PEREZ' continue to fail extraction and route through the
+      completeness guard to requiere_revision.
+
 Completeness guard (unchanged from Round 7):
 - DUAL SIGNAL: max(clause_count, ciudadano_count).
   1. 'como <Cargo>' clause counter -- catches co-appointments without ciudadano prefix.
@@ -36,6 +64,10 @@ Completeness guard (unchanged from Round 7):
 - Pattern B appointments have ciudadano_count >= 1 per appointment and
   clause_count = 0 (no 'como' in the cargo-first structure), so
   threshold = max(0, N) = N which equals the number of Pattern B appointments.
+- For 'en el cargo de' (no 'como' clause): clause_count=0, ciudadano_count>=1,
+  threshold = max(0, N) = N -- guard still enforces completeness correctly.
+- For rank-replaces-ciudadano (no 'ciudadano' token, 'como' connector):
+  clause_count=1, ciudadano_count=0, threshold=1 -- one extraction = procesado.
 
 Accepted V1 residuals:
   1. Comma-style co-appointment ('y a MARIA ROCHA, Ministra de Economia') has
@@ -43,6 +75,8 @@ Accepted V1 residuals:
      and guard.  Pinned in TestExtractorV1AcceptedLimitations.
   2. Pattern B: Title Case names with unusual Unicode not in the explicit charclass
      may not extract fully.  Extend charclass if additional scripts are found.
+  3. Ordinal rank abbreviations with digits ('1ro.', '2do.') are NOT handled
+     (digit not in the letter-only rank charclass).  Extend if needed.
 """
 import re
 import unicodedata
@@ -95,11 +129,25 @@ _RE_DESIGNA_TRIGGER = re.compile(
 )
 
 # Core extraction pattern — Pattern A (name-first).
-# Groups: nombre, interino (per-appointment), cargo, entidad (optional).
+# Groups: nombre, interino (per-appointment), cargo.
 #
-# Key fix vs previous version: the separator between nombre and 'como' is now
-# '[,\s]+' (comma-or-whitespace, one or more) instead of '\s+' alone.  Real
-# gazette text is 'NAME, como CARGO' (comma separator), not 'NAME como CARGO'.
+# Round 8 fix: separator between nombre and connector is '[,\s]+' (comma-or-
+# whitespace).  Real gazette text is 'NAME, como CARGO' (comma separator).
+#
+# Round 9 Gap 1 — 'en el cargo de' connector:
+#   Connector alternation '(?:como|en\s+el\s+cargo\s+de)' accepts both forms.
+#   INTERINO group only fires on 'como INTERINO ...' (remains correct for all
+#   existing interino cases; 'en el cargo de INTERINO ...' is not in corpus).
+#
+# Round 9 Gap 2 — Military rank abbreviations:
+#   (a) Citizen prefix extended to: 'ciudadano/ciudadana' OR one/more rank
+#       abbreviation tokens (2+ letters + period, e.g. 'Gral.', 'Gral. Cmdte.',
+#       'Cnl.', 'My.').  Handles 'al Gral. NAME, como CARGO'.
+#   (b) Nombre group allows an optional leading run of rank tokens with periods
+#       (same {2,} constraint) before the main name.  Handles 'al ciudadano
+#       GRAL. LIONEL VALENZUELA ROCHA, en el cargo de CARGO'.
+#   Single-letter initials (e.g., 'P.' in 'JUAN P. PEREZ') are excluded by the
+#   {2,} minimum so middle-initial names still fail → completeness guard fires.
 #
 # Name charclass: includes uppercase AND lowercase accented letters so that
 # Title Case names (Jose Luis Lupo Flores) are matched alongside ALL-CAPS names
@@ -107,10 +155,22 @@ _RE_DESIGNA_TRIGGER = re.compile(
 # uppercase ranges implicitly match their lowercase counterparts too; the
 # explicit lowercase ranges are kept for clarity.
 _RE_APPOINTMENT = re.compile(
-    r"(?:al?)\s+ciudadan[oa]\s+"
-    r"(?P<nombre>[A-Za-záéíóúñüÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕàèìòùâêîôûãõ]"
+    r"(?:al?)\s+"
+    # Citizen prefix OR military rank abbreviation(s) in place of 'ciudadano'.
+    # Rank tokens: 2+ letters + period, e.g. 'Gral.', 'Gral. Cmdte.', 'Cnl.', 'My.'
+    # Single-letter initials ('P.') are excluded by the {2,} constraint.
+    r"(?:ciudadan[oa]"
+    r"|[A-Za-záéíóúñüÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕàèìòùâêîôûãõ]{2,}"
+    r"\.(?:\s+[A-Za-záéíóúñüÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕàèìòùâêîôûãõ]{2,}\.)*)\s+"
+    # Name: optional leading rank-prefix run (e.g. 'GRAL. ') then the proper name.
+    # This handles 'al ciudadano GRAL. LIONEL VALENZUELA ROCHA, en el cargo de ...'
+    r"(?P<nombre>"
+    r"(?:[A-Za-záéíóúñüÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕàèìòùâêîôûãõ]{2,}\.\s+)*"
+    r"[A-Za-záéíóúñüÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕàèìòùâêîôûãõ]"
     r"[A-Za-záéíóúñüÁÉÍÓÚÑÜÀÈÌÒÙÂÊÎÔÛÃÕàèìòùâêîôûãõ\s]+?)"
-    r"[,\s]+como\s+(?P<interino>INTERINO[A]?\s+)?(?P<cargo>[A-Za-záéíóúñüÁÉÍÓÚÑÜ][^,\.\n;]+)[,\.]",
+    # Connector: 'como' (original) OR 'en el cargo de' (Round 9 Gap 1)
+    r"[,\s]+(?:como|en\s+el\s+cargo\s+de)\s+"
+    r"(?P<interino>INTERINO[A]?\s+)?(?P<cargo>[A-Za-záéíóúñüÁÉÍÓÚÑÜ][^,\.\n;]+)[,\.]",
     re.IGNORECASE | re.UNICODE,
 )
 

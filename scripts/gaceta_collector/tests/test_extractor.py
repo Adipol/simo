@@ -1540,3 +1540,266 @@ class TestPatternBCargoReferenciado:
 
         assert result.estado_extraccion == "procesado"
         assert result.eventos[0]["cargo_referenciado"] == "Ministro de la Presidencia"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GAP 1 — "en el cargo de" connector (Round 9)
+#
+# Pattern A accepts 'como <CARGO>' as the connector between name and cargo.
+# Real Bolivian gazette military/police appointments also use the connector
+# 'en el cargo de' instead of 'como'.  This causes requiere_detalle because
+# _RE_APPOINTMENT only recognises 'como'.
+#
+# Fix: extend the connector alternation in _RE_APPOINTMENT to accept both
+# 'como' and 'en el cargo de'.
+#
+# Source notes:
+# - Pure 'en el cargo de' (no rank prefix) — pattern documented in task spec;
+#   network was unreachable during live fetch so no live URL available.
+# - Combined rank + 'en el cargo de' — task specification example.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestGap1EnElCargoDe:
+    """Gap 1: 'en el cargo de' connector in Pattern A.
+
+    RED: all tests below currently return requiere_detalle because the connector
+    'en el cargo de' is not recognised by _RE_APPOINTMENT.
+    After fix: procesado, correct name + full cargo extracted.
+    """
+
+    def test_en_el_cargo_de_connector_clean_name_procesado(self) -> None:
+        """'al ciudadano NAME, en el cargo de CARGO' → procesado.
+
+        Pattern documented in task specification as a confirmed residual gap.
+        Currently: requiere_detalle (connector not recognised → no name extracted).
+        """
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        sumario = (
+            "Designa al ciudadano MARIO LUIS FLORES MAMANI, "
+            "en el cargo de DIRECTOR GENERAL DE ADUANAS NACIONALES, "
+            "quien tomará posesión del cargo."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 1
+        ev = result.eventos[0]
+        assert "MARIO LUIS FLORES MAMANI" in ev["persona_nombre"]
+        assert "DIRECTOR GENERAL DE ADUANAS NACIONALES" in ev["cargo"]
+        assert ev["interino"] is False
+        assert ev["tipo_evento"] == "designacion"
+
+    def test_en_el_cargo_de_with_date_prefix_procesado(self) -> None:
+        """'en el cargo de' with real gazette date prefix → procesado.
+
+        Triangulation: verify _preprocess() + connector fix work together.
+        """
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        sumario = (
+            "15 DE ENERO DE 2025 .- Designa al ciudadano JOSE ANTONIO MAMANI QUISPE, "
+            "en el cargo de VICEMINISTRO DE TRANSPORTES, "
+            "quien tomará posesión del cargo en el día."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 1
+        ev = result.eventos[0]
+        assert "MAMANI QUISPE" in ev["persona_nombre"]
+        assert "VICEMINISTRO DE TRANSPORTES" in ev["cargo"]
+
+    def test_como_connector_still_works_no_regression(self) -> None:
+        """Regression: 'como' connector must remain working after alternation fix."""
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        result = extract_eventos(
+            "Designa al ciudadano PEDRO QUISPE MAMANI, "
+            "como MINISTRO DE SALUD, quien tomará posesión del cargo."
+        )
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 1
+        assert "QUISPE MAMANI" in result.eventos[0]["persona_nombre"]
+        assert "MINISTRO DE SALUD" in result.eventos[0]["cargo"]
+
+    def test_en_el_cargo_de_completeness_guard_respects_ciudadano_count(self) -> None:
+        """Completeness guard: 'en el cargo de' has no 'como' clause (clause_count=0),
+        but ciudadano_count=1 → threshold=max(0,1)=1 → procesado with 1 evento.
+
+        Verifies the dual-signal guard does not break the new connector.
+        """
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        result = extract_eventos(
+            "Designa al ciudadano ANA PATRICIA ROJAS VEGA, "
+            "en el cargo de DIRECTORA EJECUTIVA DEL SERVICIO NACIONAL, "
+            "quien tomará posesión del cargo."
+        )
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 1
+        assert "ROJAS VEGA" in result.eventos[0]["persona_nombre"]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GAP 2 — Military rank abbreviations in names (Round 9)
+#
+# Pattern A requires 'ciudadano/ciudadana' as the citizen prefix.  Real
+# Bolivian gazette military appointments have two sub-cases:
+#
+#   Sub-case A: rank replaces 'ciudadano' entirely
+#     "Designa al Gral. FAUSTINO MENDOZA, como COMANDANTE GENERAL..."
+#     "Designa al Gral. Cmdte. RODOLFO MONTERO, como COMANDANTE GENERAL..."
+#     Source: REAL — live gazette pages 30 and 45 (fetched 2026-06-22)
+#
+#   Sub-case B: rank appears INSIDE the name AFTER 'ciudadano'
+#     "Designa al ciudadano GRAL. LIONEL VALENZUELA ROCHA,
+#      en el cargo de INSPECTOR GENERAL DEL EJÉRCITO"
+#     Source: task specification example (network unreachable during live fetch)
+#
+# Fix:
+#   - Extend the citizen-prefix in _RE_APPOINTMENT to accept rank abbreviations
+#     (2+ letter token + period) in place of 'ciudadano', handling sub-case A.
+#   - Allow optional rank prefix token(s) at the START of the nombre group,
+#     handling sub-case B.
+#
+# Design decision (documented):
+#   Include rank abbreviation IN persona_nombre (e.g. "Gral. RODOLFO MONTERO").
+#   persona_nombre_normalizado retains the normalised rank ("gral. rodolfo montero").
+#   This is Option (a) — display fidelity over normalised-match purity.
+#   Rationale: PEP/OPI matching uses fuzzy search; the clean surname tokens remain
+#   present in the normalised field and are sufficient for deduplication.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestGap2MilitaryRanks:
+    """Gap 2: Military rank abbreviations before or replacing 'ciudadano'.
+
+    RED: all tests below currently return requiere_detalle because the rank token
+    (Gral., Gral. Cmdte., etc.) stops the name regex (contains period not in
+    charclass) or replaces 'ciudadano' which the regex requires.
+    After fix: procesado, name extracted.
+    """
+
+    def test_gral_replaces_ciudadano_real_page30_procesado(self) -> None:
+        """REAL GAZETTE — page 30 (03/02/2020): 'al Gral. Cmdte. NAME, como CARGO'.
+
+        Source: live-fetched from gacetaoficialdebolivia.gob.bo page 30.
+        Rank 'Gral. Cmdte.' replaces 'ciudadano'; period in 'Cmdte.' breaks match.
+        Currently: requiere_detalle.
+        """
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        sumario = (
+            "03 DE FEBRERO DE 2020 .- Designa al Gral. Cmdte. "
+            "RODOLFO ANTONIO MONTERO TORRICOS, "
+            "como COMANDANTE GENERAL DE LA POLICÍA BOLIVIANA, "
+            "quien tomará posesión del cargo en el día conforme a disposiciones legales en vigencia."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 1
+        ev = result.eventos[0]
+        assert "MONTERO TORRICOS" in ev["persona_nombre"]
+        assert "COMANDANTE GENERAL" in ev["cargo"]
+        assert ev["interino"] is False
+
+    def test_gral_single_token_real_page45_procesado(self) -> None:
+        """REAL GAZETTE — page 45 (27/12/2017): 'al Gral. NAME, como CARGO'.
+
+        Source: live-fetched from gacetaoficialdebolivia.gob.bo page 45.
+        Single rank token 'Gral.' replaces 'ciudadano'.
+        Currently: requiere_detalle.
+        """
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        sumario = (
+            "27 DE DICIEMBRE DE 2017 .- Designa al Gral. FAUSTINO ALFONSO MENDOZA ARCE, "
+            "como COMANDANTE GENERAL DE LA POLICÍA BOLIVIANA, "
+            "quien tomará posesión del cargo en el día conforme a disposiciones legales en vigencia."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 1
+        ev = result.eventos[0]
+        assert "MENDOZA ARCE" in ev["persona_nombre"]
+        assert "COMANDANTE GENERAL" in ev["cargo"]
+        assert ev["interino"] is False
+
+    def test_rank_inside_ciudadano_name_procesado(self) -> None:
+        """Sub-case B: rank abbreviation INSIDE nombre AFTER 'ciudadano'.
+
+        Source: task specification example ('al ciudadano GRAL. LIONEL VALENZUELA ROCHA').
+        Period in 'GRAL.' stops the nombre charclass.
+        Combined with 'en el cargo de' connector (both gaps at once).
+        Currently: requiere_detalle (name not extracted due to period).
+        """
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        sumario = (
+            "Designa al ciudadano GRAL. LIONEL VALENZUELA ROCHA, "
+            "en el cargo de INSPECTOR GENERAL DEL EJÉRCITO, "
+            "quien tomará posesión del cargo."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 1
+        ev = result.eventos[0]
+        assert "LIONEL VALENZUELA ROCHA" in ev["persona_nombre"]
+        assert "INSPECTOR GENERAL" in ev["cargo"]
+        assert ev["interino"] is False
+
+    def test_rank_normalizado_lowercase(self) -> None:
+        """Rank prefix in persona_nombre is normalized to lowercase (no accents).
+
+        Triangulation: verify _normalize_name handles ranks correctly.
+        """
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        sumario = (
+            "27 DE DICIEMBRE DE 2017 .- Designa al Gral. FAUSTINO ALFONSO MENDOZA ARCE, "
+            "como COMANDANTE GENERAL DE LA POLICÍA BOLIVIANA, "
+            "quien tomará posesión del cargo en el día."
+        )
+        result = extract_eventos(sumario)
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        norm = result.eventos[0]["persona_nombre_normalizado"]
+        assert norm == norm.lower()
+        assert "mendoza arce" in norm
+
+    def test_normal_ciudadano_unaffected_no_regression(self) -> None:
+        """Regression: normal 'al ciudadano NAME, como CARGO' must still work."""
+        from core.extractor import extract_eventos, ESTADO_PROCESADO
+
+        result = extract_eventos(
+            "Designa al ciudadano RICARDO ERICK SANJINES CHAVEZ, "
+            "como MINISTRO DE EDUCACION, quien tomará posesión del cargo."
+        )
+
+        assert result.estado_extraccion == ESTADO_PROCESADO
+        assert len(result.eventos) == 1
+        assert "SANJINES CHAVEZ" in result.eventos[0]["persona_nombre"]
+
+    def test_middle_initial_still_fails_completeness_guard(self) -> None:
+        """Regression: 'JUAN P. PEREZ' middle initial must NOT be treated as rank prefix.
+
+        The rank-prefix in nombre only matches {2,}-letter tokens (like 'Gral.').
+        A single-letter initial 'P.' must NOT match, so the name still fails
+        to extract and the completeness guard catches it → requiere_revision.
+        """
+        from core.extractor import extract_eventos, ESTADO_REQUIERE_REVISION
+
+        result = extract_eventos(
+            "Designa al ciudadano JUAN P. PEREZ, como Ministro de Salud, "
+            "y a la ciudadana ANA ROCHA, como Ministra de Economía."
+        )
+
+        assert result.estado_extraccion == ESTADO_REQUIERE_REVISION
+        assert result.eventos == []
