@@ -32,12 +32,23 @@ sudo apt install -y php8.5-cli php8.5-fpm php8.5-pgsql php8.5-mbstring \
 
 ```bash
 sudo -u www-data git -C /var/www/simo pull origin main
-php artisan migrate
+sudo -u www-data php /var/www/simo/artisan migrate
+
+# Si el pull trae cambios de UI (blade / css / js), recompilar los assets.
+# OJO: el CSS compilado (public/build) está gitignored — NO viaja con git pull,
+# hay que rebuildearlo en cada entorno o el navegador sirve estilos viejos.
+sudo -u www-data php /var/www/simo/artisan view:cache    # precompila vistas (Tailwind escanea storage/framework/views)
+npm run build                                            # como root si npm no está en el PATH de www-data
+chown -R www-data:www-data /var/www/simo/public/build    # devolver ownership (igual que storage)
+# Después: hard-refresh del navegador (Ctrl+Shift+R) para bajar el CSS nuevo.
+
 supervisorctl restart simo-pep-monitor
 supervisorctl restart simo-gemini-worker
 supervisorctl restart simo-dedupe-worker
 supervisorctl restart simo-gaceta-runner   # ver sección "Colector de la Gaceta"
 ```
+
+> **Lección (2026-06):** correr cualquier `artisan`/`npm` como **root** deja archivos root-owned que rompen php-fpm (cache de Spatie, `storage/`, `public/build`). Usar siempre `sudo -u www-data ...`, y si algo se corre como root (ej. `npm` cuando solo está en el PATH de root), hacer `chown -R www-data:www-data` del output. **Nunca** correr la suite de tests (`php artisan test`) apuntando a la BD real — `RefreshDatabase` hace `migrate:fresh` y la borra entera.
 
 ---
 
@@ -307,8 +318,20 @@ sudo -u www-data .venv/bin/python main.py --backfill --pais BO
 
 ### Gotchas (verificar en el PRE-FLIGHT, paso 5)
 
-1. **Nombres de variables de BD difieren.** El colector Python lee `DB_NAME` / `DB_USER`; el `.env` de Laravel usa `DB_DATABASE` / `DB_USERNAME`. El colector carga el `.env` de Laravel y toma `DB_HOST` / `DB_PASSWORD` correctamente, pero `DB_NAME` / `DB_USER` caen al **default** (`simo` / `postgres`). Si prod usa otro nombre de BD o usuario, el `--once` del paso 5 falla la conexión → agregar `DB_NAME=...` y `DB_USER=...` al `.env` **o** al `environment=` del bloque de supervisor.
-2. **La Gaceta sirve solo por HTTP** (servidor legacy sin TLS). Verificar conectividad saliente del VPS: `curl -sI --connect-timeout 10 http://www.gacetaoficialdebolivia.gob.bo/` debe responder `200 OK`. Si el VPS bloquea HTTP saliente, habilitarlo.
+1. **Nombres de variables de BD difieren (CONFIRMADO en prod).** El colector Python lee `DB_NAME` / `DB_USER`; el `.env` de Laravel usa `DB_DATABASE` / `DB_USERNAME`. El colector toma `DB_HOST` / `DB_PASSWORD` bien, pero `DB_NAME` / `DB_USER` caen al **default** (`simo` / `postgres`). En el VPS productivo `DB_USERNAME=simo` (NO `postgres`), así que el `--once` falla la conexión hasta agregar al `/var/www/simo/.env`:
+   ```bash
+   echo 'DB_NAME=simo' >> /var/www/simo/.env
+   echo 'DB_USER=simo' >> /var/www/simo/.env   # = el valor de tu DB_USERNAME
+   ```
+   (Inofensivas para Laravel — ignora `DB_NAME`/`DB_USER`.)
+2. **DNS: el VPS resuelve solo IPv6, la Gaceta es IPv4-only (CONFIRMADO).** El servidor legacy de la Gaceta solo tiene registro A (IPv4); el resolver del VPS devuelve AAAA pero no A para ese dominio → `[Errno -3] Temporary failure in name resolution`. Verificar con `getent hosts www.gacetaoficialdebolivia.gob.bo` (vacío = no resuelve). Workaround rápido — mapear la IP en `/etc/hosts`:
+   ```bash
+   # confirmar primero que la IP responde:
+   curl -sI -H 'Host: www.gacetaoficialdebolivia.gob.bo' http://181.115.190.188/   # debe dar 200 OK
+   echo '181.115.190.188 www.gacetaoficialdebolivia.gob.bo' | sudo tee -a /etc/hosts
+   ```
+   (Persistente y lo usa el runner del supervisor.) El fix de fondo es arreglar el resolver del VPS para que resuelva A-records (la IP de `/etc/hosts` puede cambiar a futuro).
+3. **HTTP-only:** la Gaceta no tiene TLS — `_BOLIVIA_BASE` ya usa `http://`. Si el VPS bloqueara salida HTTP (puerto 80), habilitarla.
 
 ### Rollback
 
