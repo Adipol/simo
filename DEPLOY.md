@@ -36,6 +36,7 @@ php artisan migrate
 supervisorctl restart simo-pep-monitor
 supervisorctl restart simo-gemini-worker
 supervisorctl restart simo-dedupe-worker
+supervisorctl restart simo-gaceta-runner   # ver sección "Colector de la Gaceta"
 ```
 
 ---
@@ -236,6 +237,88 @@ sudo supervisorctl start simo-scraper
 ```
 
 Total estimado: ~20-30 segundos.
+
+---
+
+## Colector de la Gaceta (gaceta-collector)
+
+`scripts/gaceta_collector/` es un colector de fuente primaria que recolecta **Decretos Presidenciales de la Gaceta Oficial de Bolivia** para detección PEP. Sigue el mismo patrón que `simo-runner`: `runner.py` lee `config_scripts WHERE script='gaceta'` en cada tick y lanza `main.py --once` como subproceso según `habilitado` / `intervalo_minutos` / `hora_inicio`-`hora_fin` / `dias_semana` / `timeout_minutos`. Se monitorea y configura desde la UI (`/scripts/estado` y `/scripts/configuracion`), igual que el scraper.
+
+### Primer deploy (pasos en el VPS)
+
+```bash
+# 1. Código (ya en main: colector + migraciones gaceta)
+sudo -u www-data git -C /var/www/simo pull origin main
+
+# 2. Migraciones (crea gaceta_normas, gaceta_eventos_pep, índices trigram/GiST,
+#    widening de log_scripts.script a 'gaceta'/'gaceta_backfill', cargo_referenciado)
+sudo -u www-data php /var/www/simo/artisan migrate
+
+# 3. venv propio del colector (igual que website_monitor_pro)
+cd /var/www/simo/scripts/gaceta_collector
+sudo -u www-data python3 -m venv .venv
+sudo -u www-data .venv/bin/pip install -r requirements.txt
+
+# 4. Sembrar la fila de config del script (si no existe en prod)
+sudo -u www-data php /var/www/simo/artisan db:seed --class=ConfigScriptGacetaSeeder --force
+
+# 5. PRE-FLIGHT obligatorio: probar UN ciclo a mano ANTES de habilitar el servicio
+sudo -u www-data .venv/bin/python main.py --once --pais BO
+#    Debe terminar estado='ok' y conectar a la BD. Si falla, ver "Gotchas".
+```
+
+### Bloque de Supervisor
+
+Agregar a `/etc/supervisor/conf.d/simo.conf`:
+
+```ini
+[program:simo-gaceta-runner]
+command=/var/www/simo/scripts/gaceta_collector/.venv/bin/python /var/www/simo/scripts/gaceta_collector/runner.py
+directory=/var/www/simo/scripts/gaceta_collector
+user=www-data
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+redirect_stderr=true
+stdout_logfile=/var/log/simo/gaceta-runner.log
+stdout_logfile_maxbytes=10MB
+stdout_logfile_backups=5
+```
+
+```bash
+sudo supervisorctl reread && sudo supervisorctl update
+sudo supervisorctl status simo-gaceta-runner          # esperado: RUNNING
+sudo tail -f /var/log/simo/gaceta-runner.log          # seguir el primer ciclo
+# Validar en BD:
+sudo -u postgres psql simo -c \
+  "SELECT id, script, inicio, estado, items_resultado FROM log_scripts WHERE script LIKE 'gaceta%' ORDER BY id DESC LIMIT 5;"
+```
+
+### Backfill inicial (baseline de 5 años, una sola vez)
+
+Carga el baseline histórico de PEPs (regla boliviana: PEP se mantiene 5 años tras dejar el cargo). Idempotente (`ON CONFLICT`), auto-aprueba los eventos limpios:
+
+```bash
+cd /var/www/simo/scripts/gaceta_collector
+sudo -u www-data .venv/bin/python main.py --backfill --pais BO
+# Opcional: --desde-fecha YYYY-MM-DD para otro corte (default = hoy − 5 años)
+```
+
+### Gotchas (verificar en el PRE-FLIGHT, paso 5)
+
+1. **Nombres de variables de BD difieren.** El colector Python lee `DB_NAME` / `DB_USER`; el `.env` de Laravel usa `DB_DATABASE` / `DB_USERNAME`. El colector carga el `.env` de Laravel y toma `DB_HOST` / `DB_PASSWORD` correctamente, pero `DB_NAME` / `DB_USER` caen al **default** (`simo` / `postgres`). Si prod usa otro nombre de BD o usuario, el `--once` del paso 5 falla la conexión → agregar `DB_NAME=...` y `DB_USER=...` al `.env` **o** al `environment=` del bloque de supervisor.
+2. **La Gaceta sirve solo por HTTP** (servidor legacy sin TLS). Verificar conectividad saliente del VPS: `curl -sI --connect-timeout 10 http://www.gacetaoficialdebolivia.gob.bo/` debe responder `200 OK`. Si el VPS bloquea HTTP saliente, habilitarlo.
+
+### Rollback
+
+```bash
+sudo supervisorctl stop simo-gaceta-runner
+# Comentar/eliminar el bloque [program:simo-gaceta-runner] en simo.conf
+sudo supervisorctl reread && sudo supervisorctl update
+```
+
+El colector no toca datos de otros scripts; deshabilitarlo solo detiene la recolección de gaceta (los datos ya recolectados quedan intactos). También se puede pausar sin tocar supervisor poniendo `habilitado=false` en `/scripts/configuracion`.
 
 ---
 
