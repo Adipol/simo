@@ -62,6 +62,13 @@ final readonly class GeminiResponseDTO
             : null;
     }
 
+    public function thinkingTokens(): ?int
+    {
+        return isset($this->usageMetadata['thoughtsTokenCount'])
+            ? (int) $this->usageMetadata['thoughtsTokenCount']
+            : null;
+    }
+
     public function hasUsageMetadata(): bool
     {
         return $this->usageMetadata !== null;

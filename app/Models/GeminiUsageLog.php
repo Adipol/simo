@@ -24,6 +24,7 @@ class GeminiUsageLog extends Model
         'model',
         'prompt_tokens',
         'completion_tokens',
+        'thinking_tokens',
         'total_tokens',
         'request_type',
         'cambio_id',
@@ -33,6 +34,7 @@ class GeminiUsageLog extends Model
     protected $casts = [
         'prompt_tokens' => 'integer',
         'completion_tokens' => 'integer',
+        'thinking_tokens' => 'integer',
         'total_tokens' => 'integer',
         'created_at' => 'datetime',
     ];

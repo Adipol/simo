@@ -223,6 +223,7 @@ class GeminiAnalisisService
                     'model' => $model,
                     'prompt_tokens' => $geminiResponse->promptTokens(),
                     'completion_tokens' => $geminiResponse->completionTokens(),
+                    'thinking_tokens' => $geminiResponse->thinkingTokens(),
                     'total_tokens' => $geminiResponse->totalTokens(),
                     'request_type' => $requestType,
                     'cambio_id' => $cambio->id,

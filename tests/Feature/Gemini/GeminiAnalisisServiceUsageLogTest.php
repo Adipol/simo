@@ -268,6 +268,60 @@ class GeminiAnalisisServiceUsageLogTest extends TestCase
         $this->assertSame(0, $count, 'idempotency: already-analyzed cambio must not generate usage_log rows');
     }
 
+    private function fakeGeminiResponseWithThinkingTokens(array $content, int $promptTokens = 100, int $candidatesTokens = 50, int $thinkingTokens = 750): string
+    {
+        return json_encode([
+            'candidates' => [[
+                'content' => [
+                    'parts' => [[
+                        'text' => json_encode($content),
+                    ]],
+                ],
+            ]],
+            'usageMetadata' => [
+                'promptTokenCount'     => $promptTokens,
+                'candidatesTokenCount' => $candidatesTokens,
+                'thoughtsTokenCount'   => $thinkingTokens,
+                'totalTokenCount'      => $promptTokens + $candidatesTokens + $thinkingTokens,
+            ],
+        ]);
+    }
+
+    // =========================================================================
+    // T-thinking — thinking_tokens persisted when thoughtsTokenCount is present
+    // =========================================================================
+
+    public function test_thinking_tokens_persisted_when_present_in_gemini_response(): void
+    {
+        config(['services.gemini.api_key' => 'test-key']);
+
+        $fuente = $this->createFuente();
+        $cambio = $this->createCambio($fuente);
+
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response(
+                $this->fakeGeminiResponseWithThinkingTokens(
+                    $this->successfulAnalysisContent(),
+                    promptTokens: 100,
+                    candidatesTokens: 50,
+                    thinkingTokens: 750,
+                ),
+                200
+            ),
+        ]);
+
+        $this->makeService()->analizarLote(collect([$cambio]));
+
+        $log = \Illuminate\Support\Facades\DB::table('gemini_usage_log')
+            ->where('cambio_id', $cambio->id)
+            ->first();
+
+        $this->assertNotNull($log, 'gemini_usage_log must have a row for this cambio');
+        $this->assertSame(750, $log->thinking_tokens);
+        $this->assertSame(50, $log->completion_tokens);
+        $this->assertSame(100 + 50 + 750, $log->total_tokens);
+    }
+
     // =========================================================================
     // Triangulation: multimodal path also writes timestamp + usage_log
     // =========================================================================

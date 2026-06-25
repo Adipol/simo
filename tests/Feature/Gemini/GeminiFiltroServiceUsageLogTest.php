@@ -223,6 +223,59 @@ class GeminiFiltroServiceUsageLogTest extends TestCase
         $this->assertTrue($warningLogged, 'A warning about missing usageMetadata must be logged');
     }
 
+    private function fakeGeminiResponseWithThinkingTokens(array $content, int $promptTokens = 80, int $candidatesTokens = 40, int $thinkingTokens = 620): string
+    {
+        return json_encode([
+            'candidates' => [[
+                'content' => [
+                    'parts' => [[
+                        'text' => json_encode($content),
+                    ]],
+                ],
+            ]],
+            'usageMetadata' => [
+                'promptTokenCount'     => $promptTokens,
+                'candidatesTokenCount' => $candidatesTokens,
+                'thoughtsTokenCount'   => $thinkingTokens,
+                'totalTokenCount'      => $promptTokens + $candidatesTokens + $thinkingTokens,
+            ],
+        ]);
+    }
+
+    // =========================================================================
+    // T-thinking — thinking_tokens persisted when thoughtsTokenCount is present
+    // =========================================================================
+
+    public function test_thinking_tokens_persisted_when_present_in_gemini_response(): void
+    {
+        config(['services.gemini.api_key' => 'test-key']);
+
+        $record = $this->createRecord();
+
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response(
+                $this->fakeGeminiResponseWithThinkingTokens(
+                    $this->successfulFiltroContent(),
+                    promptTokens: 80,
+                    candidatesTokens: 40,
+                    thinkingTokens: 620,
+                ),
+                200
+            ),
+        ]);
+
+        $this->makeService()->analizarLote(collect([$record]));
+
+        $log = \Illuminate\Support\Facades\DB::table('gemini_usage_log')
+            ->where('resultado_scraping_id', $record->id)
+            ->first();
+
+        $this->assertNotNull($log, 'gemini_usage_log must have a row for this record');
+        $this->assertSame(620, $log->thinking_tokens);
+        $this->assertSame(40, $log->completion_tokens);
+        $this->assertSame(80 + 40 + 620, $log->total_tokens);
+    }
+
     // =========================================================================
     // Idempotency — already-analyzed record is skipped
     // =========================================================================
