@@ -397,18 +397,22 @@ def main() -> None:
             resultado = ejecutar_gaceta(cfg)
 
             fin = datetime.now()
-            errores = 1 if resultado["estado"] != "ok" else 0
-            registrar_log_scripts(
-                conn,
-                script="gaceta",
-                inicio=inicio,
-                fin=fin,
-                estado=resultado["estado"],
-                items_procesados=0,
-                items_resultado=0,
-                errores=errores,
-                mensaje_error=resultado.get("mensaje_error"),
-            )
+            # main.py (_log_run) registra su propia fila con los counts reales en
+            # cada ciclo. El runner solo registra cuando el subproceso NO llegó a
+            # loguear (error o timeout: fue matado o abortó), para no duplicar filas
+            # en el happy path (una ejecución = una fila).
+            if resultado["estado"] != "ok":
+                registrar_log_scripts(
+                    conn,
+                    script="gaceta",
+                    inicio=inicio,
+                    fin=fin,
+                    estado=resultado["estado"],
+                    items_procesados=0,
+                    items_resultado=0,
+                    errores=1,
+                    mensaje_error=resultado.get("mensaje_error"),
+                )
             limpiar_lock(LOCK_FILE)
             ultimo_ciclo = inicio
 
