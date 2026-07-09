@@ -172,7 +172,22 @@ def run_cycle(
 
             rows = parser.parse_listing(html)
             if not rows:
-                log.info(f"No rows on page {page_num} — stopping pagination")
+                if page_num == 1:
+                    # The Gaceta listing always has decrees on page 1. An empty
+                    # first page means the source is unreachable, changed layout,
+                    # or returned an error page. Logging this as a clean success
+                    # would hide a total scrape failure (silent-failure trap), so
+                    # surface it as an error to make it visible in Estado de Scripts.
+                    log.error(
+                        "No rows parsed on page 1 — treating as scrape failure "
+                        "(source down or listing layout changed)"
+                    )
+                    result.estado = "error"
+                    result.mensaje_error = (
+                        "No rows parsed on page 1 (source unreachable or layout changed)"
+                    )
+                else:
+                    log.info(f"No rows on page {page_num} — stopping pagination")
                 break
 
             result.paginas_procesadas += 1

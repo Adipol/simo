@@ -372,6 +372,81 @@ class TestRunCycleErrorBranch:
         mock_log.assert_called_once()
 
 
+_EMPTY_PAGE_HTML = "<html><body><p>Sin resultados</p></body></html>"
+
+
+class TestRunCycleEmptyPageDetection:
+    """
+    FIX C — a scrape that parses ZERO rows on page 1 must be surfaced as an error,
+    not logged as a clean success. The Gaceta listing always has decrees on page 1;
+    an empty first page means the source is unreachable, changed layout, or returned
+    an error page. Logging it as 'ok' with 0 normas hides a total scrape failure.
+
+    An empty LATER page (page > 1) is the legitimate end of pagination and must
+    still be a clean 'ok' stop.
+    """
+
+    def test_empty_first_page_sets_estado_error(self) -> None:
+        """
+        RED: page 1 parses to [] → estado must be 'error' (not 'ok').
+
+        Fails before the fix because `if not rows: break` stops silently with the
+        default estado='ok', masking the failure.
+        """
+        from main import run_cycle
+
+        mock_conn = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.get_ultimo_gaceta_id.return_value = None
+
+        mock_client = MagicMock()
+        mock_client.get.return_value = _EMPTY_PAGE_HTML
+
+        with patch("main.GacetaRepository", return_value=mock_repo), \
+             patch("main.GacetaClient", return_value=mock_client), \
+             patch("main._log_run"):
+            result = run_cycle(conn=mock_conn, pais="BO", max_pages=3)
+
+        assert result.estado == "error", (
+            f"Empty page 1 must be an error, got {result.estado!r}"
+        )
+        assert result.mensaje_error is not None
+        # No normas processed, and it stops after page 1 (does not keep paging).
+        mock_repo.upsert_norma.assert_not_called()
+        assert mock_client.get.call_count == 1
+
+    def test_empty_later_page_stays_ok(self) -> None:
+        """
+        Regression guard: page 1 has rows, page 2 is empty → legitimate end of
+        pagination → estado stays 'ok'. The fix must NOT turn every empty page
+        into an error, only an empty FIRST page.
+        """
+        from main import run_cycle
+
+        mock_conn = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.get_ultimo_gaceta_id.return_value = None
+        mock_repo.upsert_norma.return_value = 42
+        mock_repo.insert_eventos.return_value = 1
+        mock_repo.update_estado_extraccion.return_value = None
+
+        mock_client = MagicMock()
+        # Page 1: real rows; page 2: empty → clean stop.
+        mock_client.get.side_effect = [FIXTURE_HTML, _EMPTY_PAGE_HTML]
+
+        with patch("main.GacetaRepository", return_value=mock_repo), \
+             patch("main.GacetaClient", return_value=mock_client), \
+             patch("main._log_run"):
+            result = run_cycle(conn=mock_conn, pais="BO", max_pages=2)
+
+        assert result.estado == "ok", (
+            f"Empty page 2 (after a full page 1) must stay ok, got {result.estado!r}"
+        )
+        assert mock_client.get.call_count == 2
+        # Only page 1 counted as processed (page 2 breaks before the increment).
+        assert result.paginas_procesadas == 1
+
+
 class TestRunCycleMultiPage:
     """run_cycle fetches multiple pages and respects cross-page reached_known."""
 
