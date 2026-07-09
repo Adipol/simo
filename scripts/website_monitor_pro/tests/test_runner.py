@@ -566,15 +566,15 @@ class TestMainSmoke:
 class TestMainFlow:
 
     # 7.3 — flow de 1 iteración mockeada
-    def test_main_flow_una_iteracion(self):
+    def _run_one_iteration(self, resultado):
+        """Corre 1 iteración de runner.main() con `resultado` como salida de
+        ejecutar_scraper. Devuelve (mock_registrar, mock_ejecutar, mock_conn).
+
+        Usa una excepción que hereda de BaseException para romper el loop en el
+        primer time.sleep sin ser capturada por el `except Exception` de main().
         """
-        Mock todos los helpers. Loop ejecuta 1 iteración completa y verifica
-        que registrar_log_scripts fue llamado con los argumentos correctos.
-        Usa una excepción custom (no KeyboardInterrupt) para romper el loop
-        sin interferir con pytest.
-        """
+
         class _StopLoop(BaseException):
-            """Hereda de BaseException para no ser capturada por `except Exception` en main()."""
             pass
 
         cfg = _make_cfg(
@@ -585,19 +585,10 @@ class TestMainFlow:
             habilitado=True,
             timeout_minutos=60,
         )
-        resultado_scraper = {
-            "estado": "ok",
-            "returncode": 0,
-            "duracion": 5.0,
-            "mensaje_error": None,
-        }
-
         mock_conn = MagicMock()
-
-        # Romper el loop en el primer sleep (después de ejecutar 1 iteración completa)
         sleep_call_count = [0]
 
-        def mock_sleep(seconds):
+        def mock_sleep(_seconds):
             sleep_call_count[0] += 1
             if sleep_call_count[0] >= 1:
                 raise _StopLoop("stop after 1 iteration")
@@ -606,30 +597,63 @@ class TestMainFlow:
              patch.object(runner, "leer_config_scraper", return_value=cfg), \
              patch.object(runner, "lock_existe_y_activo", return_value=False), \
              patch.object(runner, "escribir_lock"), \
-             patch.object(runner, "ejecutar_scraper", return_value=resultado_scraper) as mock_ejecutar, \
+             patch.object(runner, "ejecutar_scraper", return_value=resultado) as mock_ejecutar, \
              patch.object(runner, "registrar_log_scripts") as mock_registrar, \
              patch.object(runner, "limpiar_lock"), \
              patch("time.sleep", side_effect=mock_sleep), \
              patch.object(runner, "debe_ejecutar", return_value=True), \
              patch.object(runner, "dia_activo", return_value=True), \
              patch.object(runner, "en_ventana_horaria", return_value=True):
-            # _StopLoop es capturado por el except Exception en main()
-            # lo que detiene el loop después de 1 iteración
             with pytest.raises(_StopLoop):
                 runner.main()
 
-        # Verificar que el scraper fue ejecutado
-        mock_ejecutar.assert_called_once_with(cfg)
-        # Verificar que se registró el log
+        return mock_registrar, mock_ejecutar, mock_conn
+
+    def test_main_flow_ok_no_registra_wrapper(self):
+        """
+        Happy path (estado="ok"): el runner ejecuta el scraper pero NO escribe
+        una fila wrapper en log_scripts — main.py ya registra su propia fila por
+        país. Esto elimina el duplicado en el dashboard de Estado de Scripts.
+        """
+        resultado_ok = {
+            "estado": "ok", "returncode": 0, "duracion": 5.0, "mensaje_error": None,
+        }
+        mock_registrar, mock_ejecutar, _ = self._run_one_iteration(resultado_ok)
+
+        mock_ejecutar.assert_called_once()
+        mock_registrar.assert_not_called()
+
+    def test_main_flow_error_registra_wrapper(self):
+        """
+        Fallo del subproceso (estado="error"): main.py pudo no llegar a registrar
+        su fila, así que el runner SÍ escribe la fila wrapper con el error para no
+        perder la señal de la falla.
+        """
+        resultado_error = {
+            "estado": "error", "returncode": 1, "duracion": 3.0, "mensaje_error": "boom",
+        }
+        mock_registrar, _, mock_conn = self._run_one_iteration(resultado_error)
+
         mock_registrar.assert_called_once()
         call_obj = mock_registrar.call_args
-        # conn siempre es el primer argumento posicional
         assert call_obj.args[0] is mock_conn
-        # script, estado pueden ser posicionales o kwargs según la firma
-        all_args = list(call_obj.args) + [call_obj.kwargs.get("script"), call_obj.kwargs.get("estado")]
-        # verificar que "scraper" y "ok" están en algún lugar de los argumentos
         assert "scraper" in call_obj.args or call_obj.kwargs.get("script") == "scraper"
-        assert "ok" in call_obj.args or call_obj.kwargs.get("estado") == "ok"
+        assert "error" in call_obj.args or call_obj.kwargs.get("estado") == "error"
+
+    def test_main_flow_timeout_registra_wrapper(self):
+        """
+        Timeout del subproceso: main.py fue terminado (SIGTERM/SIGKILL) y no
+        registró nada → el runner SÍ escribe la fila wrapper con estado timeout.
+        """
+        resultado_timeout = {
+            "estado": "timeout", "returncode": -1, "duracion": 3600.0,
+            "mensaje_error": "Timeout tras 60 minutos",
+        }
+        mock_registrar, _, _ = self._run_one_iteration(resultado_timeout)
+
+        mock_registrar.assert_called_once()
+        call_obj = mock_registrar.call_args
+        assert "timeout" in call_obj.args or call_obj.kwargs.get("estado") == "timeout"
 
     def test_main_omite_ciclo_si_deshabilitado(self):
         """Si cfg.habilitado=False, no se llama ejecutar_scraper."""

@@ -416,3 +416,63 @@ class TestDiaActivo:
         from runner import dia_activo
         cfg = {"dias_semana": "lunes,martes"}
         assert dia_activo(cfg, datetime(2026, 6, 16)) is True
+
+
+class TestRunnerRegistraSoloEnFallo:
+    """El runner escribe la fila wrapper en log_scripts SOLO cuando el subproceso
+    falla o hace timeout. En un ciclo exitoso, main.py ya registró su propia fila,
+    así que el runner NO debe duplicarla (evita los pares en Estado de Scripts)."""
+
+    def _run_one_iteration(self, resultado):
+        """Corre 1 iteración de runner.main() con `resultado` como salida de
+        ejecutar_gaceta. Devuelve (mock_registrar, mock_conn)."""
+        import runner
+
+        class _Stop(BaseException):
+            pass
+
+        cfg = _make_cfg(intervalo_minutos=60, habilitado=True)
+        mock_conn = MagicMock()
+
+        def mock_sleep(_: float) -> None:
+            raise _Stop()
+
+        with patch.object(runner, "get_db_connection", return_value=mock_conn), \
+             patch.object(runner, "leer_config_gaceta", return_value=cfg), \
+             patch.object(runner, "leer_ultimo_ciclo_gaceta", return_value=None), \
+             patch.object(runner, "dia_activo", return_value=True), \
+             patch.object(runner, "en_ventana_horaria", return_value=True), \
+             patch.object(runner, "lock_existe_y_activo", return_value=False), \
+             patch.object(runner, "escribir_lock"), \
+             patch.object(runner, "registrar_log_scripts") as mock_registrar, \
+             patch.object(runner, "limpiar_lock"), \
+             patch.object(runner, "ejecutar_gaceta", return_value=resultado), \
+             patch("time.sleep", side_effect=mock_sleep):
+            with pytest.raises(_Stop):
+                runner.main()
+
+        return mock_registrar, mock_conn
+
+    def test_ok_no_registra_wrapper(self) -> None:
+        """estado='ok' → registrar_log_scripts NO se llama (sin fila duplicada)."""
+        resultado = {"estado": "ok", "returncode": 0, "duracion": 3.2, "mensaje_error": None}
+        mock_registrar, _ = self._run_one_iteration(resultado)
+        mock_registrar.assert_not_called()
+
+    def test_error_registra_wrapper(self) -> None:
+        """estado='error' → registrar_log_scripts SÍ se llama con el error."""
+        resultado = {"estado": "error", "returncode": 1, "duracion": 2.0, "mensaje_error": "boom"}
+        mock_registrar, mock_conn = self._run_one_iteration(resultado)
+        mock_registrar.assert_called_once()
+        call_obj = mock_registrar.call_args
+        assert call_obj.args[0] is mock_conn
+        assert "gaceta" in call_obj.args or call_obj.kwargs.get("script") == "gaceta"
+        assert "error" in call_obj.args or call_obj.kwargs.get("estado") == "error"
+
+    def test_timeout_registra_wrapper(self) -> None:
+        """estado='timeout' → registrar_log_scripts SÍ se llama."""
+        resultado = {"estado": "timeout", "returncode": -1, "duracion": 1800.0, "mensaje_error": "Timeout"}
+        mock_registrar, _ = self._run_one_iteration(resultado)
+        mock_registrar.assert_called_once()
+        call_obj = mock_registrar.call_args
+        assert "timeout" in call_obj.args or call_obj.kwargs.get("estado") == "timeout"

@@ -553,18 +553,22 @@ def main() -> None:
             resultado = ejecutar_scraper(cfg)
 
             fin = datetime.now()
-            errores = 1 if resultado["estado"] != "ok" else 0
-            registrar_log_scripts(
-                conn,
-                script="scraper",
-                inicio=inicio,
-                fin=fin,
-                estado=resultado["estado"],
-                items_procesados=0,
-                items_resultado=0,
-                errores=errores,
-                mensaje_error=resultado.get("mensaje_error"),
-            )
+            # El scraper (main.py) registra su propia fila en log_scripts por país
+            # en cada ciclo. El runner solo registra cuando el subproceso NO llegó a
+            # loguear su resultado (error o timeout: main.py abortó o fue matado),
+            # para no duplicar filas en el happy path (una ejecución = una fila).
+            if resultado["estado"] != "ok":
+                registrar_log_scripts(
+                    conn,
+                    script="scraper",
+                    inicio=inicio,
+                    fin=fin,
+                    estado=resultado["estado"],
+                    items_procesados=0,
+                    items_resultado=0,
+                    errores=1,
+                    mensaje_error=resultado.get("mensaje_error"),
+                )
             limpiar_lock(LOCK_FILE)
             ultimo_ciclo = inicio
 
