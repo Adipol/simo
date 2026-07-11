@@ -19,45 +19,16 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
-# ── Stub all heavy transitive deps before any project import ──────────────────
-
-def _stub_heavy_modules() -> None:
-    """Inject MagicMock stubs for modules that need C extensions or env."""
-    stubs = {
-        # DB drivers
-        "psycopg2": MagicMock(),
-        "psycopg2.extras": MagicMock(),
-        "psycopg2.pool": MagicMock(),
-        "mysql": MagicMock(),
-        "mysql.connector": MagicMock(),
-        "mysql.connector.pooling": MagicMock(),
-        # Selenium
-        "selenium": MagicMock(),
-        "selenium.webdriver": MagicMock(),
-        "selenium.webdriver.common": MagicMock(),
-        "selenium.webdriver.common.by": MagicMock(),
-        "selenium.webdriver.support": MagicMock(),
-        "selenium.webdriver.support.ui": MagicMock(),
-        "selenium.webdriver.support.expected_conditions": MagicMock(),
-        "selenium.webdriver.remote": MagicMock(),
-        "selenium.webdriver.remote.webdriver": MagicMock(),
-        "selenium.common": MagicMock(),
-        "selenium.common.exceptions": MagicMock(),
-        # webdriver-manager
-        "webdriver_manager": MagicMock(),
-        "webdriver_manager.chrome": MagicMock(),
-        # spacy
-        "spacy": MagicMock(),
-    }
-    for name, stub in stubs.items():
-        if name not in sys.modules:
-            sys.modules[name] = stub
-
-
-_stub_heavy_modules()
-
-
-# ── Build a real settings mock so config.settings resolves ───────────────────
+# ── Load core/database.py under ISOLATED stubs ────────────────────────────────
+# database.py pulls in heavy/optional deps (psycopg2, selenium, spacy) plus
+# config.settings and utils.logger. We stub them so it loads without a real
+# DB/browser/env — but ONLY for the duration of the load, via patch.dict.
+#
+# This isolation is critical: leaving the MagicMock stubs in sys.modules leaks
+# them into the global import state and breaks OTHER test modules that need the
+# real spacy/config/utils (a test-isolation bug that only surfaces when the whole
+# suite runs together — e.g. in CI). patch.dict restores sys.modules on exit;
+# database.py keeps the mock objects it captured in its own namespace.
 
 def _make_settings_mock() -> MagicMock:
     m = MagicMock()
@@ -73,34 +44,52 @@ def _make_settings_mock() -> MagicMock:
     return m
 
 
-_settings_mock = _make_settings_mock()
+def _load_database_module_isolated():
+    """Load core/database.py with heavy deps stubbed, without leaking the stubs."""
+    import importlib.util
+    import os
 
-# Stub config before import
-if "config" not in sys.modules:
     _cfg_stub = MagicMock()
-    _cfg_stub.settings = _settings_mock
-    sys.modules["config"] = _cfg_stub
-    sys.modules["config.settings"] = _cfg_stub
-
-if "utils" not in sys.modules:
+    _cfg_stub.settings = _make_settings_mock()
     _utils_stub = MagicMock()
     _utils_stub.logger.get_logger = lambda name: MagicMock()
-    sys.modules["utils"] = _utils_stub
-    sys.modules["utils.logger"] = _utils_stub.logger
+
+    stubs = {
+        "psycopg2": MagicMock(),
+        "psycopg2.extras": MagicMock(),
+        "psycopg2.pool": MagicMock(),
+        "mysql": MagicMock(),
+        "mysql.connector": MagicMock(),
+        "mysql.connector.pooling": MagicMock(),
+        "selenium": MagicMock(),
+        "selenium.webdriver": MagicMock(),
+        "selenium.webdriver.common": MagicMock(),
+        "selenium.webdriver.common.by": MagicMock(),
+        "selenium.webdriver.support": MagicMock(),
+        "selenium.webdriver.support.ui": MagicMock(),
+        "selenium.webdriver.support.expected_conditions": MagicMock(),
+        "selenium.webdriver.remote": MagicMock(),
+        "selenium.webdriver.remote.webdriver": MagicMock(),
+        "selenium.common": MagicMock(),
+        "selenium.common.exceptions": MagicMock(),
+        "webdriver_manager": MagicMock(),
+        "webdriver_manager.chrome": MagicMock(),
+        "spacy": MagicMock(),
+        "config": _cfg_stub,
+        "config.settings": _cfg_stub,
+        "utils": _utils_stub,
+        "utils.logger": _utils_stub.logger,
+    }
+
+    db_path = os.path.join(os.path.dirname(__file__), "..", "core", "database.py")
+    with patch.dict(sys.modules, stubs):
+        spec = importlib.util.spec_from_file_location("core._database_pairs_isolated", db_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    return module
 
 
-# ── Now import the module under test ─────────────────────────────────────────
-
-# Import database module directly (bypassing core/__init__.py's scraper import)
-import importlib.util, os as _os
-
-_db_path = _os.path.join(_os.path.dirname(__file__), "..", "core", "database.py")
-_spec = importlib.util.spec_from_file_location("core.database", _db_path)
-_db_module = importlib.util.module_from_spec(_spec)
-# Ensure the module uses our settings mock
-_db_module.__dict__["_DB_TYPE"] = "postgres"  # will be overwritten by module exec
-_spec.loader.exec_module(_db_module)
-
+_db_module = _load_database_module_isolated()
 ScrapingRepository = _db_module.ScrapingRepository
 DatabaseManager = _db_module.DatabaseManager
 
