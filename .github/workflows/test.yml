@@ -152,7 +152,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-${{ runner.os }}-py3.13-${{ hashFiles('scripts/website_monitor_pro/requirements.txt', 'scripts/gaceta_collector/requirements.txt') }}
+          key: pip-${{ runner.os }}-py3.13-${{ hashFiles('scripts/website_monitor_pro/requirements.txt', 'scripts/gaceta_collector/requirements.txt', 'scripts/scraper_v2.2/requirements.txt') }}
           restore-keys: pip-${{ runner.os }}-py3.13-
 
       - name: Install Python dependencies
@@ -162,6 +162,7 @@ jobs:
         run: |
           pip install -r scripts/website_monitor_pro/requirements.txt
           pip install -r scripts/gaceta_collector/requirements.txt
+          pip install -r scripts/scraper_v2.2/requirements.txt
           pip install pytest pytest-mock
 
       - name: Run website_monitor_pro tests
@@ -169,3 +170,9 @@ jobs:
 
       - name: Run gaceta_collector tests
         run: pytest scripts/gaceta_collector/tests/ -v
+
+      # scraper_v2.2 tests need spacy installed (from its requirements.txt) but
+      # NOT the es_core_news_sm model — the 2 model-gated tests skip gracefully
+      # (conftest.py spacy_required marker). 42 pass, 2 skip.
+      - name: Run scraper_v2.2 tests
+        run: pytest scripts/scraper_v2.2/tests/ -v

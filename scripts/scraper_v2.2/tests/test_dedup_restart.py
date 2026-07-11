@@ -20,9 +20,21 @@ from unittest.mock import MagicMock, patch, call
 
 import pytest
 
-# ── Stub heavy deps (same pattern as test_processed_pairs.py) ─────────────────
+# ── Load core/database.py under ISOLATED stubs ────────────────────────────────
+# Same isolation approach as test_processed_pairs.py: stub heavy deps ONLY while
+# loading database.py (via patch.dict), so the MagicMock stubs do not leak into
+# sys.modules and poison other test modules that need the real spacy/config/utils.
 
-def _ensure_stubs() -> None:
+def _load_database_module_isolated():
+    """Load core/database.py with heavy deps stubbed, without leaking the stubs."""
+    import importlib.util
+    import os
+
+    _cfg = MagicMock()
+    _cfg.settings.db.db_type = "postgres"
+    _utils = MagicMock()
+    _utils.logger.get_logger = lambda n: MagicMock()
+
     stubs = {
         "psycopg2": MagicMock(),
         "psycopg2.extras": MagicMock(),
@@ -44,36 +56,21 @@ def _ensure_stubs() -> None:
         "webdriver_manager": MagicMock(),
         "webdriver_manager.chrome": MagicMock(),
         "spacy": MagicMock(),
+        "config": _cfg,
+        "config.settings": _cfg,
+        "utils": _utils,
+        "utils.logger": _utils.logger,
     }
-    for name, stub in stubs.items():
-        if name not in sys.modules:
-            sys.modules[name] = stub
+
+    db_path = os.path.join(os.path.dirname(__file__), "..", "core", "database.py")
+    with patch.dict(sys.modules, stubs):
+        spec = importlib.util.spec_from_file_location("core._database_dedup_isolated", db_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    return module
 
 
-_ensure_stubs()
-
-if "config" not in sys.modules:
-    _cfg = MagicMock()
-    _cfg.settings.db.db_type = "postgres"
-    sys.modules["config"] = _cfg
-    sys.modules["config.settings"] = _cfg
-
-if "utils" not in sys.modules:
-    _utils = MagicMock()
-    _utils.logger.get_logger = lambda n: MagicMock()
-    sys.modules["utils"] = _utils
-    sys.modules["utils.logger"] = _utils.logger
-
-
-# ── Load database module ──────────────────────────────────────────────────────
-
-import importlib.util, os as _os
-
-_db_path = _os.path.join(_os.path.dirname(__file__), "..", "core", "database.py")
-_spec = importlib.util.spec_from_file_location("core.database_dedup", _db_path)
-_db_mod = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_db_mod)
-
+_db_mod = _load_database_module_isolated()
 ScrapingRepository = _db_mod.ScrapingRepository
 DatabaseManager = _db_mod.DatabaseManager
 
