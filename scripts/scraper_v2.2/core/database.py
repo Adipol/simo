@@ -225,7 +225,7 @@ class ScrapingRepository:
     """Repositorio para operaciones de scraping."""
 
     @staticmethod
-    def get_keywords(categoria: str = None) -> List[str]:
+    def get_keywords(categoria: Optional[str] = None) -> List[str]:
         """
         Obtiene las raíces de lemas activos desde familias_lemas.
 
@@ -274,7 +274,7 @@ class ScrapingRepository:
             return [row["categoria"] for row in cursor.fetchall()]
 
     @staticmethod
-    def get_websites(pais: str = None) -> List[dict]:
+    def get_websites(pais: Optional[str] = None) -> List[dict]:
         """Obtiene los sitios web activos desde la base de datos."""
         with DatabaseManager.get_cursor(dictionary=True) as cursor:
             if pais:
@@ -310,7 +310,7 @@ class ScrapingRepository:
         relevance_score: int = 0,
         found_in_title: bool = False,
         pais: str = "BO",
-        categoria: str = None,
+        categoria: Optional[str] = None,
     ) -> Optional[int]:
         """
         Guarda un resultado de scraping.
@@ -381,13 +381,23 @@ class ScrapingRepository:
 
     @staticmethod
     def get_paises_activos() -> List[dict]:
-        """Obtiene la lista de países activos."""
+        """Obtiene los países activos que tienen al menos un sitio activo.
+
+        Filtra por sitios_web para no iterar países activos pero sin sitios
+        configurados: esos ciclos vacíos ensucian log_scripts con corridas de 0s
+        (ruido en Estado de Scripts).
+        """
         with DatabaseManager.get_cursor(dictionary=True) as cursor:
             cursor.execute("""
-                SELECT codigo, nombre
-                FROM paises
-                WHERE activo IS TRUE
-                ORDER BY nombre
+                SELECT p.codigo, p.nombre
+                FROM paises p
+                WHERE p.activo IS TRUE
+                  AND EXISTS (
+                      SELECT 1
+                      FROM sitios_web s
+                      WHERE s.pais = p.codigo AND s.activo IS TRUE
+                  )
+                ORDER BY p.nombre
             """)
             return cursor.fetchall()
 

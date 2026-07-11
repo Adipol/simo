@@ -192,3 +192,46 @@ class TestProcessedUrlCategoriaPairs:
         assert "url" in sql, "SQL must select 'url'"
         assert "categoria" in sql, "SQL must select 'categoria'"
         assert "keyword" not in sql, "SQL must NOT select 'keyword' as dedup column"
+
+
+class TestGetPaisesActivos:
+    """get_paises_activos() must only return countries that have at least one
+    ACTIVE site. Otherwise the scraper iterates countries that are active but
+    have no sites, producing empty 0s runs in log_scripts (Estado de Scripts
+    noise)."""
+
+    def test_sql_filters_countries_by_active_sites(self) -> None:
+        """
+        RED → GREEN: the query must restrict to countries that have an active
+        site (reference sitios_web), on top of the country's own activo flag.
+
+        Fails before the fix: the query is `FROM paises WHERE activo IS TRUE`
+        with no reference to sitios_web.
+        """
+        cursor_mock = MagicMock()
+        cursor_mock.fetchall.return_value = []
+        captured_sql: list = []
+
+        cursor_mock.execute.side_effect = lambda sql, params=None: captured_sql.append(sql)
+
+        @contextmanager
+        def fake_get_cursor(**kwargs):
+            yield cursor_mock
+
+        with patch.object(DatabaseManager, "get_cursor", side_effect=fake_get_cursor):
+            ScrapingRepository.get_paises_activos()
+
+        assert len(captured_sql) == 1, "Expected exactly one SQL query"
+        sql = captured_sql[0].lower()
+        assert "paises" in sql, "SQL must query paises"
+        assert "sitios_web" in sql, "SQL must filter countries by their sites (sitios_web)"
+        assert "activo" in sql, "SQL must still respect the country's active flag"
+
+    def test_returns_rows_from_cursor(self) -> None:
+        """Behaviour preserved: returns the rows the DB yields."""
+        rows = [{"codigo": "BO", "nombre": "Bolivia"}]
+        patcher, _ = _patch_cursor_rows(rows)
+        with patcher:
+            result = ScrapingRepository.get_paises_activos()
+
+        assert result == rows
