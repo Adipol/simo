@@ -5,6 +5,11 @@
 - PostgreSQL 17
 - Gemini AI (2.5-flash) para analisis PEP/OPI
 
+## Alcance de revision
+- Los hallazgos REJECT deben ser causados por el diff staged
+- Las violaciones preexistentes fuera de las lineas modificadas se reportan como warnings no bloqueantes o follow-ups
+- Los hallazgos de rendimiento o indices requieren evidencia concreta, como un plan de ejecucion; no se rechaza por indexacion especulativa
+
 ## PHP
 - `declare(strict_types=1)` en todo archivo PHP
 - Type hints en parametros y retornos obligatorios
