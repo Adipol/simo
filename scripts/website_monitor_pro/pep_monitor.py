@@ -38,6 +38,7 @@ import psycopg2
 import psycopg2.extras
 from pathlib import Path
 from dotenv import load_dotenv
+from authorities import Authority, compare_authorities, extract_authorities
 
 # Cargamos DOS archivos .env en orden:
 #   1) scripts/website_monitor_pro/.env — credenciales propias del scraper
@@ -130,6 +131,34 @@ def setup_logging() -> logging.Logger:
 
 
 logger = setup_logging()
+
+
+def authority_extraction_complete(
+    html: str, extractor: Optional[str], authorities: list[Authority]
+) -> bool:
+    """Confirm that a configured extractor produced an authoritative roster."""
+    if not extractor:
+        return False
+    if extractor != "divi_blurb":
+        return bool(authorities)
+
+    from bs4 import BeautifulSoup
+
+    area = BeautifulSoup(html, "lxml").select_one(".entry-content")
+    if area is None:
+        return False
+    text = " ".join(area.get_text(" ", strip=True).casefold().split())
+    if not authorities:
+        return re.search(r"\bsin autoridades\b", text) is not None
+
+    blocks = area.select(".et_pb_blurb_container")
+    return bool(blocks) and all(
+        block.find("h4") is not None
+        and block.find("h4").get_text(" ", strip=True)
+        and block.find("p") is not None
+        and block.find("p").get_text(" ", strip=True)
+        for block in blocks
+    )
 
 
 # ════════════════════════════════════════════════════════════════
@@ -265,7 +294,7 @@ class DatabaseManager:
         self._ensure_connection()
         self.cursor.execute(
             """SELECT id, url, nombre, pais, organismo, nivel, tipo,
-                      selector_css, ultimo_check, analizar_imagenes
+                       selector_css, ultimo_check, analizar_imagenes, autoridades_extractor
                FROM fuentes WHERE activo = TRUE
                ORDER BY pais, organismo"""
         )
@@ -293,20 +322,45 @@ class DatabaseManager:
         """Obtiene el snapshot mas reciente de una fuente."""
         self._ensure_connection()
         self.cursor.execute(
-            """SELECT hash, texto, fecha FROM snapshots
+            """SELECT hash, texto, fecha, autoridades_json FROM snapshots
                WHERE fuente_id = %s ORDER BY fecha DESC LIMIT 1""",
             (fuente_id,),
         )
         return self.cursor.fetchone()
 
     def guardar_snapshot(
-        self, fuente_id: int, hash_: str, texto: str, metodo: str
+        self,
+        fuente_id: int,
+        hash_: str,
+        texto: str,
+        metodo: str,
+        autoridades: Optional[list[Authority]] = None,
     ) -> None:
         self._ensure_connection()
         self.cursor.execute(
-            """INSERT INTO snapshots (fuente_id, hash, texto, metodo)
-               VALUES (%s, %s, %s, %s)""",
-            (fuente_id, hash_, texto, metodo),
+            """INSERT INTO snapshots (fuente_id, hash, texto, metodo, autoridades_json)
+                VALUES (%s, %s, %s, %s, %s)""",
+            (
+                fuente_id,
+                hash_,
+                texto,
+                metodo,
+                json.dumps([authority.to_dict() for authority in autoridades]) if autoridades is not None else None,
+            ),
+        )
+
+    def actualizar_autoridades_ultimo_snapshot(
+        self, fuente_id: int, autoridades: list[Authority]
+    ) -> None:
+        """Inicializa la línea base estructurada de un snapshot legado."""
+        self._ensure_connection()
+        self.cursor.execute(
+            """UPDATE snapshots SET autoridades_json = %s
+               WHERE id = (
+                   SELECT id FROM snapshots WHERE fuente_id = %s
+                   ORDER BY fecha DESC LIMIT 1
+               )""",
+            (json.dumps([authority.to_dict() for authority in autoridades]), fuente_id),
         )
 
     # ── Cambios ───────────────────────────────────────────────────
@@ -321,6 +375,7 @@ class DatabaseManager:
         posibles_peps: str,
         *,
         imagenes: Optional[list[dict]] = None,
+        autoridades_eventos: Optional[list[dict]] = None,
     ) -> Optional[int]:
         """
         Inserta un cambio detectado en la tabla cambios.
@@ -338,8 +393,8 @@ class DatabaseManager:
         self.cursor.execute(
             """INSERT INTO cambios
                (fuente_id, hash_anterior, hash_nuevo, lineas_quitadas,
-                lineas_nuevas, diff_texto, posibles_peps, imagenes_cambio_json)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                 lineas_nuevas, diff_texto, posibles_peps, imagenes_cambio_json, autoridades_eventos_json)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                RETURNING id""",
             (
                 fuente_id,
@@ -350,6 +405,7 @@ class DatabaseManager:
                 diff_texto,
                 posibles_peps,
                 imagenes_json,
+                json.dumps({"version": 1, "events": autoridades_eventos}) if autoridades_eventos else None,
             ),
         )
         row = self.cursor.fetchone()
@@ -1463,6 +1519,13 @@ class PEPMonitor:
                 else:
                     imgs_actual = []
 
+            autoridades_actuales = extract_authorities(
+                html_raw, fuente.get("autoridades_extractor")
+            ) if html_raw else []
+            extraccion_autoridades_completa = authority_extraction_complete(
+                html_raw, fuente.get("autoridades_extractor"), autoridades_actuales
+            )
+
             if not lineas_nuevas:
                 logger.warning(f"Sin contenido extraido de: {nombre}")
                 self.db.update_ultimo_check(fuente_id)
@@ -1476,7 +1539,13 @@ class PEPMonitor:
 
             if snapshot_anterior is None:
                 # Primera vez — guardar estado inicial sin alertar
-                self.db.guardar_snapshot(fuente_id, hash_nuevo, texto_nuevo, metodo)
+                self.db.guardar_snapshot(
+                    fuente_id,
+                    hash_nuevo,
+                    texto_nuevo,
+                    metodo,
+                    autoridades_actuales if extraccion_autoridades_completa else None,
+                )
                 logger.info(
                     f"[INICIO] Estado inicial guardado: {nombre} "
                     f"({len(lineas_nuevas)} lineas, metodo: {metodo})"
@@ -1513,17 +1582,37 @@ class PEPMonitor:
                 diff = calcular_diff(lineas_anteriores, lineas_nuevas)
                 hay_diff_texto = bool(diff.get("quitadas") or diff.get("nuevas"))
 
+            tiene_linea_base_autoridades = (
+                fuente.get("autoridades_extractor")
+                and snapshot_anterior.get("autoridades_json") is not None
+            )
+            autoridades_anteriores = [
+                Authority(cargo=item["cargo"], persona=item["persona"])
+                for item in (snapshot_anterior.get("autoridades_json") or [])
+                if isinstance(item, dict) and item.get("cargo") and item.get("persona")
+            ]
+            eventos_autoridades = compare_authorities(autoridades_anteriores, autoridades_actuales) \
+                if tiene_linea_base_autoridades and extraccion_autoridades_completa else []
+            hay_cambio_autoridades = bool(eventos_autoridades)
+            autoridades_snapshot = (
+                autoridades_actuales
+                if extraccion_autoridades_completa
+                else (autoridades_anteriores if tiene_linea_base_autoridades else None)
+            )
+
             hay_cambio_imagen = bool(imgs_a_analizar)
 
             # Si no hay ningún cambio real → skip
-            if not hay_diff_texto and not hay_cambio_imagen:
+            if not hay_diff_texto and not hay_cambio_imagen and not hay_cambio_autoridades:
                 if texto_cambio:
                     logger.debug(f"[OK] Reordenamiento sin contenido nuevo: {nombre}")
                 else:
                     logger.debug(f"[OK] Sin cambios: {nombre}")
                 # Actualizar snapshot si el hash cambió
                 if texto_cambio:
-                    self.db.guardar_snapshot(fuente_id, hash_nuevo, texto_nuevo, metodo)
+                    self.db.guardar_snapshot(fuente_id, hash_nuevo, texto_nuevo, metodo, autoridades_snapshot)
+                elif not tiene_linea_base_autoridades and extraccion_autoridades_completa:
+                    self.db.actualizar_autoridades_ultimo_snapshot(fuente_id, autoridades_actuales)
                 # Actualizar metadata de imágenes (ultima_vez_visto) si hubo imágenes
                 if imgs_metadata:
                     snapshot_row = self.db.get_ultimo_snapshot(fuente_id)
@@ -1557,6 +1646,7 @@ class PEPMonitor:
                 lineas_nuevas=len(diff.get("nuevas", [])),
                 diff_texto=diff.get("diff_texto", ""),
                 posibles_peps=diff.get("posibles_peps", ""),
+                autoridades_eventos=eventos_autoridades,
                 # imagenes: None por ahora — se actualiza después del guardado a disco
             )
 
@@ -1606,10 +1696,16 @@ class PEPMonitor:
                     f"[CAMBIO #{cambio_id}] {nombre}: "
                     f"solo imágenes ({len(entries_imagenes)} nueva(s))"
                 )
+            elif hay_cambio_autoridades:
+                mostrar_alerta(fuente, diff, cambio_id)
+                logger.warning(
+                    f"[CAMBIO #{cambio_id}] {nombre}: "
+                    f"solo autoridades ({len(eventos_autoridades)} evento(s))"
+                )
 
             # ── Registrar snapshot_imagenes ─────────────────────────
             # Actualizar snapshot de texto
-            self.db.guardar_snapshot(fuente_id, hash_nuevo, texto_nuevo, metodo)
+            self.db.guardar_snapshot(fuente_id, hash_nuevo, texto_nuevo, metodo, autoridades_snapshot)
 
             # Obtener el ID del snapshot recién creado
             try:
@@ -1633,7 +1729,7 @@ class PEPMonitor:
                     logger.error(f"Error registrando snapshot_imagenes para #{cambio_id}: {e}")
 
             self.db.update_ultimo_check(fuente_id)
-            cambios_detectados = len(diff.get("nuevas", [])) + len(diff.get("quitadas", []))
+            cambios_detectados = len(diff.get("nuevas", [])) + len(diff.get("quitadas", [])) + len(eventos_autoridades)
             estado = "success"
 
         except Exception as e:

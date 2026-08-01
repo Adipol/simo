@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
@@ -11,10 +13,11 @@ class Snapshot extends Model
 
     public $timestamps = false;
 
-    protected $fillable = ['fuente_id', 'hash', 'texto', 'metodo', 'fecha'];
+    protected $fillable = ['fuente_id', 'hash', 'texto', 'autoridades_json', 'metodo', 'fecha'];
 
     protected $casts = [
         'fecha' => 'datetime',
+        'autoridades_json' => 'array',
     ];
 
     public function fuente(): BelongsTo

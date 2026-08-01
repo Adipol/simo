@@ -19,7 +19,7 @@ class Fuente extends Model
 
     protected $fillable = [
         'url', 'nombre', 'pais', 'organismo', 'nivel', 'tipo',
-        'activo', 'selector_css', 'ultimo_check', 'analizar_imagenes',
+        'activo', 'selector_css', 'autoridades_extractor', 'ultimo_check', 'analizar_imagenes',
     ];
 
     protected $casts = [

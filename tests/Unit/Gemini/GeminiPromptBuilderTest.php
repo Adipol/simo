@@ -367,6 +367,75 @@ class GeminiPromptBuilderTest extends TestCase
         $this->assertStringContainsString('Ministerio de Gobierno', $prompt);
     }
 
+    public function test_analisis_cambio_includes_trusted_structured_authority_facts(): void
+    {
+        $prompt = $this->builder->analisisCambio('diff', 'ASUSS', 'ASUSS', [
+            'version' => 1,
+            'events' => [[
+                'type' => 'reemplazo',
+                'old' => ['cargo' => 'Director Ejecutivo', 'persona' => 'José Álvarez'],
+                'new' => ['cargo' => 'Director Ejecutivo', 'persona' => 'Ana Pérez'],
+            ]],
+        ]);
+
+        $this->assertStringContainsString('HECHOS ESTRUCTURADOS CONFIABLES', $prompt);
+        $this->assertStringContainsString('Ana Pérez', $prompt);
+        $this->assertStringContainsString('No agregues personas', $prompt);
+    }
+
+    public function test_structured_only_context_has_no_later_unconditional_empty_response_rule(): void
+    {
+        $structuredFacts = [
+            'events' => [[
+                'type' => 'designacion',
+                'old' => null,
+                'new' => ['cargo' => 'Director Ejecutivo', 'persona' => 'Ana Pérez'],
+            ]],
+        ];
+
+        $prompts = [
+            $this->builder->analisisCambio('', 'ASUSS', 'ASUSS', $structuredFacts),
+            $this->builder->analisisCambioMultimodal('', 'ASUSS', 'ASUSS', 1, $structuredFacts),
+        ];
+
+        foreach ($prompts as $prompt) {
+            $this->assertStringContainsString('"persona":"Ana Pérez"', $prompt);
+            $this->assertDoesNotMatchRegularExpression(
+                '/Si NO hay personas(?: escritas en el diff ni en las imágenes)? → responder/u',
+                $prompt
+            );
+            $this->assertDoesNotMatchRegularExpression(
+                '/SIN mencionar personas\s+que entran o salen de un cargo,\s*respondé con/su',
+                $prompt
+            );
+            $this->assertDoesNotMatchRegularExpression(
+                '/SIN texto identificativo escrito al lado o debajo, NO podés inferir nombres\. Devolvé arrays\/campos vacíos/u',
+                $prompt
+            );
+        }
+    }
+
+    public function test_without_structured_context_retains_anti_hallucination_empty_response(): void
+    {
+        $prompts = [
+            $this->builder->analisisCambio('', 'ASUSS', 'ASUSS'),
+            $this->builder->analisisCambioMultimodal('', 'ASUSS', 'ASUSS', 1),
+        ];
+
+        foreach ($prompts as $prompt) {
+            $this->assertDoesNotMatchRegularExpression('/^HECHOS ESTRUCTURADOS CONFIABLES:$/mu', $prompt);
+            $this->assertMatchesRegularExpression(
+                '/Si NO aparece ningún nombre(?: de persona| escrito) Y no hay HECHOS ESTRUCTURADOS CONFIABLES → respondé inmediatamente:\s+\{"persona_removida":null,"persona_nueva":null,"cargo":null,"es_mae":false,"riesgo":"bajo"/u',
+                $prompt
+            );
+        }
+
+        $this->assertMatchesRegularExpression(
+            '/SIN texto identificativo escrito al lado o debajo Y no hay HECHOS ESTRUCTURADOS CONFIABLES, NO podés inferir nombres\. Devolvé arrays\/campos vacíos/u',
+            $prompts[1]
+        );
+    }
+
     // ============================================
     // analisisCambio — false positive prevention (filtro-cambios-pep)
     // ============================================

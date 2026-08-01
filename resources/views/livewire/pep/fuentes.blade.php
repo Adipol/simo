@@ -74,6 +74,9 @@
                                         📷 Multimodal
                                     </span>
                                 @endif
+                                @if($f->autoridades_extractor)
+                                    <span class="simo-badge bg-indigo-50 text-indigo-700 border-indigo-200 inline-flex w-fit">Autoridades: {{ $f->autoridades_extractor }}</span>
+                                @endif
                             </div>
                         </td>
                         <td class="text-xs text-gray-500">
@@ -129,6 +132,13 @@
                     <label class="block text-xs font-medium text-gray-600 mb-1">URL *</label>
                     <input wire:model="url" type="url" class="simo-input" />
                     @error('url') <p class="text-xs text-rose-500 mt-1">{{ $message }}</p> @enderror
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 mb-1">Extractor de autoridades</label>
+                    <select wire:model="autoridades_extractor" class="simo-input">
+                        <option value="">Sin extracción estructurada</option>
+                        <option value="divi_blurb">Divi blurb (cargo y persona)</option>
+                    </select>
                 </div>
                 <div class="grid grid-cols-2 gap-3">
                     <div>
