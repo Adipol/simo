@@ -20,10 +20,15 @@ return new class extends Migration
             $table->timestamp('dispatched_at')->nullable();
             $table->uuid('processing_claim_token')->nullable();
             $table->timestamp('processing_claimed_at')->nullable();
+            $table->unsignedTinyInteger('processing_attempts')->default(0);
+            $table->timestamp('next_attempt_at')->nullable();
+            $table->timestamp('terminal_at')->nullable();
+            $table->text('last_error')->nullable();
+            $table->json('failure_context')->nullable();
             $table->timestamp('processed_at')->nullable();
             $table->timestamps();
 
-            $table->index(['processed_at', 'dispatched_at']);
+            $table->index(['processed_at', 'terminal_at', 'next_attempt_at']);
         });
     }
 

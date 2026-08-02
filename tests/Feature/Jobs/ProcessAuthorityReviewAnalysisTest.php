@@ -10,10 +10,13 @@ use App\Models\AuthorityReviewAnalysisOutbox;
 use App\Models\Cambio;
 use App\Models\Fuente;
 use App\Models\Snapshot;
+use App\Services\AuthorityReviewAnalysisOutboxService;
 use App\Services\Gemini\GeminiAnalisisService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Queue;
 use Mockery\MockInterface;
+use RuntimeException;
 use Tests\TestCase;
 
 final class ProcessAuthorityReviewAnalysisTest extends TestCase
@@ -43,6 +46,55 @@ final class ProcessAuthorityReviewAnalysisTest extends TestCase
         $job->handle(app(GeminiAnalisisService::class));
 
         $this->assertNotNull($event->fresh()->processed_at);
+    }
+
+    public function test_failures_use_durable_budget_backoff_and_terminal_exclusion(): void
+    {
+        config(['services.gemini.enabled' => true]);
+        $event = $this->event();
+        $analysis = $this->mock(GeminiAnalisisService::class);
+        $analysis->shouldReceive('analizarLote')->times(3)->andThrow(new RuntimeException('Gemini unavailable'));
+        Queue::fake();
+
+        foreach ([5, 25, null] as $attempt => $backoff) {
+            try {
+                (new ProcessAuthorityReviewAnalysis($event->id, $event->idempotency_key))->handle($analysis);
+            } catch (RuntimeException) {
+            }
+
+            $event->refresh();
+            $this->assertSame($attempt + 1, $event->processing_attempts);
+            $this->assertSame($backoff === null, $event->terminal_at !== null);
+
+            $this->assertSame(0, app(AuthorityReviewAnalysisOutboxService::class)->dispatchPending());
+
+            if ($backoff !== null) {
+                $this->travel($backoff + 1)->seconds();
+                $event->update(['dispatched_at' => now()->subMinutes(11)]);
+                $this->assertSame(1, app(AuthorityReviewAnalysisOutboxService::class)->dispatchPending());
+            }
+        }
+
+        $this->assertSame('Gemini unavailable', $event->last_error);
+        $this->assertSame(3, $event->failure_context['attempt']);
+        Queue::assertPushed(ProcessAuthorityReviewAnalysis::class, 2);
+    }
+
+    public function test_manual_recovery_resets_terminal_budget(): void
+    {
+        $event = $this->event();
+        $event->update([
+            'processing_attempts' => 3,
+            'terminal_at' => now(),
+            'last_error' => 'failed',
+        ]);
+
+        $this->assertTrue(app(AuthorityReviewAnalysisOutboxService::class)->recover($event->id));
+        $event->refresh();
+
+        $this->assertSame(0, $event->processing_attempts);
+        $this->assertNull($event->terminal_at);
+        $this->assertNull($event->last_error);
     }
 
     private function event(): AuthorityReviewAnalysisOutbox

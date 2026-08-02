@@ -18,6 +18,23 @@ final class AuthorityReviewAnalysisOutboxService
 
         AuthorityReviewAnalysisOutbox::query()
             ->whereNull('processed_at')
+            ->whereNull('terminal_at')
+            ->where('processing_attempts', '>=', AuthorityReviewAnalysisOutbox::MAX_PROCESSING_ATTEMPTS)
+            ->where(function (Builder $query): void {
+                $query->whereNull('processing_claimed_at')
+                    ->orWhere('processing_claimed_at', '<=', now()->subMinutes(10));
+            })
+            ->update([
+                'terminal_at' => now(),
+                'last_error' => 'Processing lease expired after the final durable attempt.',
+                'failure_context' => ['reason' => 'processing_lease_expired'],
+            ]);
+
+        AuthorityReviewAnalysisOutbox::query()
+            ->whereNull('processed_at')
+            ->whereNull('terminal_at')
+            ->where('processing_attempts', '<', AuthorityReviewAnalysisOutbox::MAX_PROCESSING_ATTEMPTS)
+            ->where(fn (Builder $query): Builder => $query->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', now()))
             ->where(function (Builder $query): void {
                 $query->whereNull('dispatched_at')
                     ->orWhere('dispatched_at', '<=', now()->subMinutes(10));
@@ -40,6 +57,9 @@ final class AuthorityReviewAnalysisOutboxService
         $claimed = AuthorityReviewAnalysisOutbox::query()
             ->whereKey($eventId)
             ->whereNull('processed_at')
+            ->whereNull('terminal_at')
+            ->where('processing_attempts', '<', AuthorityReviewAnalysisOutbox::MAX_PROCESSING_ATTEMPTS)
+            ->where(fn (Builder $query): Builder => $query->whereNull('next_attempt_at')->orWhere('next_attempt_at', '<=', now()))
             ->where(function (Builder $query): void {
                 $query->whereNull('dispatched_at')
                     ->orWhere('dispatched_at', '<=', now()->subMinutes(10));
@@ -82,5 +102,17 @@ final class AuthorityReviewAnalysisOutboxService
         }
 
         return true;
+    }
+
+    public function recover(int $eventId): bool
+    {
+        return AuthorityReviewAnalysisOutbox::query()->whereKey($eventId)->update([
+            'processing_attempts' => 0,
+            'next_attempt_at' => null,
+            'terminal_at' => null,
+            'last_error' => null,
+            'failure_context' => null,
+            'dispatched_at' => null,
+        ]) === 1;
     }
 }
