@@ -64,6 +64,9 @@
                                     {{ count($c->posiblesPepsArray()) }} posibles PEPs
                                 </span>
                             @endif
+                            @if(!empty($c->autoridades_eventos_json['events'] ?? []))
+                                <span class="simo-badge bg-indigo-50 text-indigo-700">{{ count($c->autoridades_eventos_json['events']) }} cambio{{ count($c->autoridades_eventos_json['events']) > 1 ? 's' : '' }} estructurado{{ count($c->autoridades_eventos_json['events']) > 1 ? 's' : '' }}</span>
+                            @endif
                             {{-- MAE Badge if Gemini detected it --}}
                             @if(($c->gemini_analisis_json['es_mae'] ?? false))
                                 <span class="simo-badge bg-red-100 text-red-700 border-red-200">MAE</span>
@@ -95,6 +98,21 @@
                                 <div class="flex flex-wrap gap-1.5">
                                     @foreach($this->cambioDetalle->posiblesPepsArray() as $pep)
                                         <span class="simo-badge bg-violet-100 text-violet-800">{{ $pep }}</span>
+                                    @endforeach
+                                </div>
+                            </div>
+                        @endif
+                        @if(!empty($this->cambioDetalle->autoridades_eventos_json['events'] ?? []))
+                            <div class="px-5 py-3 bg-indigo-50/60 border-b border-indigo-100">
+                                <p class="text-xs font-semibold text-indigo-700 mb-2">Cambios estructurados de autoridades</p>
+                                <div class="space-y-2 text-xs">
+                                    @foreach($this->cambioDetalle->autoridades_eventos_json['events'] as $event)
+                                        <div wire:key="authority-event-{{ $loop->index }}" class="rounded bg-white px-3 py-2 border border-indigo-100">
+                                            <span class="font-semibold text-indigo-700">{{ str_replace('_', ' ', $event['type'] ?? 'cambio') }}</span>
+                                            @if($event['old'] ?? null)<span class="text-rose-700"> {{ $event['old']['cargo'] }}: {{ $event['old']['persona'] }}</span>@endif
+                                            @if(($event['old'] ?? null) && ($event['new'] ?? null))<span class="text-gray-400"> → </span>@endif
+                                            @if($event['new'] ?? null)<span class="text-emerald-700">{{ $event['new']['cargo'] }}: {{ $event['new']['persona'] }}</span>@endif
+                                        </div>
                                     @endforeach
                                 </div>
                             </div>

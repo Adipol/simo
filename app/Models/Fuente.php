@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class Fuente extends Model
 {
     use HasFactory;
+
     protected $table = 'fuentes';
 
     // Solo tiene created_at, sin updated_at (compatible con el script Python)
@@ -19,7 +20,7 @@ class Fuente extends Model
 
     protected $fillable = [
         'url', 'nombre', 'pais', 'organismo', 'nivel', 'tipo',
-        'activo', 'selector_css', 'ultimo_check', 'analizar_imagenes',
+        'activo', 'selector_css', 'autoridades_extractor', 'ultimo_check', 'analizar_imagenes',
     ];
 
     protected $casts = [
@@ -42,6 +43,11 @@ class Fuente extends Model
     public function cambios(): HasMany
     {
         return $this->hasMany(Cambio::class, 'fuente_id');
+    }
+
+    public function revisionesRemocionAutoridades(): HasMany
+    {
+        return $this->hasMany(AuthorityRemovalReview::class, 'fuente_id');
     }
 
     public function ultimoSnapshot(): ?Snapshot

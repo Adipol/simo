@@ -228,4 +228,30 @@ class CambiosGeminiTest extends TestCase
             ->assertDontSee('Removido:')
             ->assertSee('Nuevo:');
     }
+
+    #[Test]
+    public function structured_authority_evidence_is_shown_in_diff_panel(): void
+    {
+        $user = $this->createUser();
+        $fuente = $this->createFuente();
+        $cambio = Cambio::create([
+            'fuente_id' => $fuente->id,
+            'fecha' => now(),
+            'hash_anterior' => 'abc123',
+            'hash_nuevo' => 'def456',
+            'autoridades_eventos_json' => ['version' => 1, 'events' => [[
+                'type' => 'reemplazo',
+                'old' => ['cargo' => 'Director Ejecutivo', 'persona' => 'José Álvarez'],
+                'new' => ['cargo' => 'Director Ejecutivo', 'persona' => 'Ana Pérez'],
+            ]]],
+        ]);
+
+        Livewire::actingAs($user)
+            ->test('pep.cambios')
+            ->call('toggleDiff', $cambio->id)
+            ->assertSee('Cambios estructurados de autoridades')
+            ->assertSee('reemplazo')
+            ->assertSee('José Álvarez')
+            ->assertSee('Ana Pérez');
+    }
 }

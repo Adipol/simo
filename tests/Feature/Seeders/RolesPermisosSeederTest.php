@@ -49,4 +49,13 @@ class RolesPermisosSeederTest extends TestCase
 
         $this->assertFalse($operador->hasPermissionTo(self::PERMISSION));
     }
+
+    public function test_authority_removal_permission_is_admin_only(): void
+    {
+        $this->seed(RolesPermisosSeeder::class);
+
+        $this->assertTrue(Role::findByName('admin')->hasPermissionTo('resolver remociones autoridades'));
+        $this->assertFalse(Role::findByName('supervisor')->hasPermissionTo('resolver remociones autoridades'));
+        $this->assertFalse(Role::findByName('operador')->hasPermissionTo('resolver remociones autoridades'));
+    }
 }

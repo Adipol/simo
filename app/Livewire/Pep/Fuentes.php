@@ -53,6 +53,8 @@ class Fuentes extends Component
 
     public string $selector_css = '';
 
+    public string $autoridades_extractor = '';
+
     public bool $analizar_imagenes = false;
 
     public function updatingBusqueda(): void
@@ -90,6 +92,7 @@ class Fuentes extends Component
             'tipo' => ['required', 'in:html,pdf,js'],
             'activo' => ['boolean'],
             'selector_css' => ['nullable', 'string', 'max:500'],
+            'autoridades_extractor' => ['nullable', 'in:divi_blurb'],
             'analizar_imagenes' => ['boolean'],
         ];
     }
@@ -109,9 +112,10 @@ class Fuentes extends Component
             $this->tipo = $f->tipo;
             $this->activo = $f->activo;
             $this->selector_css = $f->selector_css ?? '';
+            $this->autoridades_extractor = $f->autoridades_extractor ?? '';
             $this->analizar_imagenes = (bool) $f->analizar_imagenes;
         } else {
-            $this->url = $this->nombre = $this->pais = $this->organismo = $this->selector_css = '';
+            $this->url = $this->nombre = $this->pais = $this->organismo = $this->selector_css = $this->autoridades_extractor = '';
             $this->nivel = 'nacional';
             $this->tipo = 'html';
             $this->activo = true;

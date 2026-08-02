@@ -1,0 +1,551 @@
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from authorities import Authority, compare_authorities, extract_authorities
+from pep_monitor import DatabaseManager, PEPMonitor
+
+
+ASUSS_HTML = (Path(__file__).parent / "fixtures" / "asuss_autoridades.html").read_text(encoding="utf-8")
+COMPLETE_ASUSS_HTML = ASUSS_HTML.replace(
+    '  <div class="et_pb_blurb_container">\n    <h4>Sin persona</h4>\n  </div>\n',
+    "",
+)
+
+
+def test_divi_blurb_extracts_display_pairs_and_ignores_malformed_blocks() -> None:
+    authorities = extract_authorities(ASUSS_HTML, "divi_blurb")
+
+    assert [item.to_dict() for item in authorities] == [
+        {"cargo": "Director Ejecutivo", "persona": "Dr. José Álvarez"},
+        {"cargo": "Jefa de Auditoría", "persona": "María Quispe"},
+    ]
+
+
+def test_unconfigured_extractor_falls_back_to_no_structured_authorities() -> None:
+    assert extract_authorities(ASUSS_HTML, None) == []
+
+
+def test_monitor_initial_baseline_accepts_real_fixture_valid_roster() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    db.get_ultimo_snapshot.return_value = None
+    fuente = {
+        "id": 13, "url": "https://www.asuss.gob.bo/recursos-humanos/#autoridades",
+        "nombre": "ASUSS", "tipo": "html", "selector_css": ".entry-content",
+        "autoridades_extractor": "divi_blurb", "analizar_imagenes": False,
+    }
+
+    with patch.object(DatabaseManager, "__init__", return_value=None), \
+         patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+         patch.object(PEPMonitor, "_obtener_html_raw", return_value=(ASUSS_HTML, "html_estatico")), \
+         patch("pep_monitor.limpiar_html", return_value=(["contenido"], "html_estatico")):
+        monitor = PEPMonitor()
+        monitor.db = db
+        monitor.procesar_fuente(fuente)
+
+    assert [item.to_dict() for item in db.guardar_snapshot.call_args.args[4]] == [
+        {"cargo": "Director Ejecutivo", "persona": "Dr. José Álvarez"},
+        {"cargo": "Jefa de Auditoría", "persona": "María Quispe"},
+    ]
+
+
+def test_comparator_detects_replacement_with_normalized_titles_and_accents() -> None:
+    events = compare_authorities(
+        [Authority("Director Ejecutivo", "Dr. José Álvarez")],
+        [Authority("director ejecutivo", "Lic. Ana Perez")],
+    )
+
+    assert events == [{
+        "type": "reemplazo",
+        "old": {"cargo": "Director Ejecutivo", "persona": "Dr. José Álvarez"},
+        "new": {"cargo": "director ejecutivo", "persona": "Lic. Ana Perez"},
+    }]
+
+
+def test_comparator_detects_removal_and_designation() -> None:
+    removal = compare_authorities([Authority("Gerente", "Ana Pérez")], [])
+    designation = compare_authorities([], [Authority("Gerente", "Ana Pérez")])
+
+    assert removal[0]["type"] == "remocion"
+    assert designation[0]["type"] == "designacion"
+
+
+def test_comparator_detects_job_change_without_double_counting() -> None:
+    events = compare_authorities(
+        [Authority("Jefa de Auditoría", "María Quispe")],
+        [Authority("Directora Jurídica", "Maria Quispe")],
+    )
+
+    assert [event["type"] for event in events] == ["cambio_cargo"]
+
+
+def test_review_handoff_commits_atomically_and_returns_existing_terminal_status() -> None:
+    db = object.__new__(DatabaseManager)
+    db.connection = MagicMock(autocommit=True, closed=False)
+    db.cursor = MagicMock()
+    db.cursor.fetchone.side_effect = [None, {"estado": "rejected"}]
+
+    status = db.registrar_revision_remocion_autoridades(
+        fuente_id=13,
+        snapshot_base_id=22,
+        baseline=[{"cargo": "Director", "persona": "Ana"}, {"cargo": "Auditor", "persona": "Luis"}],
+        candidate=[{"cargo": "Director", "persona": "Ana"}],
+        proposed_events=[{"type": "remocion", "old": {"cargo": "Auditor", "persona": "Luis"}, "new": None}],
+        evidence={"version": 1},
+    )
+
+    assert status == "rejected"
+    db.connection.commit.assert_called_once()
+    db.connection.rollback.assert_not_called()
+    assert db.connection.autocommit is True
+
+
+def test_restored_roster_releases_terminal_fingerprint_for_later_recurrence() -> None:
+    args = (
+        13,
+        22,
+        [{"cargo": "Director", "persona": "Ana"}, {"cargo": "Auditor", "persona": "Luis"}],
+        [{"cargo": "Director", "persona": "Ana"}],
+        [{"type": "remocion"}],
+        {"version": 1},
+    )
+    for status in ("rejected", "confirmed", "superseded"):
+        db = object.__new__(DatabaseManager)
+        db.connection = MagicMock(autocommit=True, closed=False)
+        db.cursor = MagicMock()
+        db.cursor.fetchone.side_effect = [None, {"estado": status}, {"estado": "pending"}]
+
+        assert db.registrar_revision_remocion_autoridades(*args) == status
+        db.superseder_revisiones_remocion_autoridades(13)
+        assert db.registrar_revision_remocion_autoridades(*args) == "pending"
+
+        restoration_sql = db.cursor.execute.call_args_list[3].args[0]
+        assert "lifecycle_key = id" in restoration_sql
+        assert "lifecycle_key = 0" in db.cursor.execute.call_args_list[-2].args[0]
+
+
+def test_review_handoff_rolls_back_as_one_transaction() -> None:
+    db = object.__new__(DatabaseManager)
+    db.connection = MagicMock(autocommit=True, closed=False)
+    db.cursor = MagicMock()
+    db.cursor.execute.side_effect = RuntimeError("database unavailable")
+
+    try:
+        db.registrar_revision_remocion_autoridades(13, 22, [], [], [], {})
+        raise AssertionError("expected transaction failure")
+    except RuntimeError:
+        pass
+
+    db.connection.rollback.assert_called_once()
+    db.connection.commit.assert_not_called()
+    assert db.connection.autocommit is True
+
+
+def test_monitor_persists_structured_event_when_flat_text_is_unchanged() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    previous_html = COMPLETE_ASUSS_HTML
+    current_html = COMPLETE_ASUSS_HTML.replace("Dr. José Álvarez", "Lic. Ana Pérez")
+    fuente = {
+        "id": 13,
+        "url": "https://www.asuss.gob.bo/recursos-humanos/#autoridades",
+        "nombre": "ASUSS",
+        "tipo": "html",
+        "selector_css": ".entry-content",
+        "autoridades_extractor": "divi_blurb",
+        "analizar_imagenes": False,
+    }
+    db.get_ultimo_snapshot.return_value = {
+        "hash": "same-text-hash",
+        "texto": "contenido sin cambios",
+        "autoridades_json": [item.to_dict() for item in extract_authorities(previous_html, "divi_blurb")],
+    }
+    db.guardar_cambio.return_value = 936
+
+    call_order = []
+    db.guardar_snapshot.side_effect = lambda *args: call_order.append("snapshot")
+
+    with patch.object(DatabaseManager, "__init__", return_value=None), \
+         patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+         patch.object(PEPMonitor, "_obtener_html_raw", return_value=(current_html, "html_estatico")), \
+         patch("pep_monitor.limpiar_html", return_value=(["contenido sin cambios"], "html_estatico")), \
+         patch("pep_monitor.mostrar_alerta", side_effect=lambda *args: call_order.append("alert")) as alert, \
+         patch("pep_monitor.hashlib.sha256") as sha:
+        sha.return_value.hexdigest.return_value = "same-text-hash"
+        monitor = PEPMonitor()
+        monitor.db = db
+        monitor.procesar_fuente(fuente)
+
+    assert db.guardar_cambio.call_count == 1
+    kwargs = db.guardar_cambio.call_args.kwargs
+    assert kwargs["lineas_quitadas"] == 0
+    assert kwargs["lineas_nuevas"] == 0
+    assert kwargs["autoridades_eventos"][0]["type"] == "reemplazo"
+    assert kwargs["autoridades_eventos"][0]["new"]["persona"] == "Lic. Ana Pérez"
+    alert.assert_called_once()
+    assert call_order == ["alert", "snapshot"]
+    assert db.guardar_snapshot.call_args.args[4][0].persona == "Lic. Ana Pérez"
+
+
+def test_monitor_automatically_persists_removals_for_explicitly_empty_roster() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    fuente = {
+        "id": 13,
+        "url": "https://www.asuss.gob.bo/recursos-humanos/#autoridades",
+        "nombre": "ASUSS",
+        "tipo": "html",
+        "selector_css": ".entry-content",
+        "autoridades_extractor": "divi_blurb",
+        "analizar_imagenes": False,
+    }
+    db.get_ultimo_snapshot.return_value = {
+        "hash": "same-text-hash",
+        "texto": "contenido sin cambios",
+        "autoridades_json": [{"cargo": "Director Ejecutivo", "persona": "Dr. José Álvarez"}],
+    }
+    db.guardar_cambio.return_value = 937
+
+    with patch.object(DatabaseManager, "__init__", return_value=None), \
+         patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+         patch.object(PEPMonitor, "_obtener_html_raw", return_value=(
+             '<div class="entry-content"><p>Sin autoridades</p></div>', "html_estatico"
+         )), \
+         patch("pep_monitor.limpiar_html", return_value=(["contenido sin cambios"], "html_estatico")), \
+         patch("pep_monitor.hashlib.sha256") as sha:
+        sha.return_value.hexdigest.return_value = "same-text-hash"
+        monitor = PEPMonitor()
+        monitor.db = db
+        monitor.procesar_fuente(fuente)
+
+    assert db.guardar_cambio.call_args.kwargs["autoridades_eventos"][0]["type"] == "remocion"
+    assert db.guardar_snapshot.call_args.args[4] == []
+    db.registrar_revision_remocion_autoridades.assert_not_called()
+
+
+def test_monitor_preserves_baseline_when_configured_markup_no_longer_matches() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    fuente = {
+        "id": 13, "url": "https://www.asuss.gob.bo/recursos-humanos/#autoridades",
+        "nombre": "ASUSS", "tipo": "html", "selector_css": ".entry-content",
+        "autoridades_extractor": "divi_blurb", "analizar_imagenes": False,
+    }
+    previous = [{"cargo": "Director Ejecutivo", "persona": "Dr. José Álvarez"}]
+    db.get_ultimo_snapshot.return_value = {
+        "hash": "old-hash", "texto": "contenido anterior", "autoridades_json": previous,
+    }
+    db.guardar_cambio.return_value = 939
+    changed_markup = '<div class="entry-content"><article>Nuevo diseño</article></div>'
+
+    with patch.object(DatabaseManager, "__init__", return_value=None), \
+         patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+         patch.object(PEPMonitor, "_obtener_html_raw", return_value=(changed_markup, "html_estatico")), \
+         patch("pep_monitor.limpiar_html", return_value=(["contenido nuevo"], "html_estatico")), \
+         patch("pep_monitor.mostrar_alerta"), \
+         patch("pep_monitor.hashlib.sha256") as sha:
+        sha.return_value.hexdigest.return_value = "new-hash"
+        monitor = PEPMonitor()
+        monitor.db = db
+        monitor.procesar_fuente(fuente)
+
+    assert db.guardar_cambio.call_args.kwargs["autoridades_eventos"] == []
+    db.registrar_revision_remocion_autoridades.assert_not_called()
+    assert [item.to_dict() for item in db.guardar_snapshot.call_args.args[4]] == previous
+
+
+def test_monitor_defers_first_nonempty_roster_reduction() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    fuente = {
+        "id": 13, "url": "https://www.asuss.gob.bo/recursos-humanos/#autoridades",
+        "nombre": "ASUSS", "tipo": "html", "selector_css": ".entry-content",
+        "autoridades_extractor": "divi_blurb", "analizar_imagenes": False,
+    }
+    previous = [
+        {"cargo": "Director Ejecutivo", "persona": "Dr. José Álvarez"},
+        {"cargo": "Jefa de Auditoría", "persona": "María Quispe"},
+    ]
+    db.get_ultimo_snapshot.return_value = {
+        "hash": "same-hash", "texto": "contenido sin cambios", "autoridades_json": previous,
+    }
+    db.registrar_revision_remocion_autoridades.return_value = "pending"
+    db.guardar_cambio.return_value = 940
+    partial_html = COMPLETE_ASUSS_HTML.replace("<p>María Quispe</p>", "")
+
+    with patch.object(DatabaseManager, "__init__", return_value=None), \
+         patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+         patch.object(PEPMonitor, "_obtener_html_raw", return_value=(partial_html, "html_estatico")), \
+         patch("pep_monitor.limpiar_html", return_value=(["contenido sin cambios"], "html_estatico")), \
+         patch("pep_monitor.mostrar_alerta"), \
+         patch("pep_monitor.hashlib.sha256") as sha:
+        sha.return_value.hexdigest.return_value = "same-hash"
+        monitor = PEPMonitor()
+        monitor.db = db
+        monitor.procesar_fuente(fuente)
+
+    db.guardar_cambio.assert_not_called()
+    db.registrar_revision_remocion_autoridades.assert_called_once()
+    assert db.registrar_revision_remocion_autoridades.call_args.kwargs["proposed_events"][0]["type"] == "remocion"
+    payload = db.actualizar_autoridades_ultimo_snapshot.call_args.args[1]
+    assert [item.to_dict() for item in payload[:2]] == previous
+    assert payload[2]["_authority_roster"] == {
+        "version": 2,
+        "pending": [{"cargo": "Director Ejecutivo", "persona": "Dr. José Álvarez"}],
+    }
+
+
+def test_monitor_persists_simultaneous_text_change_while_reduction_is_pending() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    fuente = {
+        "id": 13, "url": "https://example.test/authorities", "nombre": "Example",
+        "tipo": "html", "selector_css": ".entry-content",
+        "autoridades_extractor": "divi_blurb", "analizar_imagenes": False,
+    }
+    previous = [
+        {"cargo": "Director Ejecutivo", "persona": "Dr. José Álvarez"},
+        {"cargo": "Jefa de Auditoría", "persona": "María Quispe"},
+    ]
+    db.get_ultimo_snapshot.return_value = {
+        "id": 22, "hash": "old-hash", "texto": "contenido anterior",
+        "autoridades_json": previous,
+    }
+    db.registrar_revision_remocion_autoridades.return_value = "pending"
+    db.guardar_cambio.return_value = 941
+    reduced_html = COMPLETE_ASUSS_HTML.replace(
+        '  <div class="et_pb_blurb_container">\n    <h4>Jefa de Auditoría</h4>\n    <p>María Quispe</p>\n  </div>\n', ""
+    )
+
+    with patch.object(DatabaseManager, "__init__", return_value=None), \
+         patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+         patch.object(PEPMonitor, "_obtener_html_raw", return_value=(reduced_html, "html_estatico")), \
+         patch("pep_monitor.limpiar_html", return_value=(["contenido nuevo"], "html_estatico")), \
+         patch("pep_monitor.calcular_diff", return_value={
+             "quitadas": ["contenido anterior"], "nuevas": ["contenido nuevo"],
+             "diff_texto": "- contenido anterior\n+ contenido nuevo", "posibles_peps": "",
+         }), \
+         patch("pep_monitor.mostrar_alerta"), \
+         patch("pep_monitor.hashlib.sha256") as sha:
+        sha.return_value.hexdigest.return_value = "new-hash"
+        monitor = PEPMonitor()
+        monitor.db = db
+        monitor.procesar_fuente(fuente)
+
+    kwargs = db.guardar_cambio.call_args.kwargs
+    assert kwargs["diff_texto"] == "- contenido anterior\n+ contenido nuevo"
+    assert kwargs["autoridades_eventos"] == []
+    payload = db.guardar_snapshot.call_args.args[4]
+    assert payload[-1]["_authority_roster"]["pending"] == [previous[0]]
+    assert db.registrar_fuente_run.call_args.kwargs["estado"] == "success"
+
+
+def test_monitor_suppresses_terminal_duplicate_and_removes_pending_marker() -> None:
+    for status in ("rejected", "confirmed", "superseded"):
+        db = MagicMock(spec=DatabaseManager)
+        fuente = {
+            "id": 13, "url": "https://example.test/authorities", "nombre": "Example",
+            "tipo": "html", "selector_css": ".entry-content",
+            "autoridades_extractor": "divi_blurb", "analizar_imagenes": False,
+        }
+        previous = [
+            {"cargo": "Director Ejecutivo", "persona": "Dr. José Álvarez"},
+            {"cargo": "Jefa de Auditoría", "persona": "María Quispe"},
+        ]
+        db.get_ultimo_snapshot.return_value = {
+            "id": 22,
+            "hash": "same-hash",
+            "texto": "same",
+            "autoridades_json": previous + [{
+                "_authority_roster": {"version": 2, "pending": [previous[0]]}
+            }],
+        }
+        db.registrar_revision_remocion_autoridades.return_value = status
+        reduced_html = COMPLETE_ASUSS_HTML.replace(
+            '  <div class="et_pb_blurb_container">\n    <h4>Jefa de Auditoría</h4>\n    <p>María Quispe</p>\n  </div>\n', ""
+        )
+
+        with patch.object(DatabaseManager, "__init__", return_value=None), \
+             patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+             patch.object(PEPMonitor, "_obtener_html_raw", return_value=(reduced_html, "html_estatico")), \
+             patch("pep_monitor.limpiar_html", return_value=(["same"], "html_estatico")), \
+             patch("pep_monitor.hashlib.sha256") as sha:
+            sha.return_value.hexdigest.return_value = "same-hash"
+            monitor = PEPMonitor()
+            monitor.db = db
+            monitor.procesar_fuente(fuente)
+
+        db.guardar_cambio.assert_not_called()
+        payload = db.actualizar_autoridades_ultimo_snapshot.call_args.args[1]
+        assert [item.to_dict() for item in payload] == previous, status
+        assert db.registrar_fuente_run.call_args.kwargs["estado"] == "no_change", status
+
+
+def test_monitor_keeps_repeated_identical_reduction_pending() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    fuente = {
+        "id": 13, "url": "https://www.asuss.gob.bo/recursos-humanos/#autoridades",
+        "nombre": "ASUSS", "tipo": "html", "selector_css": ".entry-content",
+        "autoridades_extractor": "divi_blurb", "analizar_imagenes": False,
+    }
+    previous = [
+        {"cargo": "Director Ejecutivo", "persona": "Dr. José Álvarez"},
+        {"cargo": "Jefa de Auditoría", "persona": "María Quispe"},
+    ]
+    reduced_html = COMPLETE_ASUSS_HTML.replace(
+        '  <div class="et_pb_blurb_container">\n    <h4>Jefa de Auditoría</h4>\n    <p>María Quispe</p>\n  </div>\n', ""
+    )
+    pending = [{"cargo": "Director Ejecutivo", "persona": "Dr. José Álvarez"}]
+    db.get_ultimo_snapshot.return_value = {
+        "hash": "same-text-hash", "texto": "contenido sin cambios",
+        "autoridades_json": previous + [{"_authority_roster": {"version": 2, "pending": pending}}],
+    }
+    db.registrar_revision_remocion_autoridades.return_value = "pending"
+    for _ in range(2):
+        db.reset_mock()
+        with patch.object(DatabaseManager, "__init__", return_value=None), \
+             patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+             patch.object(PEPMonitor, "_obtener_html_raw", return_value=(reduced_html, "html_estatico")), \
+             patch("pep_monitor.limpiar_html", return_value=(["contenido sin cambios"], "html_estatico")), \
+             patch("pep_monitor.hashlib.sha256") as sha:
+            sha.return_value.hexdigest.return_value = "same-text-hash"
+            monitor = PEPMonitor()
+            monitor.db = db
+            monitor.procesar_fuente(fuente)
+
+        db.guardar_cambio.assert_not_called()
+        db.registrar_revision_remocion_autoridades.assert_called_once()
+        db.guardar_snapshot.assert_not_called()
+        payload = db.actualizar_autoridades_ultimo_snapshot.call_args.args[1]
+        assert [item.to_dict() for item in payload[:2]] == previous
+        assert payload[2] == {"_authority_roster": {"version": 2, "pending": pending}}
+        assert db.registrar_fuente_run.call_args.kwargs["estado"] == "authority_review_pending"
+
+
+def test_monitor_replaces_pending_reduction_and_clears_it_on_full_roster() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    fuente = {
+        "id": 13, "url": "https://www.asuss.gob.bo/recursos-humanos/#autoridades",
+        "nombre": "ASUSS", "tipo": "html", "selector_css": ".entry-content",
+        "autoridades_extractor": "divi_blurb", "analizar_imagenes": False,
+    }
+    previous = [item.to_dict() for item in extract_authorities(COMPLETE_ASUSS_HTML, "divi_blurb")]
+    db.get_ultimo_snapshot.return_value = {
+        "hash": "same-text-hash", "texto": "contenido sin cambios",
+        "autoridades_json": previous + [{"_authority_roster": {"version": 2, "pending": [previous[0]]}}],
+    }
+    db.registrar_revision_remocion_autoridades.return_value = "pending"
+
+    def run(html: str) -> None:
+        db.reset_mock()
+        with patch.object(DatabaseManager, "__init__", return_value=None), \
+             patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+             patch.object(PEPMonitor, "_obtener_html_raw", return_value=(html, "html_estatico")), \
+             patch("pep_monitor.limpiar_html", return_value=(["contenido sin cambios"], "html_estatico")), \
+             patch("pep_monitor.hashlib.sha256") as sha:
+            sha.return_value.hexdigest.return_value = "same-text-hash"
+            monitor = PEPMonitor()
+            monitor.db = db
+            monitor.procesar_fuente(fuente)
+
+    different = COMPLETE_ASUSS_HTML.replace(
+        '  <div class="et_pb_blurb_container">\n    <h4>Director Ejecutivo</h4>\n    <p>Dr. José Álvarez</p>\n  </div>\n', ""
+    )
+    run(different)
+    db.guardar_cambio.assert_not_called()
+    assert db.actualizar_autoridades_ultimo_snapshot.call_args.args[1][-1]["_authority_roster"]["pending"] == [previous[1]]
+
+    run(COMPLETE_ASUSS_HTML)
+    db.guardar_cambio.assert_not_called()
+    assert [item.to_dict() for item in db.actualizar_autoridades_ultimo_snapshot.call_args.args[1]] == previous
+    db.superseder_revisiones_remocion_autoridades.assert_called_once_with(13)
+
+    expanded = COMPLETE_ASUSS_HTML.replace(
+        "</div>", '<div class="et_pb_blurb_container"><h4>Gerente</h4><p>Ana Pérez</p></div></div>', 1
+    )
+    run(expanded)
+    assert db.guardar_cambio.call_args.kwargs["autoridades_eventos"][0]["type"] == "designacion"
+    assert all(isinstance(item, Authority) for item in db.guardar_snapshot.call_args.args[4])
+
+
+def test_monitor_initializes_legacy_null_baseline_without_creating_cambio() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    fuente = {
+        "id": 13, "url": "https://www.asuss.gob.bo/recursos-humanos/#autoridades",
+        "nombre": "ASUSS", "tipo": "html", "selector_css": ".entry-content",
+        "autoridades_extractor": "divi_blurb", "analizar_imagenes": False,
+    }
+    db.get_ultimo_snapshot.return_value = {
+        "hash": "same-text-hash", "texto": "contenido sin cambios", "autoridades_json": None,
+    }
+
+    with patch.object(DatabaseManager, "__init__", return_value=None), \
+         patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+         patch.object(PEPMonitor, "_obtener_html_raw", return_value=(COMPLETE_ASUSS_HTML, "html_estatico")), \
+         patch("pep_monitor.limpiar_html", return_value=(["contenido sin cambios"], "html_estatico")), \
+         patch("pep_monitor.hashlib.sha256") as sha:
+        sha.return_value.hexdigest.return_value = "same-text-hash"
+        monitor = PEPMonitor()
+        monitor.db = db
+        monitor.procesar_fuente(fuente)
+
+    db.guardar_cambio.assert_not_called()
+    db.actualizar_autoridades_ultimo_snapshot.assert_called_once_with(
+        13, extract_authorities(COMPLETE_ASUSS_HTML, "divi_blurb")
+    )
+
+
+def test_monitor_treats_known_empty_baseline_as_designations() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    fuente = {
+        "id": 13, "url": "https://www.asuss.gob.bo/recursos-humanos/#autoridades",
+        "nombre": "ASUSS", "tipo": "html", "selector_css": ".entry-content",
+        "autoridades_extractor": "divi_blurb", "analizar_imagenes": False,
+    }
+    db.get_ultimo_snapshot.return_value = {
+        "hash": "same-text-hash", "texto": "contenido sin cambios", "autoridades_json": [],
+    }
+    db.guardar_cambio.return_value = 938
+
+    with patch.object(DatabaseManager, "__init__", return_value=None), \
+         patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+         patch.object(PEPMonitor, "_obtener_html_raw", return_value=(COMPLETE_ASUSS_HTML, "html_estatico")), \
+         patch("pep_monitor.limpiar_html", return_value=(["contenido sin cambios"], "html_estatico")), \
+         patch("pep_monitor.hashlib.sha256") as sha:
+        sha.return_value.hexdigest.return_value = "same-text-hash"
+        monitor = PEPMonitor()
+        monitor.db = db
+        monitor.procesar_fuente(fuente)
+
+    assert db.guardar_cambio.call_args.kwargs["autoridades_eventos"][0]["type"] == "designacion"
+
+
+def test_monitor_does_not_fabricate_removals_without_configured_extractor() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    fuente = {
+        "id": 13,
+        "url": "https://www.asuss.gob.bo/recursos-humanos/#autoridades",
+        "nombre": "ASUSS",
+        "tipo": "html",
+        "selector_css": ".entry-content",
+        "autoridades_extractor": None,
+        "analizar_imagenes": False,
+    }
+    db.get_ultimo_snapshot.return_value = {
+        "hash": "same-text-hash",
+        "texto": "contenido sin cambios",
+        "autoridades_json": [{"cargo": "Director Ejecutivo", "persona": "Dr. José Álvarez"}],
+    }
+
+    with patch.object(DatabaseManager, "__init__", return_value=None), \
+         patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+         patch.object(PEPMonitor, "_obtener_html_raw", return_value=("<p>sin autoridades</p>", "html_estatico")), \
+         patch("pep_monitor.limpiar_html", return_value=(["contenido sin cambios"], "html_estatico")), \
+         patch("pep_monitor.hashlib.sha256") as sha:
+        sha.return_value.hexdigest.return_value = "same-text-hash"
+        monitor = PEPMonitor()
+        monitor.db = db
+        monitor.procesar_fuente(fuente)
+
+    db.guardar_cambio.assert_not_called()
+    db.guardar_snapshot.assert_not_called()

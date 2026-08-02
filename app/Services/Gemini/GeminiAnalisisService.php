@@ -57,9 +57,10 @@ class GeminiAnalisisService
         try {
             $diff = $cambio->diff_texto ?? '';
 
-            // Guard anti-alucinación: si no hay diff de texto, NO llamamos a Gemini.
-            // Sin input concreto el modelo tiende a fabricar nombres y eventos.
-            if (trim($diff) === '') {
+            $autoridadesEventos = $cambio->autoridades_eventos_json;
+
+            // Sin diff ni hechos estructurados concretos el modelo tiende a fabricar nombres.
+            if (trim($diff) === '' && empty($autoridadesEventos['events'] ?? [])) {
                 $this->persistirAnalisis(
                     $cambio,
                     AnalisisCambioDTO::sinNovedad('Cambio sin diff de texto: no se analizó.'),
@@ -73,7 +74,7 @@ class GeminiAnalisisService
             $fuenteNombre = $fuente?->nombre ?? '';
             $organismoNombre = $fuente?->organismo ?? '';
 
-            $prompt = $this->builder->analisisCambio($diff, $fuenteNombre, $organismoNombre);
+            $prompt = $this->builder->analisisCambio($diff, $fuenteNombre, $organismoNombre, $autoridadesEventos);
 
             $model = config('services.gemini.pro_model');
 
@@ -91,6 +92,7 @@ class GeminiAnalisisService
     {
         try {
             $diff = $cambio->diff_texto ?? '';
+            $autoridadesEventos = $cambio->autoridades_eventos_json;
 
             $fuente = $cambio->fuente;
             $fuenteNombre = $fuente?->nombre ?? '';
@@ -100,7 +102,7 @@ class GeminiAnalisisService
 
             // Guard anti-alucinación: sin diff Y sin imágenes válidas no hay nada que analizar.
             // Llamar a Gemini con input vacío es la causa raíz de respuestas inventadas.
-            if (trim($diff) === '' && empty($imagenes)) {
+            if (trim($diff) === '' && empty($imagenes) && empty($autoridadesEventos['events'] ?? [])) {
                 $this->persistirAnalisis(
                     $cambio,
                     AnalisisCambioDTO::sinNovedad('Cambio sin diff ni imágenes válidas: no se analizó.'),
@@ -125,6 +127,7 @@ class GeminiAnalisisService
                 $fuenteNombre,
                 $organismoNombre,
                 count($imagenes),
+                $autoridadesEventos,
             );
 
             $visionModel = config('services.gemini.vision_model', config('services.gemini.pro_model'));

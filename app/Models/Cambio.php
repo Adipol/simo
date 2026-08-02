@@ -20,7 +20,7 @@ class Cambio extends Model
 
     protected $fillable = [
         'fuente_id', 'fecha', 'hash_anterior', 'hash_nuevo',
-        'lineas_quitadas', 'lineas_nuevas', 'diff_texto',
+        'lineas_quitadas', 'lineas_nuevas', 'diff_texto', 'autoridades_eventos_json',
         'posibles_peps', 'revisado', 'revisado_at',
         'gemini_analyzed', 'gemini_analyzed_at', 'gemini_analisis_json',
         'imagenes_cambio_json',
@@ -34,6 +34,7 @@ class Cambio extends Model
         'gemini_analyzed_at' => 'datetime',
         'gemini_analisis_json' => 'array',
         'imagenes_cambio_json' => 'array',
+        'autoridades_eventos_json' => 'array',
     ];
 
     public function fuente(): BelongsTo
@@ -89,6 +90,18 @@ class Cambio extends Model
         return match (DB::getDriverName()) {
             'pgsql' => "{$column}->>'$path'",
             'sqlite' => "json_extract({$column}, '$.{$path}')",
+            default => throw new \RuntimeException('Unsupported DB driver: '.DB::getDriverName()),
+        };
+    }
+
+    /**
+     * Returns a driver-aware expression for the versioned structured event list.
+     */
+    private function structuredEventsLength(): string
+    {
+        return match (DB::getDriverName()) {
+            'pgsql' => "jsonb_array_length(COALESCE(autoridades_eventos_json::jsonb->'events', '[]'::jsonb))",
+            'sqlite' => "json_array_length(COALESCE(json_extract(autoridades_eventos_json, '$.events'), '[]'))",
             default => throw new \RuntimeException('Unsupported DB driver: '.DB::getDriverName()),
         };
     }
@@ -181,10 +194,14 @@ class Cambio extends Model
                             ->orWhereRaw($this->jsonExtract('gemini_analisis_json', 'persona_removida').' IS NOT NULL');
                     });
             })->orWhere(function (Builder $scraperFallback): void {
-                // Rama 2 (fallback): Gemini aún no analizó Y scraper detectó posibles_peps.
+                // Rama 2 (fallback): Gemini aún no analizó y el scraper detectó
+                // una persona, ya sea por heurística de texto o por autoridad estructurada.
                 $scraperFallback->where('gemini_analyzed', false)
-                    ->whereNotNull('posibles_peps')
-                    ->where('posibles_peps', '!=', '');
+                    ->where(function (Builder $evidence): void {
+                        $evidence->whereNotNull('posibles_peps')
+                            ->where('posibles_peps', '!=', '')
+                            ->orWhereRaw($this->structuredEventsLength().' > 0');
+                    });
             });
         });
     }
