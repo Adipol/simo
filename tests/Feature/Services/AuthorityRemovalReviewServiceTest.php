@@ -6,8 +6,9 @@ namespace Tests\Feature\Services;
 
 use App\Enums\AuthorityRemovalReviewStatus;
 use App\Exceptions\AuthorityRemovalReviewStale;
-use App\Jobs\AnalizarCambioConPro;
+use App\Jobs\ProcessAuthorityReviewAnalysis;
 use App\Models\AuthorityRemovalReview;
+use App\Models\AuthorityReviewAnalysisOutbox;
 use App\Models\Cambio;
 use App\Models\Fuente;
 use App\Models\Snapshot;
@@ -38,8 +39,14 @@ final class AuthorityRemovalReviewServiceTest extends TestCase
         $this->assertDatabaseCount('cambios', 2);
         $this->assertDatabaseHas('cambios', ['id' => $resolved->cambio_confirmado_id]);
         $this->assertSame('simultaneous text change', $unrelatedCambio->fresh()->diff_texto);
-        Queue::assertPushed(AnalizarCambioConPro::class, 1);
+        Queue::assertPushed(ProcessAuthorityReviewAnalysis::class, 1);
         $this->assertNotNull($review->fresh()->analisis_despachado_at);
+        $this->assertDatabaseHas('authority_review_analysis_outbox', [
+            'authority_removal_review_id' => $review->id,
+            'cambio_id' => $resolved->cambio_confirmado_id,
+            'idempotency_key' => "authority-removal-review:{$review->id}:cambio:{$resolved->cambio_confirmado_id}",
+        ]);
+        $this->assertDatabaseCount('authority_review_analysis_outbox', 1);
     }
 
     public function test_confirm_retry_repairs_dispatch_after_queue_failure(): void
@@ -48,22 +55,19 @@ final class AuthorityRemovalReviewServiceTest extends TestCase
         $service = app(AuthorityRemovalReviewService::class);
         Queue::shouldReceive('connection')->once()->andThrow(new RuntimeException('Queue unavailable'));
 
-        try {
-            $service->confirm($review->id, $actor);
-            $this->fail('Expected queue dispatch failure.');
-        } catch (RuntimeException $exception) {
-            $this->assertSame('Queue unavailable', $exception->getMessage());
-        }
+        $service->confirm($review->id, $actor);
 
         $this->assertSame(AuthorityRemovalReviewStatus::Confirmed, $review->fresh()->estado);
         $this->assertNull($review->fresh()->analisis_despachado_at);
         $this->assertDatabaseCount('cambios', 2);
+        $this->assertDatabaseCount('authority_review_analysis_outbox', 1);
+        $this->assertNull(AuthorityReviewAnalysisOutbox::query()->firstOrFail()->dispatch_claim_token);
 
         Queue::fake();
-        $service->confirm($review->id, $actor);
+        $this->artisan('authority-reviews:dispatch-analysis-outbox')->assertSuccessful();
 
-        Queue::assertPushed(AnalizarCambioConPro::class, 1);
-        $this->assertNotNull($review->fresh()->analisis_despachado_at);
+        Queue::assertPushed(ProcessAuthorityReviewAnalysis::class, 1);
+        $this->assertNotNull(AuthorityReviewAnalysisOutbox::query()->firstOrFail()->dispatched_at);
         $this->assertDatabaseCount('cambios', 2);
     }
 
@@ -77,6 +81,7 @@ final class AuthorityRemovalReviewServiceTest extends TestCase
         $this->assertSame(AuthorityRemovalReviewStatus::Rejected, $resolved->estado);
         $this->assertSame($baseline, $snapshot->fresh()->autoridades_json);
         $this->assertDatabaseCount('cambios', 1);
+        $this->assertDatabaseCount('authority_review_analysis_outbox', 0);
         $this->assertSame('simultaneous text change', $unrelatedCambio->fresh()->diff_texto);
         Queue::assertNothingPushed();
     }
@@ -94,6 +99,7 @@ final class AuthorityRemovalReviewServiceTest extends TestCase
             $this->assertDatabaseCount('cambios', 1);
             $this->assertSame(AuthorityRemovalReviewStatus::Pending, $review->fresh()->estado);
             Queue::assertNothingPushed();
+            $this->assertDatabaseCount('authority_review_analysis_outbox', 0);
         }
     }
 

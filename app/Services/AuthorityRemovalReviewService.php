@@ -6,15 +6,21 @@ namespace App\Services;
 
 use App\Enums\AuthorityRemovalReviewStatus;
 use App\Exceptions\AuthorityRemovalReviewStale;
-use App\Jobs\AnalizarCambioConPro;
 use App\Models\AuthorityRemovalReview;
+use App\Models\AuthorityReviewAnalysisOutbox;
 use App\Models\Cambio;
 use App\Models\Snapshot;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 final class AuthorityRemovalReviewService
 {
+    public function __construct(
+        private readonly AuthorityReviewAnalysisOutboxService $outbox,
+    ) {}
+
     public function confirm(int $reviewId, User $actor, array $evidence = []): AuthorityRemovalReview
     {
         return DB::transaction(function () use ($reviewId, $actor, $evidence): AuthorityRemovalReview {
@@ -65,7 +71,15 @@ final class AuthorityRemovalReviewService
                 'cambio_confirmado_id' => $cambio->id,
             ]);
 
-            $this->dispatchAnalysisAfterCommit($review);
+            $outboxEvent = AuthorityReviewAnalysisOutbox::query()->firstOrCreate(
+                ['authority_removal_review_id' => $review->id],
+                [
+                    'cambio_id' => $cambio->id,
+                    'idempotency_key' => "authority-removal-review:{$review->id}:cambio:{$cambio->id}",
+                ],
+            );
+
+            $this->dispatchAnalysisAfterCommit($review, $outboxEvent);
 
             return $review->fresh(['fuente', 'decididoPor', 'cambioConfirmado']);
         });
@@ -126,18 +140,31 @@ final class AuthorityRemovalReviewService
         }
     }
 
-    private function dispatchAnalysisAfterCommit(AuthorityRemovalReview $review): void
+    private function dispatchAnalysisAfterCommit(AuthorityRemovalReview $review, ?AuthorityReviewAnalysisOutbox $event = null): void
     {
-        if ($review->analisis_despachado_at !== null) {
+        $event ??= AuthorityReviewAnalysisOutbox::query()
+            ->where('authority_removal_review_id', $review->id)
+            ->first();
+
+        if ($event === null || $event->processed_at !== null) {
             return;
         }
 
-        DB::afterCommit(static function () use ($review): void {
-            AnalizarCambioConPro::dispatch();
-            AuthorityRemovalReview::query()
-                ->whereKey($review->id)
-                ->whereNull('analisis_despachado_at')
-                ->update(['analisis_despachado_at' => now()]);
+        DB::afterCommit(function () use ($review, $event): void {
+            try {
+                if ($this->outbox->dispatch($event->id)) {
+                    AuthorityRemovalReview::query()
+                        ->whereKey($review->id)
+                        ->whereNull('analisis_despachado_at')
+                        ->update(['analisis_despachado_at' => now()]);
+                }
+            } catch (Throwable $exception) {
+                Log::warning('Authority review analysis remains pending in outbox.', [
+                    'outbox_event_id' => $event->id,
+                    'exception' => $exception::class,
+                    'message' => $exception->getMessage(),
+                ]);
+            }
         });
     }
 
