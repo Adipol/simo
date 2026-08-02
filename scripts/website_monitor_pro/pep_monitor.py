@@ -1719,8 +1719,9 @@ class PEPMonitor:
             autoridades_payload_cambio = autoridades_snapshot is not None and (
                 autoridades_snapshot != (snapshot_anterior.get("autoridades_json") or [])
             )
+            hay_cambio_imagen = bool(imgs_a_analizar)
 
-            if reduction_pending:
+            if reduction_pending and not hay_diff_texto and not hay_cambio_imagen:
                 if texto_cambio:
                     self.db.guardar_snapshot(
                         fuente_id, hash_nuevo, texto_nuevo, metodo, autoridades_snapshot
@@ -1732,8 +1733,6 @@ class PEPMonitor:
                 self.db.update_ultimo_check(fuente_id)
                 estado = "authority_review_pending" if review_status == "pending" else "no_change"
                 return
-
-            hay_cambio_imagen = bool(imgs_a_analizar)
 
             # Si no hay ningún cambio real → skip
             if not hay_diff_texto and not hay_cambio_imagen and not hay_cambio_autoridades:

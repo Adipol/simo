@@ -42,7 +42,7 @@ final class AuthorityRemovalReviewService
                 throw new AuthorityRemovalReviewStale('The trusted authority baseline or review fingerprint changed.');
             }
 
-            $cambio = Cambio::create([
+            $cambio = Cambio::withoutEvents(static fn (): Cambio => Cambio::create([
                 'fuente_id' => $review->fuente_id,
                 'hash_anterior' => $review->evidencia_json['baseline_hash'] ?? $snapshot->hash,
                 'hash_nuevo' => $review->evidencia_json['candidate_hash'] ?? $snapshot->hash,
@@ -54,7 +54,7 @@ final class AuthorityRemovalReviewService
                     'version' => 1,
                     'events' => $review->eventos_propuestos_json,
                 ],
-            ]);
+            ]));
 
             $snapshot->update(['autoridades_json' => $review->candidato_json]);
             $review->update([

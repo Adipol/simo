@@ -8,6 +8,7 @@ use App\Models\Cambio;
 use App\Models\Fuente;
 use App\Models\Snapshot;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 class StructuredAuthoritiesTest extends TestCase
@@ -16,6 +17,7 @@ class StructuredAuthoritiesTest extends TestCase
 
     public function test_asuss_source_is_configured_by_url_and_structured_json_is_cast(): void
     {
+        Queue::fake();
         $asuss = Fuente::factory()->create([
             'url' => 'https://www.asuss.gob.bo/recursos-humanos/#autoridades',
             'autoridades_extractor' => 'divi_blurb',

@@ -8,23 +8,24 @@ use App\Enums\AuthorityRemovalReviewStatus;
 use App\Exceptions\AuthorityRemovalReviewStale;
 use App\Jobs\AnalizarCambioConPro;
 use App\Models\AuthorityRemovalReview;
+use App\Models\Cambio;
 use App\Models\Fuente;
 use App\Models\Snapshot;
 use App\Models\User;
 use App\Services\AuthorityRemovalReviewService;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Illuminate\Support\Facades\Queue;
 use RuntimeException;
 use Tests\TestCase;
 
 final class AuthorityRemovalReviewServiceTest extends TestCase
 {
-    use RefreshDatabase;
+    use DatabaseMigrations;
 
     public function test_confirm_promotes_baseline_creates_one_cambio_and_dispatches_after_commit(): void
     {
         Queue::fake();
-        [$review, $snapshot, $actor] = $this->scenario();
+        [$review, $snapshot, $actor, , $unrelatedCambio] = $this->scenario();
         $service = app(AuthorityRemovalReviewService::class);
 
         $resolved = $service->confirm($review->id, $actor, ['reason' => 'verified']);
@@ -34,8 +35,9 @@ final class AuthorityRemovalReviewServiceTest extends TestCase
         $this->assertSame($actor->id, $resolved->decidido_por);
         $this->assertNotNull($resolved->decidido_at);
         $this->assertSame([['cargo' => 'Director', 'persona' => 'Ana']], $snapshot->fresh()->autoridades_json);
-        $this->assertDatabaseCount('cambios', 1);
+        $this->assertDatabaseCount('cambios', 2);
         $this->assertDatabaseHas('cambios', ['id' => $resolved->cambio_confirmado_id]);
+        $this->assertSame('simultaneous text change', $unrelatedCambio->fresh()->diff_texto);
         Queue::assertPushed(AnalizarCambioConPro::class, 1);
         $this->assertNotNull($review->fresh()->analisis_despachado_at);
     }
@@ -55,26 +57,27 @@ final class AuthorityRemovalReviewServiceTest extends TestCase
 
         $this->assertSame(AuthorityRemovalReviewStatus::Confirmed, $review->fresh()->estado);
         $this->assertNull($review->fresh()->analisis_despachado_at);
-        $this->assertDatabaseCount('cambios', 1);
+        $this->assertDatabaseCount('cambios', 2);
 
         Queue::fake();
         $service->confirm($review->id, $actor);
 
         Queue::assertPushed(AnalizarCambioConPro::class, 1);
         $this->assertNotNull($review->fresh()->analisis_despachado_at);
-        $this->assertDatabaseCount('cambios', 1);
+        $this->assertDatabaseCount('cambios', 2);
     }
 
     public function test_reject_preserves_baseline_and_creates_no_cambio(): void
     {
         Queue::fake();
-        [$review, $snapshot, $actor, $baseline] = $this->scenario();
+        [$review, $snapshot, $actor, $baseline, $unrelatedCambio] = $this->scenario();
 
         $resolved = app(AuthorityRemovalReviewService::class)->reject($review->id, $actor, ['reason' => 'source incomplete']);
 
         $this->assertSame(AuthorityRemovalReviewStatus::Rejected, $resolved->estado);
         $this->assertSame($baseline, $snapshot->fresh()->autoridades_json);
-        $this->assertDatabaseCount('cambios', 0);
+        $this->assertDatabaseCount('cambios', 1);
+        $this->assertSame('simultaneous text change', $unrelatedCambio->fresh()->diff_texto);
         Queue::assertNothingPushed();
     }
 
@@ -88,7 +91,7 @@ final class AuthorityRemovalReviewServiceTest extends TestCase
             app(AuthorityRemovalReviewService::class)->confirm($review->id, $actor);
             $this->fail('Expected stale review exception.');
         } catch (AuthorityRemovalReviewStale) {
-            $this->assertDatabaseCount('cambios', 0);
+            $this->assertDatabaseCount('cambios', 1);
             $this->assertSame(AuthorityRemovalReviewStatus::Pending, $review->fresh()->estado);
             Queue::assertNothingPushed();
         }
@@ -129,7 +132,13 @@ final class AuthorityRemovalReviewServiceTest extends TestCase
             'fingerprint' => AuthorityRemovalReviewService::fingerprint($fuente->id, $baseline, $candidate),
             'estado' => AuthorityRemovalReviewStatus::Pending,
         ]);
+        $unrelatedCambio = Cambio::withoutEvents(static fn (): Cambio => Cambio::create([
+            'fuente_id' => $fuente->id,
+            'hash_anterior' => str_repeat('a', 64),
+            'hash_nuevo' => str_repeat('b', 64),
+            'diff_texto' => 'simultaneous text change',
+        ]));
 
-        return [$review, $snapshot, $actor, $baseline];
+        return [$review, $snapshot, $actor, $baseline, $unrelatedCambio];
     }
 }

@@ -268,7 +268,7 @@ def test_monitor_defers_first_nonempty_roster_reduction() -> None:
         {"cargo": "Jefa de Auditoría", "persona": "María Quispe"},
     ]
     db.get_ultimo_snapshot.return_value = {
-        "hash": "old-hash", "texto": "contenido anterior", "autoridades_json": previous,
+        "hash": "same-hash", "texto": "contenido sin cambios", "autoridades_json": previous,
     }
     db.registrar_revision_remocion_autoridades.return_value = "pending"
     db.guardar_cambio.return_value = 940
@@ -277,10 +277,10 @@ def test_monitor_defers_first_nonempty_roster_reduction() -> None:
     with patch.object(DatabaseManager, "__init__", return_value=None), \
          patch("pep_monitor.create_http_session", return_value=MagicMock()), \
          patch.object(PEPMonitor, "_obtener_html_raw", return_value=(partial_html, "html_estatico")), \
-         patch("pep_monitor.limpiar_html", return_value=(["contenido nuevo"], "html_estatico")), \
+         patch("pep_monitor.limpiar_html", return_value=(["contenido sin cambios"], "html_estatico")), \
          patch("pep_monitor.mostrar_alerta"), \
          patch("pep_monitor.hashlib.sha256") as sha:
-        sha.return_value.hexdigest.return_value = "new-hash"
+        sha.return_value.hexdigest.return_value = "same-hash"
         monitor = PEPMonitor()
         monitor.db = db
         monitor.procesar_fuente(fuente)
@@ -288,12 +288,56 @@ def test_monitor_defers_first_nonempty_roster_reduction() -> None:
     db.guardar_cambio.assert_not_called()
     db.registrar_revision_remocion_autoridades.assert_called_once()
     assert db.registrar_revision_remocion_autoridades.call_args.kwargs["proposed_events"][0]["type"] == "remocion"
-    payload = db.guardar_snapshot.call_args.args[4]
+    payload = db.actualizar_autoridades_ultimo_snapshot.call_args.args[1]
     assert [item.to_dict() for item in payload[:2]] == previous
     assert payload[2]["_authority_roster"] == {
         "version": 2,
         "pending": [{"cargo": "Director Ejecutivo", "persona": "Dr. José Álvarez"}],
     }
+
+
+def test_monitor_persists_simultaneous_text_change_while_reduction_is_pending() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    fuente = {
+        "id": 13, "url": "https://example.test/authorities", "nombre": "Example",
+        "tipo": "html", "selector_css": ".entry-content",
+        "autoridades_extractor": "divi_blurb", "analizar_imagenes": False,
+    }
+    previous = [
+        {"cargo": "Director Ejecutivo", "persona": "Dr. José Álvarez"},
+        {"cargo": "Jefa de Auditoría", "persona": "María Quispe"},
+    ]
+    db.get_ultimo_snapshot.return_value = {
+        "id": 22, "hash": "old-hash", "texto": "contenido anterior",
+        "autoridades_json": previous,
+    }
+    db.registrar_revision_remocion_autoridades.return_value = "pending"
+    db.guardar_cambio.return_value = 941
+    reduced_html = COMPLETE_ASUSS_HTML.replace(
+        '  <div class="et_pb_blurb_container">\n    <h4>Jefa de Auditoría</h4>\n    <p>María Quispe</p>\n  </div>\n', ""
+    )
+
+    with patch.object(DatabaseManager, "__init__", return_value=None), \
+         patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+         patch.object(PEPMonitor, "_obtener_html_raw", return_value=(reduced_html, "html_estatico")), \
+         patch("pep_monitor.limpiar_html", return_value=(["contenido nuevo"], "html_estatico")), \
+         patch("pep_monitor.calcular_diff", return_value={
+             "quitadas": ["contenido anterior"], "nuevas": ["contenido nuevo"],
+             "diff_texto": "- contenido anterior\n+ contenido nuevo", "posibles_peps": "",
+         }), \
+         patch("pep_monitor.mostrar_alerta"), \
+         patch("pep_monitor.hashlib.sha256") as sha:
+        sha.return_value.hexdigest.return_value = "new-hash"
+        monitor = PEPMonitor()
+        monitor.db = db
+        monitor.procesar_fuente(fuente)
+
+    kwargs = db.guardar_cambio.call_args.kwargs
+    assert kwargs["diff_texto"] == "- contenido anterior\n+ contenido nuevo"
+    assert kwargs["autoridades_eventos"] == []
+    payload = db.guardar_snapshot.call_args.args[4]
+    assert payload[-1]["_authority_roster"]["pending"] == [previous[0]]
+    assert db.registrar_fuente_run.call_args.kwargs["estado"] == "success"
 
 
 def test_monitor_suppresses_terminal_duplicate_and_removes_pending_marker() -> None:
