@@ -229,7 +229,7 @@ def test_monitor_defers_first_nonempty_roster_reduction() -> None:
     }
 
 
-def test_monitor_confirms_only_same_reduced_roster_on_next_run() -> None:
+def test_monitor_keeps_repeated_identical_reduction_pending() -> None:
     db = MagicMock(spec=DatabaseManager)
     fuente = {
         "id": 13, "url": "https://www.asuss.gob.bo/recursos-humanos/#autoridades",
@@ -248,20 +248,23 @@ def test_monitor_confirms_only_same_reduced_roster_on_next_run() -> None:
         "hash": "same-text-hash", "texto": "contenido sin cambios",
         "autoridades_json": previous + [{"_authority_roster": {"version": 2, "pending": pending}}],
     }
-    db.guardar_cambio.return_value = 941
+    for _ in range(2):
+        db.reset_mock()
+        with patch.object(DatabaseManager, "__init__", return_value=None), \
+             patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+             patch.object(PEPMonitor, "_obtener_html_raw", return_value=(reduced_html, "html_estatico")), \
+             patch("pep_monitor.limpiar_html", return_value=(["contenido sin cambios"], "html_estatico")), \
+             patch("pep_monitor.hashlib.sha256") as sha:
+            sha.return_value.hexdigest.return_value = "same-text-hash"
+            monitor = PEPMonitor()
+            monitor.db = db
+            monitor.procesar_fuente(fuente)
 
-    with patch.object(DatabaseManager, "__init__", return_value=None), \
-         patch("pep_monitor.create_http_session", return_value=MagicMock()), \
-         patch.object(PEPMonitor, "_obtener_html_raw", return_value=(reduced_html, "html_estatico")), \
-         patch("pep_monitor.limpiar_html", return_value=(["contenido sin cambios"], "html_estatico")), \
-         patch("pep_monitor.hashlib.sha256") as sha:
-        sha.return_value.hexdigest.return_value = "same-text-hash"
-        monitor = PEPMonitor()
-        monitor.db = db
-        monitor.procesar_fuente(fuente)
-
-    assert [event["type"] for event in db.guardar_cambio.call_args.kwargs["autoridades_eventos"]] == ["remocion"]
-    assert [item.to_dict() for item in db.guardar_snapshot.call_args.args[4]] == pending
+        db.guardar_cambio.assert_not_called()
+        db.guardar_snapshot.assert_not_called()
+        payload = db.actualizar_autoridades_ultimo_snapshot.call_args.args[1]
+        assert [item.to_dict() for item in payload[:2]] == previous
+        assert payload[2] == {"_authority_roster": {"version": 2, "pending": pending}}
 
 
 def test_monitor_replaces_pending_reduction_and_clears_it_on_full_roster() -> None:

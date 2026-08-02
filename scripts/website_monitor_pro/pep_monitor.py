@@ -1589,19 +1589,10 @@ class PEPMonitor:
                 for item in (snapshot_anterior.get("autoridades_json") or [])
                 if isinstance(item, dict) and item.get("cargo") and item.get("persona")
             ]
-            pending = next((
-                item["_authority_roster"]["pending"]
-                for item in (snapshot_anterior.get("autoridades_json") or [])
-                if isinstance(item, dict)
-                and isinstance(item.get("_authority_roster"), dict)
-                and item["_authority_roster"].get("version") == 2
-            ), None)
-            pending_matches = pending == [item.to_dict() for item in autoridades_actuales]
             reduction_pending = (
                 extraccion_autoridades_completa
                 and bool(autoridades_actuales)
                 and len(autoridades_actuales) < len(autoridades_anteriores)
-                and not pending_matches
             )
             eventos_autoridades = compare_authorities(autoridades_anteriores, autoridades_actuales) \
                 if tiene_linea_base_autoridades and extraccion_autoridades_completa and not reduction_pending else []
