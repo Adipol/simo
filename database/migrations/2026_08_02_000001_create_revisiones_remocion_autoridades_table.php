@@ -22,6 +22,7 @@ return new class extends Migration
             $table->json('eventos_propuestos_json');
             $table->json('evidencia_json');
             $table->string('fingerprint', 64);
+            $table->unsignedBigInteger('lifecycle_key')->default(0);
             $table->string('estado', 20)->default('pending');
             $table->foreignId('decidido_por')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamp('decidido_at')->nullable();
@@ -30,7 +31,7 @@ return new class extends Migration
             $table->timestamp('analisis_despachado_at')->nullable();
             $table->timestamps();
 
-            $table->unique(['fuente_id', 'fingerprint']);
+            $table->unique(['fuente_id', 'fingerprint', 'lifecycle_key'], 'revision_remocion_fingerprint_lifecycle_unique');
             $table->index(['estado', 'created_at']);
             $table->index(['origen', 'estado']);
         });
