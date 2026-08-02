@@ -15,7 +15,7 @@ final class AuthorityRemovalReview extends Model
     protected $fillable = [
         'fuente_id', 'snapshot_base_id', 'snapshot_observado_id', 'origen', 'version_esquema',
         'linea_base_json', 'candidato_json', 'eventos_propuestos_json', 'evidencia_json',
-        'fingerprint', 'estado', 'decidido_por', 'decidido_at', 'evidencia_decision_json',
+        'fingerprint', 'lifecycle_key', 'estado', 'decidido_por', 'decidido_at', 'evidencia_decision_json',
         'cambio_confirmado_id', 'analisis_despachado_at',
     ];
 
@@ -23,6 +23,7 @@ final class AuthorityRemovalReview extends Model
     {
         return [
             'estado' => AuthorityRemovalReviewStatus::class,
+            'lifecycle_key' => 'integer',
             'linea_base_json' => 'array',
             'candidato_json' => 'array',
             'eventos_propuestos_json' => 'array',

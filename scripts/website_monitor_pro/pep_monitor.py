@@ -350,16 +350,17 @@ class DatabaseManager:
             self.cursor.execute(
                 """UPDATE revisiones_remocion_autoridades
                    SET estado = 'superseded', updated_at = NOW()
-                   WHERE fuente_id = %s AND estado = 'pending' AND fingerprint <> %s""",
+                   WHERE fuente_id = %s AND estado = 'pending'
+                     AND lifecycle_key = 0 AND fingerprint <> %s""",
                 (fuente_id, fingerprint),
             )
             self.cursor.execute(
                 """INSERT INTO revisiones_remocion_autoridades
                    (fuente_id, snapshot_base_id, origen, version_esquema,
                     linea_base_json, candidato_json, eventos_propuestos_json,
-                    evidencia_json, fingerprint, estado, created_at, updated_at)
-                   VALUES (%s, %s, 'pep_monitor', 1, %s, %s, %s, %s, %s, 'pending', NOW(), NOW())
-                   ON CONFLICT (fuente_id, fingerprint) DO UPDATE
+                     evidencia_json, fingerprint, lifecycle_key, estado, created_at, updated_at)
+                    VALUES (%s, %s, 'pep_monitor', 1, %s, %s, %s, %s, %s, 0, 'pending', NOW(), NOW())
+                    ON CONFLICT (fuente_id, fingerprint, lifecycle_key) DO UPDATE
                    SET evidencia_json = EXCLUDED.evidencia_json,
                        updated_at = NOW()
                    WHERE revisiones_remocion_autoridades.estado = 'pending'
@@ -378,7 +379,7 @@ class DatabaseManager:
             if row is None:
                 self.cursor.execute(
                     """SELECT estado FROM revisiones_remocion_autoridades
-                       WHERE fuente_id = %s AND fingerprint = %s""",
+                        WHERE fuente_id = %s AND fingerprint = %s AND lifecycle_key = 0""",
                     (fuente_id, fingerprint),
                 )
                 row = self.cursor.fetchone()
@@ -394,8 +395,10 @@ class DatabaseManager:
         self._ensure_connection()
         self.cursor.execute(
             """UPDATE revisiones_remocion_autoridades
-               SET estado = 'superseded', updated_at = NOW()
-               WHERE fuente_id = %s AND estado = 'pending'""",
+               SET estado = CASE WHEN estado = 'pending' THEN 'superseded' ELSE estado END,
+                   lifecycle_key = id,
+                   updated_at = NOW()
+               WHERE fuente_id = %s AND lifecycle_key = 0""",
             (fuente_id,),
         )
 

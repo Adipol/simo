@@ -105,6 +105,30 @@ def test_review_handoff_commits_atomically_and_returns_existing_terminal_status(
     assert db.connection.autocommit is True
 
 
+def test_restored_roster_releases_terminal_fingerprint_for_later_recurrence() -> None:
+    args = (
+        13,
+        22,
+        [{"cargo": "Director", "persona": "Ana"}, {"cargo": "Auditor", "persona": "Luis"}],
+        [{"cargo": "Director", "persona": "Ana"}],
+        [{"type": "remocion"}],
+        {"version": 1},
+    )
+    for status in ("rejected", "confirmed", "superseded"):
+        db = object.__new__(DatabaseManager)
+        db.connection = MagicMock(autocommit=True, closed=False)
+        db.cursor = MagicMock()
+        db.cursor.fetchone.side_effect = [None, {"estado": status}, {"estado": "pending"}]
+
+        assert db.registrar_revision_remocion_autoridades(*args) == status
+        db.superseder_revisiones_remocion_autoridades(13)
+        assert db.registrar_revision_remocion_autoridades(*args) == "pending"
+
+        restoration_sql = db.cursor.execute.call_args_list[3].args[0]
+        assert "lifecycle_key = id" in restoration_sql
+        assert "lifecycle_key = 0" in db.cursor.execute.call_args_list[-2].args[0]
+
+
 def test_review_handoff_rolls_back_as_one_transaction() -> None:
     db = object.__new__(DatabaseManager)
     db.connection = MagicMock(autocommit=True, closed=False)
@@ -167,7 +191,7 @@ def test_monitor_persists_structured_event_when_flat_text_is_unchanged() -> None
     assert db.guardar_snapshot.call_args.args[4][0].persona == "Lic. Ana Pérez"
 
 
-def test_monitor_persists_removals_for_explicitly_empty_roster() -> None:
+def test_monitor_automatically_persists_removals_for_explicitly_empty_roster() -> None:
     db = MagicMock(spec=DatabaseManager)
     fuente = {
         "id": 13,
@@ -199,6 +223,7 @@ def test_monitor_persists_removals_for_explicitly_empty_roster() -> None:
 
     assert db.guardar_cambio.call_args.kwargs["autoridades_eventos"][0]["type"] == "remocion"
     assert db.guardar_snapshot.call_args.args[4] == []
+    db.registrar_revision_remocion_autoridades.assert_not_called()
 
 
 def test_monitor_preserves_baseline_when_configured_markup_no_longer_matches() -> None:
