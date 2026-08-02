@@ -221,7 +221,9 @@ class DatabaseManager:
     def _verify_tables(self) -> None:
         """Verifica que las tablas necesarias existen (creadas por Laravel migrations)."""
         self._ensure_connection()
-        tablas_requeridas = ["fuentes", "snapshots", "cambios"]
+        tablas_requeridas = [
+            "fuentes", "snapshots", "cambios", "revisiones_remocion_autoridades"
+        ]
         faltantes = []
 
         self.cursor.execute("""
@@ -314,11 +316,88 @@ class DatabaseManager:
         """Obtiene el snapshot mas reciente de una fuente."""
         self._ensure_connection()
         self.cursor.execute(
-            """SELECT hash, texto, fecha, autoridades_json FROM snapshots
+            """SELECT id, hash, texto, fecha, autoridades_json FROM snapshots
                WHERE fuente_id = %s ORDER BY fecha DESC LIMIT 1""",
             (fuente_id,),
         )
         return self.cursor.fetchone()
+
+    def registrar_revision_remocion_autoridades(
+        self,
+        fuente_id: int,
+        snapshot_base_id: Optional[int],
+        baseline: list[dict],
+        candidate: list[dict],
+        proposed_events: list[dict],
+        evidence: dict,
+    ) -> str:
+        """Create or refresh one review while suppressing terminal duplicates."""
+        self._ensure_connection()
+        payload = {
+            "version": 1,
+            "fuente_id": fuente_id,
+            "baseline": baseline,
+            "candidate": candidate,
+        }
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            ).encode("utf-8")
+        ).hexdigest()
+        previous_autocommit = self.connection.autocommit
+        try:
+            self.connection.autocommit = False
+            self.cursor.execute(
+                """UPDATE revisiones_remocion_autoridades
+                   SET estado = 'superseded', updated_at = NOW()
+                   WHERE fuente_id = %s AND estado = 'pending' AND fingerprint <> %s""",
+                (fuente_id, fingerprint),
+            )
+            self.cursor.execute(
+                """INSERT INTO revisiones_remocion_autoridades
+                   (fuente_id, snapshot_base_id, origen, version_esquema,
+                    linea_base_json, candidato_json, eventos_propuestos_json,
+                    evidencia_json, fingerprint, estado, created_at, updated_at)
+                   VALUES (%s, %s, 'pep_monitor', 1, %s, %s, %s, %s, %s, 'pending', NOW(), NOW())
+                   ON CONFLICT (fuente_id, fingerprint) DO UPDATE
+                   SET evidencia_json = EXCLUDED.evidencia_json,
+                       updated_at = NOW()
+                   WHERE revisiones_remocion_autoridades.estado = 'pending'
+                   RETURNING estado""",
+                (
+                    fuente_id,
+                    snapshot_base_id,
+                    json.dumps(baseline, ensure_ascii=False),
+                    json.dumps(candidate, ensure_ascii=False),
+                    json.dumps(proposed_events, ensure_ascii=False),
+                    json.dumps(evidence, ensure_ascii=False),
+                    fingerprint,
+                ),
+            )
+            row = self.cursor.fetchone()
+            if row is None:
+                self.cursor.execute(
+                    """SELECT estado FROM revisiones_remocion_autoridades
+                       WHERE fuente_id = %s AND fingerprint = %s""",
+                    (fuente_id, fingerprint),
+                )
+                row = self.cursor.fetchone()
+            self.connection.commit()
+            return row["estado"]
+        except Exception:
+            self.connection.rollback()
+            raise
+        finally:
+            self.connection.autocommit = previous_autocommit
+
+    def superseder_revisiones_remocion_autoridades(self, fuente_id: int) -> None:
+        self._ensure_connection()
+        self.cursor.execute(
+            """UPDATE revisiones_remocion_autoridades
+               SET estado = 'superseded', updated_at = NOW()
+               WHERE fuente_id = %s AND estado = 'pending'""",
+            (fuente_id,),
+        )
 
     def guardar_snapshot(
         self,
@@ -1594,22 +1673,62 @@ class PEPMonitor:
                 and bool(autoridades_actuales)
                 and len(autoridades_actuales) < len(autoridades_anteriores)
             )
+            baseline_autoridades = [item.to_dict() for item in autoridades_anteriores]
+            candidate_autoridades = [item.to_dict() for item in autoridades_actuales]
+            review_status = None
+            if reduction_pending:
+                proposed_events = compare_authorities(
+                    autoridades_anteriores, autoridades_actuales
+                )
+                review_status = self.db.registrar_revision_remocion_autoridades(
+                    fuente_id=fuente_id,
+                    snapshot_base_id=snapshot_anterior.get("id"),
+                    baseline=baseline_autoridades,
+                    candidate=candidate_autoridades,
+                    proposed_events=proposed_events,
+                    evidence={
+                        "version": 1,
+                        "source_url": url,
+                        "baseline_hash": snapshot_anterior["hash"],
+                        "candidate_hash": hash_nuevo,
+                        "observed_at": datetime.now(timezone.utc).isoformat(),
+                        "extractor": fuente.get("autoridades_extractor"),
+                    },
+                )
+            elif extraccion_autoridades_completa:
+                self.db.superseder_revisiones_remocion_autoridades(fuente_id)
             eventos_autoridades = compare_authorities(autoridades_anteriores, autoridades_actuales) \
                 if tiene_linea_base_autoridades and extraccion_autoridades_completa and not reduction_pending else []
             hay_cambio_autoridades = bool(eventos_autoridades)
             if reduction_pending:
-                autoridades_snapshot = autoridades_anteriores + [{
-                    "_authority_roster": {
-                        "version": 2,
-                        "pending": [item.to_dict() for item in autoridades_actuales],
-                    }
-                }]
+                if review_status != "pending":
+                    autoridades_snapshot = autoridades_anteriores
+                else:
+                    autoridades_snapshot = autoridades_anteriores + [{
+                        "_authority_roster": {
+                            "version": 2,
+                            "pending": [item.to_dict() for item in autoridades_actuales],
+                        }
+                    }]
             else:
                 autoridades_snapshot = autoridades_actuales if extraccion_autoridades_completa \
                     else (autoridades_anteriores if tiene_linea_base_autoridades else None)
             autoridades_payload_cambio = autoridades_snapshot is not None and (
                 autoridades_snapshot != (snapshot_anterior.get("autoridades_json") or [])
             )
+
+            if reduction_pending:
+                if texto_cambio:
+                    self.db.guardar_snapshot(
+                        fuente_id, hash_nuevo, texto_nuevo, metodo, autoridades_snapshot
+                    )
+                elif autoridades_payload_cambio:
+                    self.db.actualizar_autoridades_ultimo_snapshot(
+                        fuente_id, autoridades_snapshot
+                    )
+                self.db.update_ultimo_check(fuente_id)
+                estado = "authority_review_pending" if review_status == "pending" else "no_change"
+                return
 
             hay_cambio_imagen = bool(imgs_a_analizar)
 

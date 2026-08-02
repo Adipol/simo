@@ -84,6 +84,44 @@ def test_comparator_detects_job_change_without_double_counting() -> None:
     assert [event["type"] for event in events] == ["cambio_cargo"]
 
 
+def test_review_handoff_commits_atomically_and_returns_existing_terminal_status() -> None:
+    db = object.__new__(DatabaseManager)
+    db.connection = MagicMock(autocommit=True, closed=False)
+    db.cursor = MagicMock()
+    db.cursor.fetchone.side_effect = [None, {"estado": "rejected"}]
+
+    status = db.registrar_revision_remocion_autoridades(
+        fuente_id=13,
+        snapshot_base_id=22,
+        baseline=[{"cargo": "Director", "persona": "Ana"}, {"cargo": "Auditor", "persona": "Luis"}],
+        candidate=[{"cargo": "Director", "persona": "Ana"}],
+        proposed_events=[{"type": "remocion", "old": {"cargo": "Auditor", "persona": "Luis"}, "new": None}],
+        evidence={"version": 1},
+    )
+
+    assert status == "rejected"
+    db.connection.commit.assert_called_once()
+    db.connection.rollback.assert_not_called()
+    assert db.connection.autocommit is True
+
+
+def test_review_handoff_rolls_back_as_one_transaction() -> None:
+    db = object.__new__(DatabaseManager)
+    db.connection = MagicMock(autocommit=True, closed=False)
+    db.cursor = MagicMock()
+    db.cursor.execute.side_effect = RuntimeError("database unavailable")
+
+    try:
+        db.registrar_revision_remocion_autoridades(13, 22, [], [], [], {})
+        raise AssertionError("expected transaction failure")
+    except RuntimeError:
+        pass
+
+    db.connection.rollback.assert_called_once()
+    db.connection.commit.assert_not_called()
+    assert db.connection.autocommit is True
+
+
 def test_monitor_persists_structured_event_when_flat_text_is_unchanged() -> None:
     db = MagicMock(spec=DatabaseManager)
     previous_html = COMPLETE_ASUSS_HTML
@@ -189,6 +227,7 @@ def test_monitor_preserves_baseline_when_configured_markup_no_longer_matches() -
         monitor.procesar_fuente(fuente)
 
     assert db.guardar_cambio.call_args.kwargs["autoridades_eventos"] == []
+    db.registrar_revision_remocion_autoridades.assert_not_called()
     assert [item.to_dict() for item in db.guardar_snapshot.call_args.args[4]] == previous
 
 
@@ -206,6 +245,7 @@ def test_monitor_defers_first_nonempty_roster_reduction() -> None:
     db.get_ultimo_snapshot.return_value = {
         "hash": "old-hash", "texto": "contenido anterior", "autoridades_json": previous,
     }
+    db.registrar_revision_remocion_autoridades.return_value = "pending"
     db.guardar_cambio.return_value = 940
     partial_html = COMPLETE_ASUSS_HTML.replace("<p>María Quispe</p>", "")
 
@@ -220,13 +260,56 @@ def test_monitor_defers_first_nonempty_roster_reduction() -> None:
         monitor.db = db
         monitor.procesar_fuente(fuente)
 
-    assert db.guardar_cambio.call_args.kwargs["autoridades_eventos"] == []
+    db.guardar_cambio.assert_not_called()
+    db.registrar_revision_remocion_autoridades.assert_called_once()
+    assert db.registrar_revision_remocion_autoridades.call_args.kwargs["proposed_events"][0]["type"] == "remocion"
     payload = db.guardar_snapshot.call_args.args[4]
     assert [item.to_dict() for item in payload[:2]] == previous
     assert payload[2]["_authority_roster"] == {
         "version": 2,
         "pending": [{"cargo": "Director Ejecutivo", "persona": "Dr. José Álvarez"}],
     }
+
+
+def test_monitor_suppresses_terminal_duplicate_and_removes_pending_marker() -> None:
+    for status in ("rejected", "confirmed", "superseded"):
+        db = MagicMock(spec=DatabaseManager)
+        fuente = {
+            "id": 13, "url": "https://example.test/authorities", "nombre": "Example",
+            "tipo": "html", "selector_css": ".entry-content",
+            "autoridades_extractor": "divi_blurb", "analizar_imagenes": False,
+        }
+        previous = [
+            {"cargo": "Director Ejecutivo", "persona": "Dr. José Álvarez"},
+            {"cargo": "Jefa de Auditoría", "persona": "María Quispe"},
+        ]
+        db.get_ultimo_snapshot.return_value = {
+            "id": 22,
+            "hash": "same-hash",
+            "texto": "same",
+            "autoridades_json": previous + [{
+                "_authority_roster": {"version": 2, "pending": [previous[0]]}
+            }],
+        }
+        db.registrar_revision_remocion_autoridades.return_value = status
+        reduced_html = COMPLETE_ASUSS_HTML.replace(
+            '  <div class="et_pb_blurb_container">\n    <h4>Jefa de Auditoría</h4>\n    <p>María Quispe</p>\n  </div>\n', ""
+        )
+
+        with patch.object(DatabaseManager, "__init__", return_value=None), \
+             patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+             patch.object(PEPMonitor, "_obtener_html_raw", return_value=(reduced_html, "html_estatico")), \
+             patch("pep_monitor.limpiar_html", return_value=(["same"], "html_estatico")), \
+             patch("pep_monitor.hashlib.sha256") as sha:
+            sha.return_value.hexdigest.return_value = "same-hash"
+            monitor = PEPMonitor()
+            monitor.db = db
+            monitor.procesar_fuente(fuente)
+
+        db.guardar_cambio.assert_not_called()
+        payload = db.actualizar_autoridades_ultimo_snapshot.call_args.args[1]
+        assert [item.to_dict() for item in payload] == previous, status
+        assert db.registrar_fuente_run.call_args.kwargs["estado"] == "no_change", status
 
 
 def test_monitor_keeps_repeated_identical_reduction_pending() -> None:
@@ -248,6 +331,7 @@ def test_monitor_keeps_repeated_identical_reduction_pending() -> None:
         "hash": "same-text-hash", "texto": "contenido sin cambios",
         "autoridades_json": previous + [{"_authority_roster": {"version": 2, "pending": pending}}],
     }
+    db.registrar_revision_remocion_autoridades.return_value = "pending"
     for _ in range(2):
         db.reset_mock()
         with patch.object(DatabaseManager, "__init__", return_value=None), \
@@ -261,10 +345,12 @@ def test_monitor_keeps_repeated_identical_reduction_pending() -> None:
             monitor.procesar_fuente(fuente)
 
         db.guardar_cambio.assert_not_called()
+        db.registrar_revision_remocion_autoridades.assert_called_once()
         db.guardar_snapshot.assert_not_called()
         payload = db.actualizar_autoridades_ultimo_snapshot.call_args.args[1]
         assert [item.to_dict() for item in payload[:2]] == previous
         assert payload[2] == {"_authority_roster": {"version": 2, "pending": pending}}
+        assert db.registrar_fuente_run.call_args.kwargs["estado"] == "authority_review_pending"
 
 
 def test_monitor_replaces_pending_reduction_and_clears_it_on_full_roster() -> None:
@@ -279,6 +365,7 @@ def test_monitor_replaces_pending_reduction_and_clears_it_on_full_roster() -> No
         "hash": "same-text-hash", "texto": "contenido sin cambios",
         "autoridades_json": previous + [{"_authority_roster": {"version": 2, "pending": [previous[0]]}}],
     }
+    db.registrar_revision_remocion_autoridades.return_value = "pending"
 
     def run(html: str) -> None:
         db.reset_mock()
@@ -302,6 +389,7 @@ def test_monitor_replaces_pending_reduction_and_clears_it_on_full_roster() -> No
     run(COMPLETE_ASUSS_HTML)
     db.guardar_cambio.assert_not_called()
     assert [item.to_dict() for item in db.actualizar_autoridades_ultimo_snapshot.call_args.args[1]] == previous
+    db.superseder_revisiones_remocion_autoridades.assert_called_once_with(13)
 
     expanded = COMPLETE_ASUSS_HTML.replace(
         "</div>", '<div class="et_pb_blurb_container"><h4>Gerente</h4><p>Ana Pérez</p></div></div>', 1
