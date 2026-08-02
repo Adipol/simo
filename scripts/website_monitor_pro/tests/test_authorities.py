@@ -31,6 +31,29 @@ def test_unconfigured_extractor_falls_back_to_no_structured_authorities() -> Non
     assert extract_authorities(ASUSS_HTML, None) == []
 
 
+def test_monitor_initial_baseline_accepts_real_fixture_valid_roster() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    db.get_ultimo_snapshot.return_value = None
+    fuente = {
+        "id": 13, "url": "https://www.asuss.gob.bo/recursos-humanos/#autoridades",
+        "nombre": "ASUSS", "tipo": "html", "selector_css": ".entry-content",
+        "autoridades_extractor": "divi_blurb", "analizar_imagenes": False,
+    }
+
+    with patch.object(DatabaseManager, "__init__", return_value=None), \
+         patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+         patch.object(PEPMonitor, "_obtener_html_raw", return_value=(ASUSS_HTML, "html_estatico")), \
+         patch("pep_monitor.limpiar_html", return_value=(["contenido"], "html_estatico")):
+        monitor = PEPMonitor()
+        monitor.db = db
+        monitor.procesar_fuente(fuente)
+
+    assert [item.to_dict() for item in db.guardar_snapshot.call_args.args[4]] == [
+        {"cargo": "Director Ejecutivo", "persona": "Dr. José Álvarez"},
+        {"cargo": "Jefa de Auditoría", "persona": "María Quispe"},
+    ]
+
+
 def test_comparator_detects_replacement_with_normalized_titles_and_accents() -> None:
     events = compare_authorities(
         [Authority("Director Ejecutivo", "Dr. José Álvarez")],
@@ -169,7 +192,7 @@ def test_monitor_preserves_baseline_when_configured_markup_no_longer_matches() -
     assert [item.to_dict() for item in db.guardar_snapshot.call_args.args[4]] == previous
 
 
-def test_monitor_preserves_baseline_when_nonempty_extraction_is_partial() -> None:
+def test_monitor_defers_first_nonempty_roster_reduction() -> None:
     db = MagicMock(spec=DatabaseManager)
     fuente = {
         "id": 13, "url": "https://www.asuss.gob.bo/recursos-humanos/#autoridades",
@@ -198,7 +221,91 @@ def test_monitor_preserves_baseline_when_nonempty_extraction_is_partial() -> Non
         monitor.procesar_fuente(fuente)
 
     assert db.guardar_cambio.call_args.kwargs["autoridades_eventos"] == []
-    assert [item.to_dict() for item in db.guardar_snapshot.call_args.args[4]] == previous
+    payload = db.guardar_snapshot.call_args.args[4]
+    assert [item.to_dict() for item in payload[:2]] == previous
+    assert payload[2]["_authority_roster"] == {
+        "version": 2,
+        "pending": [{"cargo": "Director Ejecutivo", "persona": "Dr. José Álvarez"}],
+    }
+
+
+def test_monitor_confirms_only_same_reduced_roster_on_next_run() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    fuente = {
+        "id": 13, "url": "https://www.asuss.gob.bo/recursos-humanos/#autoridades",
+        "nombre": "ASUSS", "tipo": "html", "selector_css": ".entry-content",
+        "autoridades_extractor": "divi_blurb", "analizar_imagenes": False,
+    }
+    previous = [
+        {"cargo": "Director Ejecutivo", "persona": "Dr. José Álvarez"},
+        {"cargo": "Jefa de Auditoría", "persona": "María Quispe"},
+    ]
+    reduced_html = COMPLETE_ASUSS_HTML.replace(
+        '  <div class="et_pb_blurb_container">\n    <h4>Jefa de Auditoría</h4>\n    <p>María Quispe</p>\n  </div>\n', ""
+    )
+    pending = [{"cargo": "Director Ejecutivo", "persona": "Dr. José Álvarez"}]
+    db.get_ultimo_snapshot.return_value = {
+        "hash": "same-text-hash", "texto": "contenido sin cambios",
+        "autoridades_json": previous + [{"_authority_roster": {"version": 2, "pending": pending}}],
+    }
+    db.guardar_cambio.return_value = 941
+
+    with patch.object(DatabaseManager, "__init__", return_value=None), \
+         patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+         patch.object(PEPMonitor, "_obtener_html_raw", return_value=(reduced_html, "html_estatico")), \
+         patch("pep_monitor.limpiar_html", return_value=(["contenido sin cambios"], "html_estatico")), \
+         patch("pep_monitor.hashlib.sha256") as sha:
+        sha.return_value.hexdigest.return_value = "same-text-hash"
+        monitor = PEPMonitor()
+        monitor.db = db
+        monitor.procesar_fuente(fuente)
+
+    assert [event["type"] for event in db.guardar_cambio.call_args.kwargs["autoridades_eventos"]] == ["remocion"]
+    assert [item.to_dict() for item in db.guardar_snapshot.call_args.args[4]] == pending
+
+
+def test_monitor_replaces_pending_reduction_and_clears_it_on_full_roster() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    fuente = {
+        "id": 13, "url": "https://www.asuss.gob.bo/recursos-humanos/#autoridades",
+        "nombre": "ASUSS", "tipo": "html", "selector_css": ".entry-content",
+        "autoridades_extractor": "divi_blurb", "analizar_imagenes": False,
+    }
+    previous = [item.to_dict() for item in extract_authorities(COMPLETE_ASUSS_HTML, "divi_blurb")]
+    db.get_ultimo_snapshot.return_value = {
+        "hash": "same-text-hash", "texto": "contenido sin cambios",
+        "autoridades_json": previous + [{"_authority_roster": {"version": 2, "pending": [previous[0]]}}],
+    }
+
+    def run(html: str) -> None:
+        db.reset_mock()
+        with patch.object(DatabaseManager, "__init__", return_value=None), \
+             patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+             patch.object(PEPMonitor, "_obtener_html_raw", return_value=(html, "html_estatico")), \
+             patch("pep_monitor.limpiar_html", return_value=(["contenido sin cambios"], "html_estatico")), \
+             patch("pep_monitor.hashlib.sha256") as sha:
+            sha.return_value.hexdigest.return_value = "same-text-hash"
+            monitor = PEPMonitor()
+            monitor.db = db
+            monitor.procesar_fuente(fuente)
+
+    different = COMPLETE_ASUSS_HTML.replace(
+        '  <div class="et_pb_blurb_container">\n    <h4>Director Ejecutivo</h4>\n    <p>Dr. José Álvarez</p>\n  </div>\n', ""
+    )
+    run(different)
+    db.guardar_cambio.assert_not_called()
+    assert db.actualizar_autoridades_ultimo_snapshot.call_args.args[1][-1]["_authority_roster"]["pending"] == [previous[1]]
+
+    run(COMPLETE_ASUSS_HTML)
+    db.guardar_cambio.assert_not_called()
+    assert [item.to_dict() for item in db.actualizar_autoridades_ultimo_snapshot.call_args.args[1]] == previous
+
+    expanded = COMPLETE_ASUSS_HTML.replace(
+        "</div>", '<div class="et_pb_blurb_container"><h4>Gerente</h4><p>Ana Pérez</p></div></div>', 1
+    )
+    run(expanded)
+    assert db.guardar_cambio.call_args.kwargs["autoridades_eventos"][0]["type"] == "designacion"
+    assert all(isinstance(item, Authority) for item in db.guardar_snapshot.call_args.args[4])
 
 
 def test_monitor_initializes_legacy_null_baseline_without_creating_cambio() -> None:

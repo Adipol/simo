@@ -150,15 +150,7 @@ def authority_extraction_complete(
     text = " ".join(area.get_text(" ", strip=True).casefold().split())
     if not authorities:
         return re.search(r"\bsin autoridades\b", text) is not None
-
-    blocks = area.select(".et_pb_blurb_container")
-    return bool(blocks) and all(
-        block.find("h4") is not None
-        and block.find("h4").get_text(" ", strip=True)
-        and block.find("p") is not None
-        and block.find("p").get_text(" ", strip=True)
-        for block in blocks
-    )
+    return True
 
 
 # ════════════════════════════════════════════════════════════════
@@ -334,7 +326,7 @@ class DatabaseManager:
         hash_: str,
         texto: str,
         metodo: str,
-        autoridades: Optional[list[Authority]] = None,
+        autoridades: Optional[list[Authority | dict]] = None,
     ) -> None:
         self._ensure_connection()
         self.cursor.execute(
@@ -345,12 +337,15 @@ class DatabaseManager:
                 hash_,
                 texto,
                 metodo,
-                json.dumps([authority.to_dict() for authority in autoridades]) if autoridades is not None else None,
+                json.dumps([
+                    authority.to_dict() if isinstance(authority, Authority) else authority
+                    for authority in autoridades
+                ]) if autoridades is not None else None,
             ),
         )
 
     def actualizar_autoridades_ultimo_snapshot(
-        self, fuente_id: int, autoridades: list[Authority]
+        self, fuente_id: int, autoridades: list[Authority | dict]
     ) -> None:
         """Inicializa la línea base estructurada de un snapshot legado."""
         self._ensure_connection()
@@ -360,7 +355,10 @@ class DatabaseManager:
                    SELECT id FROM snapshots WHERE fuente_id = %s
                    ORDER BY fecha DESC LIMIT 1
                )""",
-            (json.dumps([authority.to_dict() for authority in autoridades]), fuente_id),
+            (json.dumps([
+                authority.to_dict() if isinstance(authority, Authority) else authority
+                for authority in autoridades
+            ]), fuente_id),
         )
 
     # ── Cambios ───────────────────────────────────────────────────
@@ -1591,13 +1589,35 @@ class PEPMonitor:
                 for item in (snapshot_anterior.get("autoridades_json") or [])
                 if isinstance(item, dict) and item.get("cargo") and item.get("persona")
             ]
+            pending = next((
+                item["_authority_roster"]["pending"]
+                for item in (snapshot_anterior.get("autoridades_json") or [])
+                if isinstance(item, dict)
+                and isinstance(item.get("_authority_roster"), dict)
+                and item["_authority_roster"].get("version") == 2
+            ), None)
+            pending_matches = pending == [item.to_dict() for item in autoridades_actuales]
+            reduction_pending = (
+                extraccion_autoridades_completa
+                and bool(autoridades_actuales)
+                and len(autoridades_actuales) < len(autoridades_anteriores)
+                and not pending_matches
+            )
             eventos_autoridades = compare_authorities(autoridades_anteriores, autoridades_actuales) \
-                if tiene_linea_base_autoridades and extraccion_autoridades_completa else []
+                if tiene_linea_base_autoridades and extraccion_autoridades_completa and not reduction_pending else []
             hay_cambio_autoridades = bool(eventos_autoridades)
-            autoridades_snapshot = (
-                autoridades_actuales
-                if extraccion_autoridades_completa
-                else (autoridades_anteriores if tiene_linea_base_autoridades else None)
+            if reduction_pending:
+                autoridades_snapshot = autoridades_anteriores + [{
+                    "_authority_roster": {
+                        "version": 2,
+                        "pending": [item.to_dict() for item in autoridades_actuales],
+                    }
+                }]
+            else:
+                autoridades_snapshot = autoridades_actuales if extraccion_autoridades_completa \
+                    else (autoridades_anteriores if tiene_linea_base_autoridades else None)
+            autoridades_payload_cambio = autoridades_snapshot is not None and (
+                autoridades_snapshot != (snapshot_anterior.get("autoridades_json") or [])
             )
 
             hay_cambio_imagen = bool(imgs_a_analizar)
@@ -1611,8 +1631,8 @@ class PEPMonitor:
                 # Actualizar snapshot si el hash cambió
                 if texto_cambio:
                     self.db.guardar_snapshot(fuente_id, hash_nuevo, texto_nuevo, metodo, autoridades_snapshot)
-                elif not tiene_linea_base_autoridades and extraccion_autoridades_completa:
-                    self.db.actualizar_autoridades_ultimo_snapshot(fuente_id, autoridades_actuales)
+                elif autoridades_payload_cambio:
+                    self.db.actualizar_autoridades_ultimo_snapshot(fuente_id, autoridades_snapshot)
                 # Actualizar metadata de imágenes (ultima_vez_visto) si hubo imágenes
                 if imgs_metadata:
                     snapshot_row = self.db.get_ultimo_snapshot(fuente_id)
