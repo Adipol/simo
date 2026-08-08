@@ -6,6 +6,7 @@ namespace App\Console\Commands;
 
 use App\Jobs\DedupeArticulosJob;
 use App\Models\ResultadoScraping;
+use App\Services\Dedupe\DedupeConfigurationService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
@@ -14,7 +15,7 @@ use Illuminate\Support\Facades\Log;
  * resultados_scraping row that has not yet been processed for deduplication.
  *
  * Design §5 (dedupe-safety-net):
- * - Respects kill switch: config('services.dedupe.enabled')
+ * - Respects both environment and database kill switches
  * - Queries only rows where dedupe_processed_at IS NULL (no chunking needed at current volume)
  * - Dispatches one DedupeArticulosJob per row — job sets onQueue('dedupe') in its constructor
  * - Logs count via Log::channel('gemini') AND $this->info() for operator visibility
@@ -30,8 +31,8 @@ class DeduparPendientes extends Command
 
     public function handle(): int
     {
-        if (! config('services.dedupe.enabled', true)) {
-            $this->warn('Dedupe está deshabilitado (DEDUPE_ENABLED=false).');
+        if (! app(DedupeConfigurationService::class)->isEnabled()) {
+            $this->warn('Dedupe está deshabilitado.');
 
             return self::SUCCESS;
         }

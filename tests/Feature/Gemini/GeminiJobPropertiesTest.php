@@ -24,6 +24,13 @@ class GeminiJobPropertiesTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config(['services.dedupe.enabled' => false]);
+    }
+
     // =========================================================================
     // Task 4.1 — Flash: $timeout=300, batch=10
     // =========================================================================
@@ -155,7 +162,7 @@ class GeminiJobPropertiesTest extends TestCase
         ResultadoScraping::flushEventListeners();
 
         return ResultadoScraping::create(array_merge([
-            'url' => 'https://example.com/article-' . uniqid(),
+            'url' => 'https://example.com/article-'.uniqid(),
             'keyword' => 'corrupcion',
             'pais' => 'BO',
             'categoria' => 'politica',
@@ -184,11 +191,11 @@ class GeminiJobPropertiesTest extends TestCase
             'candidates' => [[
                 'content' => ['parts' => [['text' => json_encode([
                     'persona_removida' => null,
-                    'persona_nueva'    => null,
-                    'cargo'            => null,
-                    'es_mae'           => false,
-                    'riesgo'           => 'bajo',
-                    'analisis'         => 'No change.',
+                    'persona_nueva' => null,
+                    'cargo' => null,
+                    'es_mae' => false,
+                    'riesgo' => 'bajo',
+                    'analisis' => 'No change.',
                 ])]]],
             ]],
         ]);
