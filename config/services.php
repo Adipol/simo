@@ -39,6 +39,22 @@ return [
         'enabled' => env('DEDUPE_ENABLED', true),
     ],
 
+    'sports_noise' => [
+        'enabled' => env('SPORTS_NOISE_ENABLED', false),
+        'catalog' => [
+            'club_terms' => ['club', 'equipo'],
+            'role_terms' => ['entrenador', 'coach'],
+            'status_terms' => ['designado', 'nombrado'],
+            'escape_terms' => [
+                'ambiguous_role' => ['presidente'],
+                'boa_opi_context' => ['boa', 'opi'],
+                'foreign_official' => ['ministro', 'presidente extranjero'],
+                'governing_body' => ['federación', 'asociación'],
+                'public_resource' => ['empresa estatal', 'ministerio'],
+            ],
+        ],
+    ],
+
     'gemini' => [
         'base_url' => env('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta/models/'),
         'api_key' => env('GEMINI_API_KEY'),
