@@ -6,6 +6,8 @@ namespace App\Jobs;
 
 use App\Models\ResultadoScraping;
 use App\Services\Dedupe\DedupeArticulosService;
+use App\Services\Dedupe\DedupeConfigurationService;
+use App\Services\Gemini\GeminiFlashEligibilityService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -21,10 +23,10 @@ use Illuminate\Support\Facades\Log;
  * - Queue: 'dedupe' (separate from Gemini jobs for independent throttling)
  * - Tries: 3 with exponential backoff [5, 25, 125] seconds
  * - ShouldBeUnique: prevents duplicate processing of the same article (5-min lock)
- * - Idempotent: if the article is already secondary, handle() returns immediately
- * - Feature flag: services.dedupe.enabled controls whether processing runs
+ * - Idempotent: already-classified rows are stamped but never sent to Gemini
+ * - Kill switches: environment and database configuration both bypass dedupe safely
  */
-final class DedupeArticulosJob implements ShouldQueue, ShouldBeUnique
+final class DedupeArticulosJob implements ShouldBeUnique, ShouldQueue
 {
     use Dispatchable;
     use InteractsWithQueue;
@@ -52,27 +54,64 @@ final class DedupeArticulosJob implements ShouldQueue, ShouldBeUnique
         return "dedupe-{$this->resultadoId}";
     }
 
-    public function handle(DedupeArticulosService $service): void
-    {
-        if (! config('services.dedupe.enabled', true)) {
+    public function handle(
+        DedupeArticulosService $service,
+        DedupeConfigurationService $dedupeConfiguration,
+        GeminiFlashEligibilityService $geminiEligibility,
+    ): void {
+        if (! $dedupeConfiguration->isEnabled()) {
+            $this->dispatchGeminiWhenPending($geminiEligibility);
+
             return;
         }
 
-        // Early exit if the article no longer exists or is already classified
         $article = ResultadoScraping::find($this->resultadoId);
-        if ($article === null || $article->secundario_de !== null) {
+        if ($article === null) {
             return;
         }
 
         $service->procesar($this->resultadoId);
+
+        $article->refresh();
+
+        if ($article->secundario_de !== null) {
+            Log::channel('gemini')->info('dedupe.gemini_skipped_secondary', [
+                'article_id' => $article->id,
+                'primary_id' => $article->secundario_de,
+                'gemini_analyzed' => $article->gemini_analyzed,
+                'reason' => 'secondary_article',
+            ]);
+
+            return;
+        }
+
+        $this->dispatchGeminiWhenPending($geminiEligibility);
+    }
+
+    private function dispatchGeminiWhenPending(GeminiFlashEligibilityService $geminiEligibility): void
+    {
+        if (! config('services.gemini.enabled')) {
+            return;
+        }
+
+        $isPending = $geminiEligibility->query()
+            ->whereKey($this->resultadoId)
+            ->exists();
+
+        if (! $isPending) {
+            return;
+        }
+
+        AnalizarScrapingConFlash::dispatch()
+            ->delay(now()->addSeconds(config('services.gemini.flash_delay', 4)));
     }
 
     public function failed(\Throwable $e): void
     {
         Log::channel('gemini')->error('DedupeArticulosJob failed', [
             'resultado_id' => $this->resultadoId,
-            'exception'    => $e::class,
-            'message'      => $e->getMessage(),
+            'exception' => $e::class,
+            'message' => $e->getMessage(),
         ]);
     }
 }

@@ -7,7 +7,7 @@ namespace App\Console\Commands;
 use App\Jobs\AnalizarCambioConPro;
 use App\Jobs\AnalizarScrapingConFlash;
 use App\Models\Cambio;
-use App\Models\ResultadoScraping;
+use App\Services\Gemini\GeminiFlashEligibilityService;
 use Illuminate\Console\Command;
 
 class AnalizarGemini extends Command
@@ -30,7 +30,7 @@ class AnalizarGemini extends Command
         $proOnly = $this->option('pro-only');
 
         if (! $proOnly) {
-            $flashPending = ResultadoScraping::where('gemini_analyzed', false)->count();
+            $flashPending = app(GeminiFlashEligibilityService::class)->query()->count();
             $this->line("Flash: {$flashPending} pendientes");
 
             if ($flashPending > 0) {

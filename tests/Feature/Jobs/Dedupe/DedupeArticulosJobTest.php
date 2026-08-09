@@ -4,13 +4,15 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Jobs\Dedupe;
 
+use App\Jobs\AnalizarScrapingConFlash;
 use App\Jobs\DedupeArticulosJob;
 use App\Models\ResultadoScraping;
 use App\Models\SitioWeb;
-use App\Services\Dedupe\DedupeArticulosService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
+use Psr\Log\LoggerInterface;
 use Tests\TestCase;
 
 /**
@@ -38,9 +40,9 @@ class DedupeArticulosJobTest extends TestCase
         config(['services.gemini.enabled' => false]);
 
         $this->sitio = SitioWeb::create([
-            'url'    => 'https://example.com',
+            'url' => 'https://example.com',
             'nombre' => 'Example',
-            'pais'   => 'BO',
+            'pais' => 'BO',
             'activo' => true,
         ]);
     }
@@ -48,17 +50,17 @@ class DedupeArticulosJobTest extends TestCase
     private function makeArticle(array $overrides = []): ResultadoScraping
     {
         return ResultadoScraping::create(array_merge([
-            'url'              => 'https://example.com/article-'.uniqid(),
-            'keyword'          => 'test',
-            'sitio_id'         => $this->sitio->id,
-            'pais'             => 'BO',
-            'titulo'           => 'Test article title',
-            'contexto'         => '',
+            'url' => 'https://example.com/article-'.uniqid(),
+            'keyword' => 'test',
+            'sitio_id' => $this->sitio->id,
+            'pais' => 'BO',
+            'titulo' => 'Test article title',
+            'contexto' => '',
             'fecha_encontrado' => now(),
-            'relevance_score'  => 50,
-            'leido'            => false,
-            'descartado'       => false,
-            'gemini_analyzed'  => false,
+            'relevance_score' => 50,
+            'leido' => false,
+            'descartado' => false,
+            'gemini_analyzed' => false,
         ], $overrides));
     }
 
@@ -135,17 +137,15 @@ class DedupeArticulosJobTest extends TestCase
     {
         config(['services.dedupe.enabled' => true]);
 
-        $primary   = $this->makeArticle();
+        $primary = $this->makeArticle();
         $secondary = $this->makeArticle(['secundario_de' => $primary->id]);
 
-        // Run the job — since article is already secondary, procesar() should be a no-op.
-        // We verify the database state is unchanged after the job runs.
-        $service = app(DedupeArticulosService::class);
         $job = new DedupeArticulosJob($secondary->id);
-        $job->handle($service);
+        app()->call([$job, 'handle']);
 
         $secondary->refresh();
         $this->assertSame($primary->id, $secondary->secundario_de, 'Already-secondary must stay secondary of same primary');
+        $this->assertNotNull($secondary->dedupe_processed_at, 'Already-secondary rows must leave the safety-net queue');
     }
 
     // ─── Job handle — calls service and processes article ────────────────────
@@ -156,14 +156,76 @@ class DedupeArticulosJobTest extends TestCase
 
         $article = $this->makeArticle();
 
-        $service = app(DedupeArticulosService::class);
         $job = new DedupeArticulosJob($article->id);
-        $job->handle($service);
+        app()->call([$job, 'handle']);
 
         // On SQLite there's no pg_trgm so no candidates are found.
         // The article should remain a primary (secundario_de = null).
         $article->refresh();
         $this->assertNull($article->secundario_de, 'With no candidates, article must remain primary after job');
+        $this->assertNotNull($article->dedupe_processed_at);
+    }
+
+    public function test_primary_dispatches_gemini_only_after_successful_dedupe(): void
+    {
+        config([
+            'services.dedupe.enabled' => true,
+            'services.gemini.enabled' => true,
+        ]);
+        Queue::fake();
+        $article = $this->makeArticle();
+        Queue::fake();
+
+        $job = new DedupeArticulosJob($article->id);
+        app()->call([$job, 'handle']);
+
+        $this->assertNotNull($article->refresh()->dedupe_processed_at);
+        Queue::assertPushedOn('gemini', AnalizarScrapingConFlash::class);
+    }
+
+    public function test_secondary_skips_gemini_and_logs_avoided_analysis(): void
+    {
+        config([
+            'services.dedupe.enabled' => true,
+            'services.gemini.enabled' => true,
+        ]);
+        Queue::fake();
+        $primary = $this->makeArticle(['dedupe_processed_at' => now()]);
+        $secondary = $this->makeArticle(['secundario_de' => $primary->id]);
+        Queue::fake();
+
+        $logger = \Mockery::mock(LoggerInterface::class);
+        $logger->shouldReceive('info')
+            ->once()
+            ->with('dedupe.gemini_skipped_secondary', \Mockery::on(
+                fn (array $context): bool => $context['article_id'] === $secondary->id
+                    && $context['primary_id'] === $primary->id
+                    && $context['reason'] === 'secondary_article'
+            ));
+        Log::shouldReceive('channel')->once()->with('gemini')->andReturn($logger);
+
+        $job = new DedupeArticulosJob($secondary->id);
+        app()->call([$job, 'handle']);
+
+        Queue::assertNotPushed(AnalizarScrapingConFlash::class);
+        $this->assertFalse($secondary->refresh()->gemini_analyzed);
+        $this->assertNotNull($secondary->dedupe_processed_at);
+    }
+
+    public function test_already_analyzed_primary_does_not_dispatch_gemini(): void
+    {
+        config([
+            'services.dedupe.enabled' => true,
+            'services.gemini.enabled' => true,
+        ]);
+        Queue::fake();
+        $article = $this->makeArticle(['gemini_analyzed' => true]);
+        Queue::fake();
+
+        $job = new DedupeArticulosJob($article->id);
+        app()->call([$job, 'handle']);
+
+        Queue::assertNotPushed(AnalizarScrapingConFlash::class);
     }
 
     // ─── Job handle — respects kill switch ───────────────────────────────────
@@ -174,22 +236,21 @@ class DedupeArticulosJobTest extends TestCase
 
         // Create with its own unique URL to avoid constraint issues
         $article = ResultadoScraping::create([
-            'url'              => 'https://example.com/dedupe-disabled-'.uniqid(),
-            'keyword'          => 'test',
-            'sitio_id'         => $this->sitio->id,
-            'pais'             => 'BO',
-            'titulo'           => 'Article that should not be processed',
-            'contexto'         => '',
+            'url' => 'https://example.com/dedupe-disabled-'.uniqid(),
+            'keyword' => 'test',
+            'sitio_id' => $this->sitio->id,
+            'pais' => 'BO',
+            'titulo' => 'Article that should not be processed',
+            'contexto' => '',
             'fecha_encontrado' => now(),
-            'relevance_score'  => 50,
-            'leido'            => false,
-            'descartado'       => false,
-            'gemini_analyzed'  => false,
+            'relevance_score' => 50,
+            'leido' => false,
+            'descartado' => false,
+            'gemini_analyzed' => false,
         ]);
 
-        $service = app(DedupeArticulosService::class);
         $job = new DedupeArticulosJob($article->id);
-        $job->handle($service);
+        app()->call([$job, 'handle']);
 
         // When kill switch is off at the job level, nothing changes
         // (the service itself also checks habilitado in ConfigScript, but

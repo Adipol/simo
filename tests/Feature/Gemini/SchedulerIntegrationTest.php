@@ -19,6 +19,13 @@ class SchedulerIntegrationTest extends TestCase
 
     private ?Fuente $fuente = null;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config(['services.dedupe.enabled' => false]);
+    }
+
     private function getOrCreateFuente(): Fuente
     {
         if ($this->fuente === null) {
@@ -39,7 +46,7 @@ class SchedulerIntegrationTest extends TestCase
         ResultadoScraping::flushEventListeners();
 
         return ResultadoScraping::create(array_merge([
-            'url' => 'https://example.com/article-' . uniqid(),
+            'url' => 'https://example.com/article-'.uniqid(),
             'keyword' => 'corrupcion',
             'pais' => 'BO',
             'categoria' => 'politica',
