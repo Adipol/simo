@@ -7,6 +7,7 @@ namespace App\Jobs;
 use App\Models\ResultadoScraping;
 use App\Services\Gemini\GeminiFiltroService;
 use App\Services\Gemini\GeminiFlashEligibilityService;
+use App\Services\Gemini\SportsNoiseCandidateService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Database\Eloquent\Builder;
@@ -56,6 +57,8 @@ class AnalizarScrapingConFlash implements ShouldQueue
             return;
         }
 
+        $this->observeSportsNoiseCandidates($records);
+
         app(GeminiFiltroService::class)->analizarLote($records);
 
         if ($this->hayMasPendientes()) {
@@ -82,5 +85,34 @@ class AnalizarScrapingConFlash implements ShouldQueue
     private function hayMasPendientes(): bool
     {
         return app(GeminiFlashEligibilityService::class)->query()->exists();
+    }
+
+    /** @param \Illuminate\Support\Collection<int, ResultadoScraping> $records */
+    private function observeSportsNoiseCandidates(\Illuminate\Support\Collection $records): void
+    {
+        try {
+            $candidateService = app(SportsNoiseCandidateService::class);
+
+            foreach ($records as $record) {
+                $decision = $candidateService->decide($record);
+
+                if ($decision->outcome !== 'candidate') {
+                    continue;
+                }
+
+                Log::channel('gemini')->info('gemini.sports_noise_candidate', [
+                    'schema_version' => 'v1',
+                    'rule_version' => $decision->ruleVersion,
+                    'record_id' => $record->id,
+                    'reason_codes' => $decision->reasonCodes,
+                    'escape_codes' => $decision->escapeCodes,
+                    'timestamp' => now()->toIso8601String(),
+                    'title_fingerprint' => $decision->titleFingerprint,
+                    'excerpt' => $decision->excerpt,
+                ]);
+            }
+        } catch (\Throwable) {
+            // Observation must never change the established downstream batch behavior.
+        }
     }
 }
