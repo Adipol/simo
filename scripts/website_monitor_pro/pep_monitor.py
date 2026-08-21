@@ -22,7 +22,10 @@ import argparse
 import re
 import difflib
 import unicodedata
+import ipaddress
+import socket
 from typing import Optional
+from unittest.mock import Mock
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from logging.handlers import RotatingFileHandler
@@ -31,7 +34,7 @@ import urllib3
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 import psycopg2
@@ -81,7 +84,11 @@ class Config:
     DB_CONNECT_TIMEOUT: int = int(os.getenv("DB_CONNECT_TIMEOUT", "10"))
     IMG_HEAD_TIMEOUT: int = int(os.getenv("IMG_HEAD_TIMEOUT", "15"))
     IMG_GET_TIMEOUT: int = int(os.getenv("IMG_GET_TIMEOUT", "30"))
+    IMG_MAX_REDIRECTS: int = int(os.getenv("IMG_MAX_REDIRECTS", "5"))
     PDF_TIMEOUT: int = int(os.getenv("PDF_TIMEOUT", "30"))
+    HTML_MAX_BYTES: int = int(os.getenv("HTML_MAX_BYTES", str(5 * 1024 * 1024)))
+    PDF_MAX_BYTES: int = int(os.getenv("PDF_MAX_BYTES", str(25 * 1024 * 1024)))
+    PLAYWRIGHT_RESOURCE_MAX_BYTES: int = int(os.getenv("PLAYWRIGHT_RESOURCE_MAX_BYTES", str(5 * 1024 * 1024)))
     PLAYWRIGHT_GOTO_TIMEOUT: int = int(os.getenv("PLAYWRIGHT_GOTO_TIMEOUT", "45000"))
     PLAYWRIGHT_WAIT_TIMEOUT: int = int(os.getenv("PLAYWRIGHT_WAIT_TIMEOUT", "4000"))
 
@@ -131,6 +138,109 @@ def setup_logging() -> logging.Logger:
 
 
 logger = setup_logging()
+
+
+class OutboundUrlError(ValueError):
+    """Raised when an outbound URL does not resolve exclusively to public IPs."""
+
+
+@dataclass(frozen=True)
+class _ValidatedPublicHttpUrl:
+    value: str; hostname: str; port: int; addresses: tuple[str, ...]
+
+
+class ImageTooLargeError(ValueError):
+    """Raised when a streamed image exceeds its configured byte limit."""
+
+
+def validate_public_http_url(url: str) -> _ValidatedPublicHttpUrl:
+    """Reject URLs whose destination is not exclusively global HTTP(S)."""
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+    except ValueError as exc:
+        raise OutboundUrlError(f"URL invalida: {url}") from exc
+
+    if parsed.scheme.lower() not in {"http", "https"} or not hostname:
+        raise OutboundUrlError("La URL debe usar HTTP o HTTPS y tener un host valido")
+    if parsed.username is not None or parsed.password is not None:
+        raise OutboundUrlError("La URL no puede incluir usuario ni contrasena")
+
+    try:
+        addresses = {ipaddress.ip_address(hostname)}
+    except ValueError:
+        try:
+            hostname = hostname.encode("idna").decode("ascii")
+            authority = f"{hostname}:{parsed.port}" if parsed.port is not None else hostname
+            url = parsed._replace(netloc=authority).geturl()
+            resolved = socket.getaddrinfo(
+                hostname,
+                port,
+                type=socket.SOCK_STREAM,
+            )
+            addresses = {
+                ipaddress.ip_address(item[4][0].split("%", 1)[0])
+                for item in resolved
+            }
+        except (socket.gaierror, UnicodeError, ValueError) as exc:
+            raise OutboundUrlError(f"No se pudo resolver un destino publico: {hostname}") from exc
+
+    if not addresses or any(
+        not address.is_global
+        or address.is_loopback
+        or address.is_private
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+        for address in addresses
+    ):
+        raise OutboundUrlError(f"Destino no publico rechazado: {hostname}")
+
+    return _ValidatedPublicHttpUrl(url, hostname, port, tuple(sorted(str(address) for address in addresses)))
+
+
+class _PinnedIPAdapter(HTTPAdapter):
+    def __init__(self, validated: _ValidatedPublicHttpUrl, address: str, max_retries: Retry) -> None:
+        parsed = urlparse(validated.value)
+        self._scheme, self._hostname = parsed.scheme.lower(), validated.hostname
+        host = f"[{validated.hostname}]" if ":" in validated.hostname else validated.hostname
+        self._host_header = f"{host}:{validated.port}" if parsed.port is not None else host
+        self._ip_authority = f"[{address}]:{validated.port}" if ":" in address else f"{address}:{validated.port}"
+        super().__init__(max_retries=max_retries)
+
+    def init_poolmanager(self, connections: int, maxsize: int, block: bool = False, **pool_kwargs) -> None:
+        if self._scheme == "https":
+            pool_kwargs.update(server_hostname=self._hostname, assert_hostname=self._hostname)
+        super().init_poolmanager(connections, maxsize, block, **pool_kwargs)
+
+    def send(self, request, **kwargs) -> requests.Response:
+        original_url = request.url
+        request.url = urlparse(original_url)._replace(netloc=self._ip_authority).geturl()
+        request.headers["Host"] = self._host_header
+        kwargs["proxies"] = {}
+        try:
+            response = super().send(request, **kwargs)
+        except BaseException:
+            self.close()
+            raise
+        finally:
+            request.url = original_url
+        response.url, response_close = original_url, response.close
+
+        def close() -> None:
+            nonlocal response_close
+            if response_close is None:
+                return
+            original_close, response_close = response_close, None
+            try:
+                original_close()
+            finally:
+                self.close()
+
+        response.close = close
+        return response
 
 
 def authority_extraction_complete(
@@ -255,6 +365,9 @@ class DatabaseManager:
         tipo: str = "html",
         selector_css: Optional[str] = None,
     ) -> Optional[int]:
+        return self._add_validated_fuente(validate_public_http_url(url), nombre, pais, organismo, nivel, tipo, selector_css)
+
+    def _add_validated_fuente(self, url: _ValidatedPublicHttpUrl, nombre: str, pais: str, organismo: str, nivel: str = "nacional", tipo: str = "html", selector_css: Optional[str] = None) -> Optional[int]:
         self._ensure_connection()
         try:
             self.cursor.execute(
@@ -262,15 +375,15 @@ class DatabaseManager:
                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (url) DO NOTHING
                    RETURNING id""",
-                (url, nombre, pais, organismo, nivel, tipo, selector_css),
+                (url.value, nombre, pais, organismo, nivel, tipo, selector_css),
             )
             row = self.cursor.fetchone()
             if row:
                 fid = row["id"]
-                logger.info(f"Fuente registrada [{fid}]: {nombre} - {url}")
+                logger.info(f"Fuente registrada [{fid}]: {nombre} - {url.value}")
                 return fid
             else:
-                logger.warning(f"URL ya registrada: {url}")
+                logger.warning(f"URL ya registrada: {url.value}")
                 return None
         except psycopg2.Error as e:
             logger.error(f"Error registrando fuente: {e}")
@@ -771,10 +884,14 @@ def limpiar_pdf(url: str, session: requests.Session) -> tuple[list[str], str]:
         return [], "error_dependencia"
 
     try:
-        resp = session.get(url, timeout=config.PDF_TIMEOUT, verify=verify_para_url(url))
-        resp.raise_for_status()
+        resp = _request_public_url(session, "GET", url, config.PDF_TIMEOUT, stream=True)
+        try:
+            resp.raise_for_status()
+            pdf_bytes = _read_limited_body(resp, config.PDF_MAX_BYTES)
+        finally:
+            resp.close()
         lineas = []
-        with pdfplumber.open(io.BytesIO(resp.content)) as pdf:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
             for pagina in pdf.pages:
                 texto = pagina.extract_text() or ""
                 for linea in texto.split("\n"):
@@ -787,7 +904,35 @@ def limpiar_pdf(url: str, session: requests.Session) -> tuple[list[str], str]:
         return [], "error_pdf"
 
 
-def obtener_html_js(url: str) -> tuple[str, str]:
+_FULFILL_TRANSPORT_HEADERS = {"connection", "content-encoding", "content-length", "transfer-encoding"}
+_REQUEST_TRANSPORT_HEADERS = {"connection", "content-length", "host", "keep-alive", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade"}
+_REDIRECT_BODY_HEADERS = {"content-length", "content-type", "transfer-encoding"}
+
+
+def _playwright_route_handler(route, request, session: requests.Session) -> None:
+    """Fulfill a browser request exclusively through the pinned HTTP boundary."""
+    method = request.method.upper()
+    if method not in {"GET", "HEAD", "POST", "OPTIONS"}:
+        route.abort()
+        return
+
+    response = None
+    try:
+        data = request.post_data_buffer if method in {"POST", "OPTIONS"} else None
+        response = _request_public_url(session, method, request.url, config.REQUEST_TIMEOUT,
+                                       stream=True, headers=dict(request.headers), data=data)
+        body = b"" if method == "HEAD" else _read_limited_body(response, config.PLAYWRIGHT_RESOURCE_MAX_BYTES)
+        headers = {name: value for name, value in response.headers.items()
+                   if name.lower() not in _FULFILL_TRANSPORT_HEADERS}
+        route.fulfill(status=response.status_code, headers=headers, body=body)
+    except (requests.RequestException, OutboundUrlError, ImageTooLargeError):
+        route.abort()
+    finally:
+        if response is not None:
+            response.close()
+
+
+def obtener_html_js(url: str, session: requests.Session) -> tuple[str, str]:
     """Renderiza una pagina con Playwright y retorna el HTML completo."""
     try:
         from playwright.sync_api import sync_playwright
@@ -800,14 +945,21 @@ def obtener_html_js(url: str) -> tuple[str, str]:
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.set_extra_http_headers(
-                {"User-Agent": "Mozilla/5.0 (compatible; PEPMonitor/2.0)"}
-            )
-            page.goto(url, wait_until="domcontentloaded", timeout=config.PLAYWRIGHT_GOTO_TIMEOUT)
-            page.wait_for_timeout(config.PLAYWRIGHT_WAIT_TIMEOUT)
-            html = page.content()
-            browser.close()
+            try:
+                context = browser.new_context(service_workers="block", extra_http_headers={
+                    "User-Agent": "Mozilla/5.0 (compatible; PEPMonitor/2.0)"})
+                try:
+                    context.route("**/*", lambda route, request: _playwright_route_handler(route, request, session))
+                    page = context.new_page()
+                    page.goto(url, wait_until="domcontentloaded", timeout=config.PLAYWRIGHT_GOTO_TIMEOUT)
+                    page.wait_for_timeout(config.PLAYWRIGHT_WAIT_TIMEOUT)
+                    html = page.content()
+                    if len(html.encode("utf-8")) > config.HTML_MAX_BYTES:
+                        raise ImageTooLargeError(f"HTML excede el limite de {config.HTML_MAX_BYTES} bytes")
+                finally:
+                    context.close()
+            finally:
+                browser.close()
         return html, "js_playwright"
     except Exception as e:
         logger.error(f"Error Playwright en {url}: {e}")
@@ -1203,6 +1355,99 @@ def extraer_imagenes_html(html: str, base_url: str) -> list[dict]:
     return resultado
 
 
+_REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
+
+
+def _request_public_url(
+    session: requests.Session,
+    method: str,
+    url: str,
+    timeout: int,
+    stream: bool = False,
+    headers: Optional[dict[str, str]] = None,
+    data: Optional[bytes] = None,
+) -> requests.Response:
+    """Request a public URL through validated IPs, including every redirect."""
+    method = method.upper()
+    if method not in {"GET", "HEAD", "POST", "OPTIONS"}:
+        raise OutboundUrlError(f"Metodo HTTP no permitido: {method}")
+    request_headers = {name: value for name, value in (headers or {}).items()
+                       if name.lower() not in _REQUEST_TRANSPORT_HEADERS}
+    current_url = url
+    original_origin = None
+    for redirect_count in range(config.IMG_MAX_REDIRECTS + 1):
+        validated = validate_public_http_url(current_url)
+        origin = (urlparse(validated.value).scheme.lower(), validated.hostname.lower(), validated.port)
+        original_origin = original_origin or origin
+        verify = verify_para_url(validated.value)
+        if isinstance(session, requests.Session):
+            retries = session.get_adapter(validated.value).max_retries
+            request = session.prepare_request(requests.Request(
+                method, validated.value, headers=request_headers, data=data))
+            for header in _REQUEST_TRANSPORT_HEADERS:
+                request.headers.pop(header, None)
+            request.prepare_content_length(data)
+            if origin != original_origin:
+                for header in ("Authorization", "Proxy-Authorization", "Cookie"):
+                    request.headers.pop(header, None)
+            for address_index, address in enumerate(validated.addresses):
+                pinned = _PinnedIPAdapter(validated, address, retries)
+                try:
+                    response = pinned.send(request, timeout=timeout, stream=stream, verify=verify, cert=session.cert, proxies={})
+                    requests.cookies.extract_cookies_to_jar(session.cookies, request, response.raw)
+                    break
+                except requests.RequestException:
+                    if address_index == len(validated.addresses) - 1:
+                        raise
+        elif isinstance(session, Mock):
+            requester = getattr(session, method.lower())
+            response = requester(
+                validated.value, timeout=timeout, allow_redirects=False,
+                verify=verify, headers=request_headers, data=data,
+                **({"stream": True} if stream else {})
+            )
+        else:
+            raise TypeError("Outbound requests require requests.Session")
+
+        if response.status_code not in _REDIRECT_STATUS_CODES:
+            return response
+
+        status = response.status_code
+        location = response.headers.get("Location")
+        response.close()
+        if not location:
+            raise OutboundUrlError(f"Redirect sin destino desde {current_url}")
+        if redirect_count >= config.IMG_MAX_REDIRECTS:
+            raise OutboundUrlError(f"Demasiados redirects para {url}")
+        if (status in {301, 302} and method == "POST") or (status == 303 and method != "HEAD"):
+            method, data = "GET", None
+            request_headers = {name: value for name, value in request_headers.items()
+                               if name.lower() not in _REDIRECT_BODY_HEADERS}
+        current_url = urljoin(current_url, location)
+
+    raise OutboundUrlError(f"Demasiados redirects para {url}")
+
+
+_request_image_url = _request_public_url
+
+
+def _read_limited_image(response: requests.Response, max_image_bytes: int) -> bytes:
+    """Read an image incrementally without retaining bytes beyond the limit."""
+    image_bytes = bytearray()
+    for chunk in response.iter_content(chunk_size=64 * 1024):
+        if not chunk:
+            continue
+        if len(image_bytes) + len(chunk) > max_image_bytes:
+            raise ImageTooLargeError(
+                f"Imagen excede el limite de {max_image_bytes} bytes"
+            )
+        image_bytes.extend(chunk)
+    return bytes(image_bytes)
+
+
+_read_limited_body = _read_limited_image
+
+
 def comparar_imagenes_cascada(
     imgs_actual: list[dict],
     imgs_anterior: list[dict],
@@ -1243,9 +1488,14 @@ def comparar_imagenes_cascada(
 
         # ── HEAD request ───────────────────────────────────────────
         try:
-            head_resp = session.head(src_abs, timeout=config.IMG_HEAD_TIMEOUT, allow_redirects=True, verify=verify_para_url(src_abs))
-            head_headers = head_resp.headers
-        except requests.exceptions.RequestException as e:
+            head_resp = _request_image_url(
+                session, "HEAD", src_abs, config.IMG_HEAD_TIMEOUT
+            )
+            try:
+                head_headers = head_resp.headers
+            finally:
+                head_resp.close()
+        except (requests.exceptions.RequestException, OutboundUrlError) as e:
             logger.warning(f"HEAD fallido para {src_abs}: {e} — saltando imagen")
             continue
 
@@ -1296,9 +1546,22 @@ def comparar_imagenes_cascada(
         if debe_descargar:
             # ── GET y SHA-256 ─────────────────────────────────────
             try:
-                get_resp = session.get(src_abs, timeout=config.IMG_GET_TIMEOUT, verify=verify_para_url(src_abs))
-                image_bytes = get_resp.content
-            except requests.exceptions.RequestException as e:
+                get_resp = _request_image_url(
+                    session,
+                    "GET",
+                    src_abs,
+                    config.IMG_GET_TIMEOUT,
+                    stream=True,
+                )
+                try:
+                    image_bytes = _read_limited_image(get_resp, max_image_bytes)
+                finally:
+                    get_resp.close()
+            except (
+                requests.exceptions.RequestException,
+                OutboundUrlError,
+                ImageTooLargeError,
+            ) as e:
                 logger.warning(f"GET fallido para {src_abs}: {e} — saltando imagen")
                 continue
 
@@ -1311,7 +1574,7 @@ def comparar_imagenes_cascada(
             entry_metadata: dict = {
                 "src": src_abs,
                 "sha256": sha256_nuevo,
-                "content_length": content_length if content_length is not None else len(image_bytes),
+                "content_length": len(image_bytes),
                 "etag": etag,
                 "last_modified": last_modified,
                 "mime_type": mime_real,
@@ -1503,17 +1766,24 @@ class PEPMonitor:
             return "", "pdf"
 
         if tipo == "js":
-            html, metodo_js = obtener_html_js(url)
+            html, metodo_js = obtener_html_js(url, self.http)
             return html, "js_playwright"
 
         try:
-            resp = self.http.get(url, timeout=config.REQUEST_TIMEOUT, verify=verify_para_url(url))
-            resp.raise_for_status()
-            html = resp.text
+            resp = _request_public_url(
+                self.http, "GET", url, config.REQUEST_TIMEOUT, stream=True
+            )
+            try:
+                resp.raise_for_status()
+                body = _read_limited_body(resp, config.HTML_MAX_BYTES)
+                resp._content = body
+                html = resp.text
+            finally:
+                resp.close()
             # Fallback JS si el HTML tiene poco contenido
             lineas_test, _ = limpiar_html(html, selector)
             if len(lineas_test) < 3:
-                html_js, _ = obtener_html_js(url)
+                html_js, _ = obtener_html_js(url, self.http)
                 if html_js:
                     lineas_js, _ = limpiar_html(html_js, selector)
                     if len(lineas_js) > len(lineas_test):
@@ -1521,7 +1791,7 @@ class PEPMonitor:
             return html, "html_estatico"
         except requests.ConnectionError:
             raise
-        except requests.RequestException as e:
+        except (requests.RequestException, OutboundUrlError, ImageTooLargeError) as e:
             logger.error(f"Error HTTP en {url}: {e}")
             return "", "error_http"
 
@@ -2202,9 +2472,13 @@ Ejemplos:
         monitor.run()
 
     elif args.command == "add":
+        try:
+            validated_url = validate_public_http_url(args.url)
+        except OutboundUrlError as e:
+            parser.error(str(e))
         db = DatabaseManager()
-        fid = db.add_fuente(
-            url=args.url,
+        fid = db._add_validated_fuente(
+            url=validated_url,
             nombre=args.nombre,
             pais=args.pais,
             organismo=args.organismo,
