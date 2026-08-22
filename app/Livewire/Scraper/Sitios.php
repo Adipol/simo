@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Livewire\Scraper;
 
+use App\Enums\SiteValidationStatus;
 use App\Models\Pais;
 use App\Models\SitioWeb;
 use App\Services\Scraper\SiteManagementService;
@@ -85,7 +86,8 @@ final class Sitios extends Component
             $this->pais = $s->pais;
             $this->selector_links = $s->selector_links ?? '';
             $this->selector_article = $s->selector_article ?? '';
-            $this->activo = $s->activo;
+            $this->activo = $s->activo || ($s->activation_requested
+                && in_array($s->validation_status, [SiteValidationStatus::Pending, SiteValidationStatus::Validating], true));
         } else {
             $this->url = $this->nombre = $this->pais = $this->selector_links = $this->selector_article = '';
             $this->activo = true;
