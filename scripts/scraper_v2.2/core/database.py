@@ -282,7 +282,7 @@ class ScrapingRepository:
                     """
                     SELECT id, url, nombre, selector_links, pais
                     FROM sitios_web
-                    WHERE activo IS TRUE AND pais = %s
+                    WHERE activo IS TRUE AND validation_status = 'valid' AND pais = %s
                     ORDER BY nombre
                 """,
                     (pais,),
@@ -292,7 +292,7 @@ class ScrapingRepository:
                 cursor.execute("""
                     SELECT id, url, nombre, selector_links, pais
                     FROM sitios_web
-                    WHERE activo IS TRUE
+                    WHERE activo IS TRUE AND validation_status = 'valid'
                     ORDER BY pais, nombre
                 """)
 
@@ -395,7 +395,9 @@ class ScrapingRepository:
                   AND EXISTS (
                       SELECT 1
                       FROM sitios_web s
-                      WHERE s.pais = p.codigo AND s.activo IS TRUE
+                      WHERE s.pais = p.codigo
+                        AND s.activo IS TRUE
+                        AND s.validation_status = 'valid'
                   )
                 ORDER BY p.nombre
             """)
