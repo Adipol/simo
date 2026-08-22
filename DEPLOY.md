@@ -374,6 +374,18 @@ numprocs=1
 redirect_stderr=true
 stdout_logfile=/var/www/simo/storage/logs/dedupe-worker.log
 
+[program:simo-site-validation-worker]
+process_name=%(program_name)s_%(process_num)02d
+command=php /var/www/simo/artisan queue:work --queue=site-validation --sleep=3 --tries=3 --backoff=30 --timeout=45 --max-time=3600
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+user=www-data
+numprocs=1
+redirect_stderr=true
+stdout_logfile=/var/www/simo/storage/logs/site-validation-worker.log
+
 [program:simo-pep-monitor]
 process_name=%(program_name)s_%(process_num)02d
 command=python3 /var/www/simo/scripts/website_monitor_pro/pep_monitor.py
@@ -385,9 +397,9 @@ redirect_stderr=true
 stdout_logfile=/var/www/simo/storage/logs/pep-monitor.log
 ```
 
-### Activar simo-dedupe-worker (primer deploy)
+### Activar workers dedicados (primer deploy)
 
-Al agregar `[program:simo-dedupe-worker]` por primera vez, ejecutar:
+Al agregar `[program:simo-dedupe-worker]` o `[program:simo-site-validation-worker]` por primera vez, ejecutar:
 
 ```bash
 # 1. Copiar el bloque de configuración a supervisor
@@ -401,10 +413,12 @@ sudo supervisorctl reread && sudo supervisorctl update
 
 # 4. Iniciar el worker
 sudo supervisorctl start simo-dedupe-worker
+sudo supervisorctl start simo-site-validation-worker
 
-# 5. Verificar que está corriendo
+# 5. Verificar que están corriendo
 sudo supervisorctl status simo-dedupe-worker
-# Esperado: simo-dedupe-worker RUNNING pid XXXXX, uptime 0:00:XX
+sudo supervisorctl status simo-site-validation-worker
+# Esperado: ambos RUNNING
 
 # 6. Verificar el log
 tail -20 /var/www/simo/storage/logs/dedupe-worker.log
