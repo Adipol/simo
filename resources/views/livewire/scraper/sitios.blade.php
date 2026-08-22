@@ -43,7 +43,7 @@
                     <th>Nombre / URL</th>
                     <th>Pais</th>
                     <th>Selectores CSS</th>
-                    <th>Estado</th>
+                    <th>Validación / Estado</th>
                     @can('gestionar sitios')
                     <th>Acciones</th>
                     @endcan
@@ -79,10 +79,18 @@
                             @endif
                         </td>
                         <td>
-                            <span class="simo-badge {{ $s->activo ? 'bg-green-50 text-green-700' : 'bg-zinc-100 text-zinc-500 border-zinc-200' }}">
+                            <span class="simo-badge {{ $s->validation_status->badgeClass() }}">
+                                {{ $s->validation_status->label() }}
+                            </span>
+                            <span class="simo-badge mt-1 {{ $s->activo ? 'bg-green-50 text-green-700' : 'bg-zinc-100 text-zinc-500 border-zinc-200' }}">
                                 <span class="w-1.5 h-1.5 rounded-full {{ $s->activo ? 'bg-green-500' : 'bg-zinc-400' }}"></span>
                                 {{ $s->activo ? 'Activo' : 'Inactivo' }}
                             </span>
+                            @if($s->validation_diagnostic)
+                                <div class="mt-1 max-w-xs text-xs text-gray-500" title="{{ $s->validation_diagnostic }}">
+                                    {{ Str::limit($s->validation_diagnostic, 90) }}
+                                </div>
+                            @endif
                         </td>
                         @can('gestionar sitios')
                         <td>
@@ -95,6 +103,13 @@
                                         class="simo-btn-ghost text-xs text-gray-400">
                                     {{ $s->activo ? 'Desactivar' : 'Activar' }}
                                 </button>
+                                @if($s->validation_status !== \App\Enums\SiteValidationStatus::Validating)
+                                    <button wire:click="reintentarValidacion({{ $s->id }})"
+                                            wire:loading.attr="disabled"
+                                            class="simo-btn-ghost text-xs text-indigo-600">
+                                        Reintentar validación
+                                    </button>
+                                @endif
                             </div>
                         </td>
                         @endcan
@@ -156,7 +171,7 @@
                         <label class="flex items-center gap-2 text-sm cursor-pointer">
                             <input wire:model="activo" type="checkbox"
                                 class="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
-                            <span class="text-gray-700">Activo</span>
+                            <span class="text-gray-700">Activar al validar</span>
                         </label>
                     </div>
                 </div>
