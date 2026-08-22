@@ -9,12 +9,17 @@ use App\Enums\SiteValidationStatus;
 use App\Jobs\ValidateScraperSite;
 use App\Models\Pais;
 use App\Models\SitioWeb;
+use App\Services\Scraper\RecoverAbandonedSiteValidations;
 use App\Services\Scraper\SiteUrlValidator;
 use GuzzleHttp\Promise\PromiseInterface;
+use Illuminate\Contracts\Bus\QueueingDispatcher;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Factory;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 use Tests\TestCase;
@@ -266,6 +271,156 @@ final class SiteValidationLifecycleTest extends TestCase
         $site->refresh();
         $this->assertSame(SiteValidationStatus::Pending, $site->validation_status);
         $this->assertSame('New generation pending.', $site->validation_diagnostic);
+    }
+
+    public function test_abandoned_validating_work_is_recovered_and_redispatched(): void
+    {
+        Bus::fake();
+        config(['scraper.validation_abandoned_after_minutes' => 15]);
+        $oldToken = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+        $abandoned = SitioWeb::factory()->create([
+            'url' => 'https://news.test/',
+            'selector_links' => null,
+            'selector_article' => null,
+            'activo' => false,
+            'activation_requested' => true,
+            'validation_status' => SiteValidationStatus::Validating,
+            'validation_token' => $oldToken,
+            'validation_started_at' => now()->subMinutes(16),
+        ]);
+        $current = SitioWeb::factory()->create([
+            'validation_status' => SiteValidationStatus::Validating,
+            'validation_token' => 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+            'validation_started_at' => now()->subMinutes(14),
+        ]);
+
+        $recovered = app(RecoverAbandonedSiteValidations::class)->recover();
+
+        $this->assertSame(1, $recovered);
+        $this->assertSame(SiteValidationStatus::Pending, $abandoned->refresh()->validation_status);
+        $newToken = (string) $abandoned->validation_token;
+        $this->assertNotSame($oldToken, $newToken);
+        $this->assertNull($abandoned->validation_started_at);
+        $this->assertSame(SiteValidationStatus::Validating, $current->refresh()->validation_status);
+        Bus::assertDispatched(ValidateScraperSite::class, fn (ValidateScraperSite $job): bool => $job->siteId === $abandoned->id
+            && $job->validationToken === $newToken);
+
+        Http::fake();
+        (new ValidateScraperSite($abandoned->id, $oldToken))->handle(app(SiteUrlValidator::class));
+        (new ValidateScraperSite($abandoned->id, $oldToken))->failed(new RuntimeException('Old worker failed.'));
+        $this->assertSame(SiteValidationStatus::Pending, $abandoned->refresh()->validation_status);
+        $this->assertSame($newToken, $abandoned->validation_token);
+        Http::assertNothingSent();
+
+        Http::swap(new Factory);
+        Http::fake([
+            'https://news.test/' => Http::response('<html><a href="/politica/article-one">Nota</a></html>'),
+            'https://news.test/politica/article-one' => Http::response($this->articleHtml()),
+        ]);
+        (new ValidateScraperSite($abandoned->id, $newToken))->handle(app(SiteUrlValidator::class));
+        $this->assertSame(SiteValidationStatus::Valid, $abandoned->refresh()->validation_status);
+        $this->assertTrue($abandoned->activo);
+    }
+
+    public function test_failed_dispatch_leaves_stale_pending_discoverable_for_next_recovery(): void
+    {
+        config(['scraper.validation_pending_redispatch_after_minutes' => 5]);
+        $site = SitioWeb::factory()->create([
+            'validation_status' => SiteValidationStatus::Pending,
+            'validation_token' => '12121212-1212-4212-8212-121212121212',
+            'validation_requested_at' => now()->subMinutes(6),
+        ]);
+        $dispatcher = $this->mock(QueueingDispatcher::class);
+        $dispatcher->shouldReceive('dispatch')->once()->andThrow(new RuntimeException('Queue unavailable.'));
+
+        try {
+            app(RecoverAbandonedSiteValidations::class)->recover();
+            $this->fail('The dispatch failure was not propagated.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('Queue unavailable.', $exception->getMessage());
+        }
+
+        $site->refresh();
+        $this->assertSame(SiteValidationStatus::Pending, $site->validation_status);
+        $this->assertSame('12121212-1212-4212-8212-121212121212', $site->validation_token);
+        $this->assertTrue($site->validation_requested_at->lte(now()->subMinutes(5)));
+
+        $retryDispatcher = \Mockery::mock(QueueingDispatcher::class);
+        $retryDispatcher->shouldReceive('dispatch')
+            ->once()
+            ->withArgs(fn (ValidateScraperSite $job): bool => $job->siteId === $site->id
+                && $job->validationToken === $site->validation_token)
+            ->andReturnUsing(fn (ValidateScraperSite $job): ValidateScraperSite => $job);
+        $this->app->instance(QueueingDispatcher::class, $retryDispatcher);
+        $this->assertSame(1, app(RecoverAbandonedSiteValidations::class)->recover());
+        $this->assertTrue($site->refresh()->validation_requested_at->gt(now()->subMinutes(5)));
+        $this->assertSame(0, app(RecoverAbandonedSiteValidations::class)->recover());
+    }
+
+    public function test_stale_pending_redispatch_is_duplicate_safe_and_fresh_pending_is_ignored(): void
+    {
+        config(['scraper.validation_pending_redispatch_after_minutes' => 5]);
+        $stale = SitioWeb::factory()->create([
+            'url' => 'https://news.test/',
+            'selector_links' => null,
+            'selector_article' => null,
+            'activo' => false,
+            'activation_requested' => true,
+            'validation_status' => SiteValidationStatus::Pending,
+            'validation_token' => '13131313-1313-4313-8313-131313131313',
+            'validation_requested_at' => now()->subMinutes(6),
+        ]);
+        $fresh = SitioWeb::factory()->create([
+            'validation_status' => SiteValidationStatus::Pending,
+            'validation_token' => '14141414-1414-4414-8414-141414141414',
+            'validation_requested_at' => now(),
+        ]);
+        Bus::fake();
+
+        $this->assertSame(1, app(RecoverAbandonedSiteValidations::class)->recover());
+        $this->assertSame(0, app(RecoverAbandonedSiteValidations::class)->recover());
+        Bus::assertDispatchedTimes(ValidateScraperSite::class, 1);
+        Bus::assertNotDispatched(ValidateScraperSite::class, fn (ValidateScraperSite $job): bool => $job->siteId === $fresh->id);
+
+        SitioWeb::query()->whereKey($stale->id)->update(['validation_requested_at' => now()->subMinutes(6)]);
+        $this->assertSame(1, app(RecoverAbandonedSiteValidations::class)->recover());
+        Bus::assertDispatchedTimes(ValidateScraperSite::class, 2);
+
+        Http::fake([
+            'https://news.test/' => Http::response('<html><a href="/politica/article-one">Nota</a></html>'),
+            'https://news.test/politica/article-one' => Http::response($this->articleHtml()),
+        ]);
+        $first = new ValidateScraperSite($stale->id, (string) $stale->validation_token);
+        $duplicate = new ValidateScraperSite($stale->id, (string) $stale->validation_token);
+        $first->handle(app(SiteUrlValidator::class));
+        $duplicate->handle(app(SiteUrlValidator::class));
+
+        $this->assertSame(SiteValidationStatus::Valid, $stale->refresh()->validation_status);
+        Http::assertSentCount(2);
+    }
+
+    public function test_lost_pending_dispatch_claim_does_not_dispatch_or_increment_count(): void
+    {
+        config(['scraper.validation_pending_redispatch_after_minutes' => 5]);
+        $site = SitioWeb::factory()->create([
+            'validation_status' => SiteValidationStatus::Pending,
+            'validation_token' => '15151515-1515-4515-8515-151515151515',
+            'validation_requested_at' => now()->subMinutes(6),
+        ]);
+        $intercepted = false;
+        DB::listen(function (QueryExecuted $query) use ($site, &$intercepted): void {
+            if ($intercepted || ! str_starts_with(ltrim($query->sql), 'select') || ! str_contains($query->sql, '"sitios_web"')) {
+                return;
+            }
+
+            $intercepted = true;
+            SitioWeb::query()->whereKey($site->id)->update(['validation_requested_at' => now()]);
+        });
+        Bus::fake();
+
+        $this->assertSame(0, app(RecoverAbandonedSiteValidations::class)->recover());
+        $this->assertTrue($intercepted);
+        Bus::assertNotDispatched(ValidateScraperSite::class);
     }
 
     public function test_stale_token_retry_cannot_resume_newer_validating_work(): void
