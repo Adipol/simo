@@ -7,10 +7,13 @@ namespace Tests\Feature\Scraper;
 use App\Contracts\HostResolver;
 use App\Enums\SiteValidationStatus;
 use App\Jobs\ValidateScraperSite;
+use App\Livewire\Scraper\Sitios;
 use App\Models\Pais;
 use App\Models\SitioWeb;
+use App\Models\User;
 use App\Services\Scraper\RecoverAbandonedSiteValidations;
 use App\Services\Scraper\SiteUrlValidator;
+use Database\Seeders\RolesPermisosSeeder;
 use GuzzleHttp\Promise\PromiseInterface;
 use Illuminate\Contracts\Bus\QueueingDispatcher;
 use Illuminate\Database\Events\QueryExecuted;
@@ -21,6 +24,7 @@ use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Livewire\Livewire;
 use RuntimeException;
 use Tests\TestCase;
 
@@ -64,6 +68,44 @@ final class SiteValidationLifecycleTest extends TestCase
         $this->assertSame(SiteValidationStatus::Valid, $site->validation_status);
         $this->assertTrue($site->activo);
         $this->assertNotNull($site->validated_at);
+    }
+
+    public function test_unrelated_edit_during_validating_state_preserves_activation_request_and_activates_site(): void
+    {
+        $this->seed(RolesPermisosSeeder::class);
+        $admin = User::factory()->create(['activo' => true]);
+        $admin->assignRole('admin');
+        $site = SitioWeb::factory()->create([
+            'url' => 'https://news.test/',
+            'activo' => false,
+            'activation_requested' => true,
+            'validation_status' => SiteValidationStatus::Pending,
+            'validation_token' => '19191919-1919-4919-8919-191919191919',
+        ]);
+
+        $homepageRequested = false;
+        Http::fake(function () use ($admin, $site, &$homepageRequested): PromiseInterface {
+            if (! $homepageRequested) {
+                $homepageRequested = true;
+                Livewire::actingAs($admin)
+                    ->test(Sitios::class)
+                    ->call('abrirModal', $site->id)
+                    ->set('nombre', 'Updated site name')
+                    ->call('guardar')
+                    ->assertOk();
+
+                return Http::response('<html><a href="/politica/article-one">Nota</a></html>');
+            }
+
+            return Http::response($this->articleHtml());
+        });
+
+        (new ValidateScraperSite($site->id, (string) $site->validation_token))->handle(app(SiteUrlValidator::class));
+
+        $site->refresh();
+        $this->assertSame(SiteValidationStatus::Valid, $site->validation_status);
+        $this->assertTrue($site->activation_requested);
+        $this->assertTrue($site->activo);
     }
 
     public function test_default_validation_rejects_long_about_page_without_article_structure_and_keeps_site_inactive(): void
