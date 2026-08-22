@@ -1,16 +1,21 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Livewire\Scraper;
 
 use App\Models\Pais;
 use App\Models\SitioWeb;
+use App\Services\Scraper\SiteManagementService;
+use Illuminate\Contracts\View\View;
+use Illuminate\Support\Collection;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
 use Livewire\WithPagination;
 
 #[Layout('layouts.app', ['title' => 'Sitios Web'])]
-class Sitios extends Component
+final class Sitios extends Component
 {
     use WithPagination;
 
@@ -59,7 +64,7 @@ class Sitios extends Component
             : 'unique:sitios_web,url';
 
         return [
-            'url' => ['required', 'url', 'max:500', $unique],
+            'url' => ['required', 'url:http,https', 'max:500', $unique],
             'nombre' => ['required', 'string', 'max:200'],
             'pais' => ['required', 'exists:paises,codigo'],
             'selector_links' => ['nullable', 'string', 'max:200'],
@@ -95,34 +100,43 @@ class Sitios extends Component
         $this->editandoId = null;
     }
 
-    public function guardar(): void
+    public function guardar(SiteManagementService $service): void
     {
+        $this->authorize('gestionar sitios');
+
         $data = $this->validate();
 
-        if ($this->editandoId) {
-            SitioWeb::where('id', $this->editandoId)->update($data);
-        } else {
-            SitioWeb::create($data);
-        }
+        $site = $this->editandoId ? SitioWeb::findOrFail($this->editandoId) : null;
+        $service->save($site, $data);
 
         $mensaje = $this->editandoId ? 'Sitio actualizado.' : 'Sitio creado.';
         $this->cerrarModal();
-        $this->dispatch('notify', mensaje: $mensaje);
+        $this->dispatch('notify', mensaje: $mensaje.' La validación se ejecutará en segundo plano.');
     }
 
-    public function toggleActivo(int $id): void
+    public function toggleActivo(int $id, SiteManagementService $service): void
     {
+        $this->authorize('gestionar sitios');
+
         $sitio = SitioWeb::findOrFail($id);
-        $sitio->update(['activo' => ! $sitio->activo]);
+        $service->toggleActive($sitio);
+    }
+
+    public function reintentarValidacion(int $id, SiteManagementService $service): void
+    {
+        $this->authorize('gestionar sitios');
+
+        $service->retry(SitioWeb::findOrFail($id));
+        $this->dispatch('notify', mensaje: 'Validación reenviada a la cola.');
     }
 
     #[Computed]
-    public function paises()
+    public function paises(): Collection
     {
         return Pais::orderBy('nombre')->get();
     }
 
-    public function render()
+    public function render(): View
     {
         $q = SitioWeb::with('pais');
 
