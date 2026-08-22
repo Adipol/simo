@@ -192,16 +192,15 @@ final class SiteUrlValidator
     {
         $document = $this->parseHtml($html);
         $title = trim($document->getElementsByTagName('title')->item(0)?->textContent ?? '');
-        $content = $html;
-        if ($selector !== null && trim($selector) !== '') {
-            $nodes = $this->selectorNodes($document, $selector, 'artículo');
-            if ($nodes->count() === 0) {
-                return false;
-            }
-            $content = '';
-            foreach ($nodes as $node) {
-                $content .= ' '.$node->textContent;
-            }
+        $nodes = $selector === null || trim($selector) === ''
+            ? $document->getElementsByTagName('article')
+            : $this->selectorNodes($document, $selector, 'artículo');
+        if ($nodes->count() === 0) {
+            return false;
+        }
+        $content = '';
+        foreach ($nodes as $node) {
+            $content .= ' '.$node->textContent;
         }
         $text = preg_replace('/\s+/u', ' ', strip_tags($content)) ?? '';
 
