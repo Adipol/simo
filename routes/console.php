@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Services\Scraper\RecoverAbandonedSiteValidations;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
@@ -9,6 +10,10 @@ use Illuminate\Support\Facades\Schedule;
 Artisan::command('inspire', function (): void {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
+
+Artisan::command('scraper:recover-site-validations', function (RecoverAbandonedSiteValidations $recovery): void {
+    $this->info("Recovered {$recovery->recover()} abandoned site validations.");
+})->purpose('Return abandoned site validations to the queue');
 
 // Limpieza diaria de log_scripts: huerfanos + politica de retencion
 Schedule::command('simo:limpiar-logs')->dailyAt('03:00');
@@ -30,6 +35,11 @@ Schedule::command('simo:dedupar-pendientes')
 
 Schedule::command('authority-reviews:dispatch-analysis-outbox')
     ->everyMinute()
+    ->withoutOverlapping()
+    ->onOneServer();
+
+Schedule::command('scraper:recover-site-validations')
+    ->everyFiveMinutes()
     ->withoutOverlapping()
     ->onOneServer();
 
