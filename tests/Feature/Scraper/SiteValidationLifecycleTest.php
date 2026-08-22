@@ -66,6 +66,36 @@ final class SiteValidationLifecycleTest extends TestCase
         $this->assertNotNull($site->validated_at);
     }
 
+    public function test_default_validation_rejects_long_about_page_without_article_structure_and_keeps_site_inactive(): void
+    {
+        $title = 'About This Institution';
+        $institutionalText = str_repeat('Institutional information. ', 17).'Overview';
+        $this->assertSame(22, mb_strlen($title));
+        $this->assertSame(467, mb_strlen($institutionalText));
+        $site = SitioWeb::factory()->create([
+            'url' => 'https://news.test/',
+            'selector_links' => null,
+            'selector_article' => null,
+            'activo' => false,
+            'activation_requested' => true,
+            'validation_status' => SiteValidationStatus::Pending,
+            'validation_token' => '17171717-1717-4717-8717-171717171717',
+        ]);
+        Http::fake([
+            'https://news.test/' => Http::response('<a href="/about">About</a>'),
+            'https://news.test/about' => Http::response(
+                '<html><head><title>'.$title.'</title></head><body><main><p>'.$institutionalText.'</p></main></body></html>'
+            ),
+        ]);
+
+        (new ValidateScraperSite($site->id, (string) $site->validation_token))->handle(app(SiteUrlValidator::class));
+
+        $site->refresh();
+        $this->assertSame(SiteValidationStatus::Failed, $site->validation_status);
+        $this->assertFalse($site->activo);
+        $this->assertStringContainsString('contenido periodístico suficiente', (string) $site->validation_diagnostic);
+    }
+
     public function test_withdrawal_during_validation_keeps_successful_site_inactive(): void
     {
         $site = SitioWeb::factory()->create([
