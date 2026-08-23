@@ -118,14 +118,19 @@ class Resultados extends Component
 
     public function marcarRelevante(int $id, bool $valor): void
     {
-        ResultadoScraping::where('id', $id)->update(['relevante' => $valor]);
+        ResultadoScraping::where('id', $id)->update(
+            $valor
+                ? ['relevante' => true, 'descartado' => false]
+                : ['relevante' => false]
+        );
     }
 
     public function descartar(int $id): void
     {
         ResultadoScraping::where('id', $id)->update([
             'descartado' => true,
-            'leido' => true, // marcar leido tambien
+            'relevante' => false,
+            'leido' => true,
         ]);
     }
 
