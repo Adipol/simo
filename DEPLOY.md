@@ -28,10 +28,134 @@ sudo apt install -y php8.5-cli php8.5-fpm php8.5-pgsql php8.5-mbstring \
 
 ---
 
+## Respaldo PostgreSQL previo al deploy
+
+Este respaldo lógico de `simo` es una medida de rollback para el deploy, no un plan completo de recuperación ante desastres. En PostgreSQL 17, `pg_dump` genera una copia consistente de una sola base de datos mientras lectores y escritores concurrentes continúan operando. El formato personalizado (`--format=custom` / `-Fc`) se restaura con `pg_restore`.
+
+`pg_dump` no incluye objetos globales del clúster, como roles y tablespaces; una estrategia de recuperación integral debe respaldarlos por separado con `pg_dumpall`. Este procedimiento tampoco elimina ni rota respaldos anteriores.
+
+Ejecutar este bloque en el VPS **antes de actualizar el código**:
+
+```bash
+(
+    set -euo pipefail
+
+    backup_dir=/var/backups/simo
+    database=simo
+
+    if sudo test -L "$backup_dir"; then
+        printf 'ERROR: %s debe ser un directorio real, no un enlace simbólico.\n' "$backup_dir" >&2
+        exit 1
+    fi
+
+    if ! sudo test -d "$backup_dir"; then
+        printf 'ERROR: no existe el directorio requerido; créelo como root: %s\n' "$backup_dir" >&2
+        exit 1
+    fi
+
+    dir_uid="$(sudo stat --format='%u' -- "$backup_dir")"
+    dir_mode="$(sudo stat --format='%a' -- "$backup_dir")"
+
+    if [[ "$dir_uid" != 0 ]]; then
+        printf 'ERROR: %s debe pertenecer a root; propietario UID actual: %s.\n' \
+            "$backup_dir" "$dir_uid" >&2
+        exit 1
+    fi
+
+    if [[ ! "$dir_mode" =~ ^[0-7]{3,4}$ ]]; then
+        printf 'ERROR: no se pudo interpretar el modo octal de %s: %s.\n' \
+            "$backup_dir" "$dir_mode" >&2
+        exit 1
+    fi
+
+    if (( (8#${dir_mode} & 8#022) != 0 )); then
+        printf 'ERROR: %s no debe permitir escritura de grupo/otros; modo actual: %s.\n' \
+            "$backup_dir" "$dir_mode" >&2
+        exit 1
+    fi
+
+    if ! sudo -u postgres test -x "$backup_dir"; then
+        printf 'ERROR: postgres no puede atravesar %s; ajuste permisos/ACL sin habilitar escritura.\n' \
+            "$backup_dir" >&2
+        exit 1
+    fi
+
+    short_head="$(sudo -u www-data git -C /var/www/simo rev-parse --short=12 HEAD)"
+    timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    final_path="${backup_dir}/simo_pre_${short_head}_${timestamp}.dump"
+
+    if sudo test -e "$final_path" || sudo test -L "$final_path"; then
+        printf 'ERROR: el destino ya existe; no se sobrescribirá: %s\n' "$final_path" >&2
+        exit 1
+    fi
+
+    cleanup_partial() {
+        status=$?
+        trap - EXIT
+        if (( status != 0 )); then
+            sudo rm -f -- "$partial_path" || true
+        fi
+        exit "$status"
+    }
+
+    partial_path="$(sudo mktemp --tmpdir="$backup_dir" \
+        "simo_pre_${short_head}_${timestamp}.XXXXXXXXXX.partial")"
+    trap cleanup_partial EXIT
+
+    sudo chown postgres:postgres -- "$partial_path"
+    sudo chmod 0600 -- "$partial_path"
+
+    sudo -u postgres pg_dump \
+        --format=custom \
+        --dbname="$database" \
+        --file="$partial_path"
+
+    if ! sudo test -s "$partial_path"; then
+        printf 'ERROR: pg_dump no produjo un archivo no vacío.\n' >&2
+        exit 1
+    fi
+
+    sudo -u postgres pg_restore --list "$partial_path" >/dev/null
+    sudo -u postgres sync -f "$partial_path"
+
+    sudo mv --no-clobber --no-target-directory -- "$partial_path" "$final_path"
+    if sudo test -e "$partial_path" || sudo test -L "$partial_path"; then
+        printf 'ERROR: el destino apareció durante la operación; no se sobrescribió.\n' >&2
+        exit 1
+    fi
+
+    sudo -u postgres sync -f "$final_path"
+
+    owner="$(sudo stat --format='%U:%G' -- "$final_path")"
+    mode="$(sudo stat --format='%a' -- "$final_path")"
+    size_bytes="$(sudo stat --format='%s' -- "$final_path")"
+
+    if [[ "$owner" != postgres:postgres || "$mode" != 600 ]]; then
+        printf 'ERROR: ownership o permisos finales inesperados.\n' >&2
+        exit 1
+    fi
+
+    printf 'DATABASE=%s\nHEAD=%s\nCREATED_UTC=%s\nSIZE_BYTES=%s\nOWNER=%s\nMODE=%s\nBACKUP_READY=%s\n' \
+        "$database" "$short_head" "$timestamp" "$size_bytes" "$owner" "$mode" "$final_path"
+)
+```
+
+En el VPS Ubuntu/Debian objetivo, `sync -f` solicita vaciar al almacenamiento el sistema de archivos que contiene el archivo antes y después del renombrado atómico. El deploy **debe detenerse** salvo que el operador confirme que el nuevo archivo indicado por `BACKUP_READY` corresponde al `HEAD` actual y a la ventana de deploy en curso.
+
+`pg_restore --list` valida que el archivo sea legible y permite recorrer su tabla de contenidos (TOC), pero no demuestra que una restauración completa sea exitosa. El simulacro de restauración debe realizarse en un entorno aislado que no sea producción.
+
+> **Límite de rollback:** un dump lógico no revierte automáticamente el código ni las migraciones de la aplicación. Nunca debe restaurarse de forma casual sobre la base de datos activa; una restauración requiere un procedimiento separado, revisado y ensayado.
+
+---
+
 ## Workflow de actualización en VPS
+
+**Precondición obligatoria:** el respaldo anterior debe haber finalizado correctamente y el operador debe haber confirmado un `BACKUP_READY` nuevo y vigente. No ejecutar `artisan migrate` si esa confirmación falta.
 
 ```bash
 sudo -u www-data git -C /var/www/simo pull origin main
+
+# PUERTA DE CONTROL: detenerse aquí si no se confirmó el BACKUP_READY vigente.
 sudo -u www-data php /var/www/simo/artisan migrate
 
 # Si el pull trae cambios de UI (blade / css / js), recompilar los assets.
