@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Pep\CambioDiagnosticExportController;
 use App\Http\Controllers\ProfileController;
 use App\Livewire\Admin\PrecisionDashboard;
 use App\Livewire\Configuracion\Paises;
@@ -51,6 +52,10 @@ Route::middleware(['auth', 'usuario.activo'])->group(function () {
 
     // PEP Monitor — lectura (todos los roles)
     Route::get('/pep/cambios', Cambios::class)->name('pep.cambios');
+
+    Route::get('/pep/cambios/diagnostico.ndjson', CambioDiagnosticExportController::class)
+        ->middleware('permission:gestionar resultados')
+        ->name('pep.cambios.diagnostic-export');
 
     // PEP Monitor — gestion (admin y supervisor)
     Route::get('/pep/fuentes', Fuentes::class)

@@ -24,6 +24,16 @@
             <option value="medio">Riesgo medio</option>
             <option value="bajo">Riesgo bajo</option>
         </select>
+        @can('gestionar resultados')
+            <a href="{{ route('pep.cambios.diagnostic-export') }}"
+               class="simo-btn bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 ml-auto"
+               data-testid="cambios-diagnostic-export">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 7H7a2 2 0 01-2-2V6a2 2 0 012-2h5l5 5v9a2 2 0 01-2 2z"/>
+                </svg>
+                Descargar muestra diagnóstica
+            </a>
+        @endcan
     </div>
 
     {{-- Banner contextual --}}

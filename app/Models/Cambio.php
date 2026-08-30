@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Facades\DB;
 
 class Cambio extends Model
@@ -40,6 +41,11 @@ class Cambio extends Model
     public function fuente(): BelongsTo
     {
         return $this->belongsTo(Fuente::class, 'fuente_id');
+    }
+
+    public function authorityRemovalReview(): HasOne
+    {
+        return $this->hasOne(AuthorityRemovalReview::class, 'cambio_confirmado_id');
     }
 
     /**
