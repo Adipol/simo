@@ -49,18 +49,13 @@ Ejecutar este bloque en el VPS **antes de actualizar el código**:
     fi
 
     if ! sudo test -d "$backup_dir"; then
-        printf 'ERROR: no existe el directorio requerido; créelo como root: %s\n' "$backup_dir" >&2
+        printf 'ERROR: no existe el directorio requerido; créelo con un modelo de ownership permitido: %s\n' \
+            "$backup_dir" >&2
         exit 1
     fi
 
-    dir_uid="$(sudo stat --format='%u' -- "$backup_dir")"
+    dir_owner="$(sudo stat --format='%U' -- "$backup_dir")"
     dir_mode="$(sudo stat --format='%a' -- "$backup_dir")"
-
-    if [[ "$dir_uid" != 0 ]]; then
-        printf 'ERROR: %s debe pertenecer a root; propietario UID actual: %s.\n' \
-            "$backup_dir" "$dir_uid" >&2
-        exit 1
-    fi
 
     if [[ ! "$dir_mode" =~ ^[0-7]{3,4}$ ]]; then
         printf 'ERROR: no se pudo interpretar el modo octal de %s: %s.\n' \
@@ -74,9 +69,31 @@ Ejecutar este bloque en el VPS **antes de actualizar el código**:
         exit 1
     fi
 
+    case "$dir_owner" in
+        postgres)
+            if (( 8#${dir_mode} != 8#700 )); then
+                printf 'ERROR: con owner postgres, %s debe tener modo 0700 exacto; modo actual: %s.\n' \
+                    "$backup_dir" "$dir_mode" >&2
+                exit 1
+            fi
+            ;;
+        root)
+            ;;
+        *)
+            printf 'ERROR: owner no permitido para %s: %s; use postgres con modo 0700 o root con permisos seguros.\n' \
+                "$backup_dir" "$dir_owner" >&2
+            exit 1
+            ;;
+    esac
+
     if ! sudo -u postgres test -x "$backup_dir"; then
-        printf 'ERROR: postgres no puede atravesar %s; ajuste permisos/ACL sin habilitar escritura.\n' \
-            "$backup_dir" >&2
+        if [[ "$dir_owner" == root ]]; then
+            printf 'ERROR: con owner root, postgres debe poder atravesar %s; ajuste permisos/ACL sin habilitar escritura.\n' \
+                "$backup_dir" >&2
+        else
+            printf 'ERROR: postgres no puede atravesar %s con modo 0700; revise los permisos de sus directorios padre.\n' \
+                "$backup_dir" >&2
+        fi
         exit 1
     fi
 
