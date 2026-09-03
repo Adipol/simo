@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Enums\AuthorityRemovalReviewStatus;
+use App\Enums\CambioFeedStatus;
 use App\Exceptions\AuthorityRemovalReviewStale;
 use App\Models\AuthorityRemovalReview;
 use App\Models\AuthorityReviewAnalysisOutbox;
 use App\Models\Cambio;
 use App\Models\Snapshot;
 use App\Models\User;
+use App\Services\Pep\AuthorityEventFeedService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -19,6 +21,7 @@ final class AuthorityRemovalReviewService
 {
     public function __construct(
         private readonly AuthorityReviewAnalysisOutboxService $outbox,
+        private readonly AuthorityEventFeedService $feed,
     ) {}
 
     public function confirm(int $reviewId, User $actor, array $evidence = []): AuthorityRemovalReview
@@ -48,6 +51,11 @@ final class AuthorityRemovalReviewService
                 throw new AuthorityRemovalReviewStale('The trusted authority baseline or review fingerprint changed.');
             }
 
+            $authorityPayload = $this->feed->assertPrimaryEligible([
+                'version' => 1,
+                'events' => $review->eventos_propuestos_json,
+            ]);
+
             $cambio = Cambio::withoutEvents(static fn (): Cambio => Cambio::create([
                 'fuente_id' => $review->fuente_id,
                 'hash_anterior' => $review->evidencia_json['baseline_hash'] ?? $snapshot->hash,
@@ -56,10 +64,8 @@ final class AuthorityRemovalReviewService
                 'lineas_nuevas' => 0,
                 'diff_texto' => '',
                 'posibles_peps' => '',
-                'autoridades_eventos_json' => [
-                    'version' => 1,
-                    'events' => $review->eventos_propuestos_json,
-                ],
+                'autoridades_eventos_json' => $authorityPayload->toArray(),
+                'feed_status' => CambioFeedStatus::Primary,
             ]));
 
             $snapshot->update(['autoridades_json' => $review->candidato_json]);

@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Tests\Feature\Services;
 
 use App\Enums\AuthorityRemovalReviewStatus;
+use App\Enums\CambioFeedStatus;
 use App\Exceptions\AuthorityRemovalReviewStale;
+use App\Exceptions\Pep\InvalidAuthorityEventPayload;
 use App\Jobs\ProcessAuthorityReviewAnalysis;
 use App\Models\AuthorityRemovalReview;
 use App\Models\AuthorityReviewAnalysisOutbox;
@@ -38,6 +40,17 @@ final class AuthorityRemovalReviewServiceTest extends TestCase
         $this->assertSame([['cargo' => 'Director', 'persona' => 'Ana']], $snapshot->fresh()->autoridades_json);
         $this->assertDatabaseCount('cambios', 2);
         $this->assertDatabaseHas('cambios', ['id' => $resolved->cambio_confirmado_id]);
+        $confirmedCambio = Cambio::query()->findOrFail($resolved->cambio_confirmado_id);
+        $this->assertSame(CambioFeedStatus::Primary, $confirmedCambio->feed_status);
+        $this->assertSame([
+            'version' => 1,
+            'events' => [[
+                'type' => 'remocion',
+                'old' => ['cargo' => 'Auditor', 'persona' => 'Luis'],
+                'new' => null,
+            ]],
+        ], $confirmedCambio->autoridades_eventos_json);
+        $this->assertTrue(Cambio::primaryFeed()->whereKey($confirmedCambio->id)->exists());
         $this->assertSame('simultaneous text change', $unrelatedCambio->fresh()->diff_texto);
         Queue::assertPushed(ProcessAuthorityReviewAnalysis::class, 1);
         $this->assertNotNull($review->fresh()->analisis_despachado_at);
@@ -100,6 +113,31 @@ final class AuthorityRemovalReviewServiceTest extends TestCase
             $this->assertSame(AuthorityRemovalReviewStatus::Pending, $review->fresh()->estado);
             Queue::assertNothingPushed();
             $this->assertDatabaseCount('authority_review_analysis_outbox', 0);
+        }
+    }
+
+    public function test_confirm_rejects_invalid_structured_events_without_creating_cambio(): void
+    {
+        Queue::fake();
+        [$review, $snapshot, $actor] = $this->scenario();
+        $originalRoster = $snapshot->autoridades_json;
+        $review->update([
+            'eventos_propuestos_json' => [[
+                'type' => 'remocion',
+                'old' => null,
+                'new' => null,
+            ]],
+        ]);
+
+        try {
+            app(AuthorityRemovalReviewService::class)->confirm($review->id, $actor);
+            $this->fail('Expected invalid authority event payload exception.');
+        } catch (InvalidAuthorityEventPayload) {
+            $this->assertSame(AuthorityRemovalReviewStatus::Pending, $review->fresh()->estado);
+            $this->assertSame($originalRoster, $snapshot->fresh()->autoridades_json);
+            $this->assertDatabaseCount('cambios', 1);
+            $this->assertDatabaseCount('authority_review_analysis_outbox', 0);
+            Queue::assertNothingPushed();
         }
     }
 
