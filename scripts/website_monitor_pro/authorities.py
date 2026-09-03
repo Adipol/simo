@@ -15,6 +15,13 @@ from typing import Callable
 
 _TITLES = re.compile(r"^(?:dr|dra|lic|ing|sr|sra|señor|señora)\.?\s+", re.IGNORECASE)
 
+PRIMARY_FEED = "primary"
+REVIEW_FEED = "review"
+SUPPRESSED_FEED = "suppressed"
+SOURCE_HEALTH_FEED = "source_health"
+FEED_STATUSES = frozenset({PRIMARY_FEED, REVIEW_FEED, SUPPRESSED_FEED, SOURCE_HEALTH_FEED})
+CANONICAL_EVENT_TYPES = frozenset({"designacion", "remocion", "reemplazo", "cambio_cargo"})
+
 
 def normalize_for_match(value: str) -> str:
     """Normalize case, accents, titles and whitespace without changing display text."""
@@ -123,3 +130,54 @@ def compare_authorities(previous: list[Authority], current: list[Authority]) -> 
     events.extend(_event("remocion", old, None) for old in sorted(old_remaining, key=lambda item: (item.normalized_cargo, item.normalized_persona)))
     events.extend(_event("designacion", None, new) for new in sorted(new_remaining, key=lambda item: (item.normalized_cargo, item.normalized_persona)))
     return events
+
+
+def is_valid_authority_event_payload(payload: object) -> bool:
+    """Return whether payload is a non-empty canonical authority-event envelope."""
+    if not isinstance(payload, dict) or type(payload.get("version")) is not int or payload["version"] != 1:
+        return False
+
+    events = payload.get("events")
+    if not isinstance(events, list) or not events:
+        return False
+
+    return all(_is_valid_event(event) for event in events)
+
+
+def classify_authority_event_payload(payload: object) -> str:
+    """Classify deterministic valid events as primary and all other input as review."""
+    return PRIMARY_FEED if is_valid_authority_event_payload(payload) else REVIEW_FEED
+
+
+def _is_valid_event(event: object) -> bool:
+    if not isinstance(event, dict) or event.get("type") not in CANONICAL_EVENT_TYPES:
+        return False
+
+    event_type = event["type"]
+    if event_type == "designacion":
+        return _is_null_field(event, "old") and _is_valid_authority(event.get("new"))
+    if event_type == "remocion":
+        return _is_valid_authority(event.get("old")) and _is_null_field(event, "new")
+
+    return _is_valid_authority(event.get("old")) and _is_valid_authority(event.get("new"))
+
+
+def _is_null_field(event: dict[object, object], key: str) -> bool:
+    return key in event and event[key] is None
+
+
+def _is_valid_authority(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+
+    return all(
+        isinstance(value.get(field), str) and _has_non_whitespace_character(value[field])
+        for field in ("cargo", "persona")
+    )
+
+
+def _has_non_whitespace_character(value: str) -> bool:
+    return any(
+        unicodedata.category(char)[0] != "Z" and char not in "\t\n\v\f\r\u0085"
+        for char in value
+    )

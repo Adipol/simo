@@ -41,7 +41,16 @@ import psycopg2
 import psycopg2.extras
 from pathlib import Path
 from dotenv import load_dotenv
-from authorities import Authority, compare_authorities, extract_authorities
+from authorities import (
+    FEED_STATUSES,
+    PRIMARY_FEED,
+    REVIEW_FEED,
+    Authority,
+    classify_authority_event_payload,
+    compare_authorities,
+    extract_authorities,
+    is_valid_authority_event_payload,
+)
 
 # Cargamos DOS archivos .env en orden:
 #   1) scripts/website_monitor_pro/.env — credenciales propias del scraper
@@ -462,7 +471,7 @@ class DatabaseManager:
             self.connection.autocommit = False
             self.cursor.execute(
                 """UPDATE revisiones_remocion_autoridades
-                   SET estado = 'superseded', updated_at = NOW()
+                   SET estado = 'superseded', lifecycle_key = id, updated_at = NOW()
                    WHERE fuente_id = %s AND estado = 'pending'
                      AND lifecycle_key = 0 AND fingerprint <> %s""",
                 (fuente_id, fingerprint),
@@ -569,6 +578,7 @@ class DatabaseManager:
         *,
         imagenes: Optional[list[dict]] = None,
         autoridades_eventos: Optional[list[dict]] = None,
+        feed_status: str = REVIEW_FEED,
     ) -> Optional[int]:
         """
         Inserta un cambio detectado en la tabla cambios.
@@ -583,11 +593,22 @@ class DatabaseManager:
         """
         self._ensure_connection()
         imagenes_json = json.dumps(imagenes) if imagenes else None
+        if feed_status not in FEED_STATUSES:
+            raise ValueError(f"Unsupported cambio feed status: {feed_status}")
+        authority_payload = (
+            {"version": 1, "events": autoridades_eventos}
+            if autoridades_eventos
+            else None
+        )
+        persisted_feed_status = feed_status
+        if feed_status == PRIMARY_FEED and not is_valid_authority_event_payload(authority_payload):
+            persisted_feed_status = REVIEW_FEED
         self.cursor.execute(
             """INSERT INTO cambios
                (fuente_id, hash_anterior, hash_nuevo, lineas_quitadas,
-                 lineas_nuevas, diff_texto, posibles_peps, imagenes_cambio_json, autoridades_eventos_json)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 lineas_nuevas, diff_texto, posibles_peps, imagenes_cambio_json,
+                 autoridades_eventos_json, feed_status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                RETURNING id""",
             (
                 fuente_id,
@@ -598,7 +619,8 @@ class DatabaseManager:
                 diff_texto,
                 posibles_peps,
                 imagenes_json,
-                json.dumps({"version": 1, "events": autoridades_eventos}) if autoridades_eventos else None,
+                json.dumps(authority_payload) if authority_payload else None,
+                persisted_feed_status,
             ),
         )
         row = self.cursor.fetchone()
@@ -2040,6 +2062,9 @@ class PEPMonitor:
                 # Cambio solo de imagen, sin diff de texto
                 diff = {"quitadas": [], "nuevas": [], "diff_texto": "", "posibles_peps": ""}
 
+            authority_payload = {"version": 1, "events": eventos_autoridades}
+            feed_status = classify_authority_event_payload(authority_payload)
+
             cambio_id = self.db.guardar_cambio(
                 fuente_id=fuente_id,
                 hash_anterior=snapshot_anterior["hash"],
@@ -2049,6 +2074,7 @@ class PEPMonitor:
                 diff_texto=diff.get("diff_texto", ""),
                 posibles_peps=diff.get("posibles_peps", ""),
                 autoridades_eventos=eventos_autoridades,
+                feed_status=feed_status,
                 # imagenes: None por ahora — se actualiza después del guardado a disco
             )
 

@@ -7,7 +7,13 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from authorities import Authority, compare_authorities, extract_authorities
+from authorities import (
+    Authority,
+    classify_authority_event_payload,
+    compare_authorities,
+    extract_authorities,
+    is_valid_authority_event_payload,
+)
 from pep_monitor import DatabaseManager, PEPMonitor
 
 
@@ -84,6 +90,89 @@ def test_comparator_detects_job_change_without_double_counting() -> None:
     assert [event["type"] for event in events] == ["cambio_cargo"]
 
 
+def test_feed_validator_admits_all_four_canonical_event_types() -> None:
+    authority = {"cargo": "Directora", "persona": "Ana Pérez"}
+    payload = {
+        "version": 1,
+        "events": [
+            {"type": "designacion", "old": None, "new": authority},
+            {"type": "remocion", "old": authority, "new": None},
+            {"type": "reemplazo", "old": authority, "new": authority},
+            {"type": "cambio_cargo", "old": authority, "new": authority},
+        ],
+    }
+
+    assert is_valid_authority_event_payload(payload) is True
+    assert classify_authority_event_payload(payload) == "primary"
+
+
+def test_feed_validator_rejects_empty_malformed_and_unknown_events() -> None:
+    invalid_payloads = [
+        None,
+        {"version": 1, "events": []},
+        {"version": 2, "events": [{"type": "designacion"}]},
+        {"version": 1, "events": [{"type": "editorial", "old": None, "new": None}]},
+        {"version": 1, "events": [{"type": "designacion", "old": None, "new": {"cargo": "", "persona": "Ana"}}]},
+        {"version": 1, "events": [{"type": "remocion", "old": None, "new": None}]},
+    ]
+
+    for payload in invalid_payloads:
+        assert is_valid_authority_event_payload(payload) is False
+        assert classify_authority_event_payload(payload) == "review"
+
+
+def test_feed_validator_enforces_version_and_unicode_whitespace_boundary() -> None:
+    def payload(version: object, field: str = "cargo", value: str = "Directora") -> dict[str, object]:
+        authority = {"cargo": "Directora", "persona": "Ana Pérez"}
+        authority[field] = value
+        return {
+            "version": version,
+            "events": [{"type": "designacion", "old": None, "new": authority}],
+        }
+
+    assert is_valid_authority_event_payload(payload(1)) is True
+    assert is_valid_authority_event_payload(payload(1.0)) is False
+
+    values = [
+        ("Directora", True),
+        ("", False),
+        ("   ", False),
+        ("\t\n", False),
+        ("\u00a0", False),
+    ]
+    for value, expected in values:
+        for field in ("cargo", "persona"):
+            assert is_valid_authority_event_payload(payload(1, field, value)) is expected
+
+
+def test_database_manager_downgrades_invalid_primary_and_defaults_unstructured_to_review() -> None:
+    db = object.__new__(DatabaseManager)
+    db.connection = MagicMock(closed=False)
+    db.cursor = MagicMock()
+    db.cursor.fetchone.side_effect = [{"id": 1}, {"id": 2}]
+
+    common = {
+        "fuente_id": 13,
+        "hash_anterior": "a" * 64,
+        "hash_nuevo": "b" * 64,
+        "lineas_quitadas": 1,
+        "lineas_nuevas": 1,
+        "diff_texto": "changed",
+        "posibles_peps": "Ana",
+    }
+    db.guardar_cambio(
+        **common,
+        autoridades_eventos=[{"type": "remocion", "old": None, "new": None}],
+        feed_status="primary",
+    )
+    db.guardar_cambio(**common)
+
+    first_params = db.cursor.execute.call_args_list[0].args[1]
+    second_params = db.cursor.execute.call_args_list[1].args[1]
+    assert first_params[-1] == "review"
+    assert second_params[-1] == "review"
+
+
 def test_review_handoff_commits_atomically_and_returns_existing_terminal_status() -> None:
     db = object.__new__(DatabaseManager)
     db.connection = MagicMock(autocommit=True, closed=False)
@@ -127,6 +216,105 @@ def test_restored_roster_releases_terminal_fingerprint_for_later_recurrence() ->
         restoration_sql = db.cursor.execute.call_args_list[3].args[0]
         assert "lifecycle_key = id" in restoration_sql
         assert "lifecycle_key = 0" in db.cursor.execute.call_args_list[-2].args[0]
+
+
+def test_recurring_reduction_opens_new_pending_review_and_preserves_history() -> None:
+    db = object.__new__(DatabaseManager)
+    db.connection = MagicMock(autocommit=True, closed=False)
+    db.cursor = MagicMock()
+    rows: list[dict[str, object]] = []
+    selected: dict[str, str] | None = None
+
+    def execute(sql: str, params: tuple[object, ...]) -> None:
+        nonlocal selected
+        statement = " ".join(sql.split())
+        selected = None
+
+        if statement.startswith("UPDATE revisiones_remocion_autoridades"):
+            fuente_id, fingerprint = params
+            for row in rows:
+                is_replaced_pending = (
+                    row["estado"] == "pending"
+                    and row["fingerprint"] != fingerprint
+                )
+                if (
+                    row["fuente_id"] == fuente_id
+                    and row["lifecycle_key"] == 0
+                    and is_replaced_pending
+                ):
+                    row["estado"] = "superseded"
+                    if "lifecycle_key = id" in statement:
+                        row["lifecycle_key"] = row["id"]
+            return
+
+        if statement.startswith("INSERT INTO revisiones_remocion_autoridades"):
+            fuente_id = params[0]
+            fingerprint = params[-1]
+            conflict = next((
+                row for row in rows
+                if row["fuente_id"] == fuente_id
+                and row["fingerprint"] == fingerprint
+                and row["lifecycle_key"] == 0
+            ), None)
+            if conflict is None:
+                rows.append({
+                    "id": len(rows) + 1,
+                    "fuente_id": fuente_id,
+                    "fingerprint": fingerprint,
+                    "lifecycle_key": 0,
+                    "estado": "pending",
+                })
+                selected = {"estado": "pending"}
+            elif conflict["estado"] == "pending":
+                selected = {"estado": "pending"}
+            return
+
+        if statement.startswith("SELECT estado"):
+            fuente_id, fingerprint = params
+            conflict = next(
+                row for row in rows
+                if row["fuente_id"] == fuente_id
+                and row["fingerprint"] == fingerprint
+                and row["lifecycle_key"] == 0
+            )
+            selected = {"estado": str(conflict["estado"])}
+            return
+
+        raise AssertionError(f"Unexpected SQL: {statement}")
+
+    db.cursor.execute.side_effect = execute
+    db.cursor.fetchone.side_effect = lambda: selected
+    baseline = [
+        {"cargo": "Director", "persona": "Ana"},
+        {"cargo": "Auditor", "persona": "Luis"},
+    ]
+    reduction_a = [baseline[0]]
+    reduction_b = [baseline[1]]
+
+    def register(candidate: list[dict]) -> str:
+        return db.registrar_revision_remocion_autoridades(
+            13,
+            22,
+            baseline,
+            candidate,
+            [{"type": "remocion"}],
+            {"version": 1},
+        )
+
+    statuses = [register(reduction_a), register(reduction_b), register(reduction_a)]
+
+    assert statuses == [
+        "pending",
+        "pending",
+        "pending",
+    ], statuses
+    assert [row["estado"] for row in rows] == [
+        "superseded",
+        "superseded",
+        "pending",
+    ]
+    assert rows[0]["fingerprint"] == rows[2]["fingerprint"]
+    assert [row["lifecycle_key"] for row in rows] == [1, 2, 0]
 
 
 def test_review_handoff_rolls_back_as_one_transaction() -> None:
@@ -186,6 +374,7 @@ def test_monitor_persists_structured_event_when_flat_text_is_unchanged() -> None
     assert kwargs["lineas_nuevas"] == 0
     assert kwargs["autoridades_eventos"][0]["type"] == "reemplazo"
     assert kwargs["autoridades_eventos"][0]["new"]["persona"] == "Lic. Ana Pérez"
+    assert kwargs["feed_status"] == "primary"
     alert.assert_called_once()
     assert call_order == ["alert", "snapshot"]
     assert db.guardar_snapshot.call_args.args[4][0].persona == "Lic. Ana Pérez"
@@ -222,6 +411,7 @@ def test_monitor_automatically_persists_removals_for_explicitly_empty_roster() -
         monitor.procesar_fuente(fuente)
 
     assert db.guardar_cambio.call_args.kwargs["autoridades_eventos"][0]["type"] == "remocion"
+    assert db.guardar_cambio.call_args.kwargs["feed_status"] == "primary"
     assert db.guardar_snapshot.call_args.args[4] == []
     db.registrar_revision_remocion_autoridades.assert_not_called()
 
@@ -252,6 +442,7 @@ def test_monitor_preserves_baseline_when_configured_markup_no_longer_matches() -
         monitor.procesar_fuente(fuente)
 
     assert db.guardar_cambio.call_args.kwargs["autoridades_eventos"] == []
+    assert db.guardar_cambio.call_args.kwargs["feed_status"] == "review"
     db.registrar_revision_remocion_autoridades.assert_not_called()
     assert [item.to_dict() for item in db.guardar_snapshot.call_args.args[4]] == previous
 
@@ -335,6 +526,7 @@ def test_monitor_persists_simultaneous_text_change_while_reduction_is_pending() 
     kwargs = db.guardar_cambio.call_args.kwargs
     assert kwargs["diff_texto"] == "- contenido anterior\n+ contenido nuevo"
     assert kwargs["autoridades_eventos"] == []
+    assert kwargs["feed_status"] == "review"
     payload = db.guardar_snapshot.call_args.args[4]
     assert payload[-1]["_authority_roster"]["pending"] == [previous[0]]
     assert db.registrar_fuente_run.call_args.kwargs["estado"] == "success"
@@ -465,6 +657,7 @@ def test_monitor_replaces_pending_reduction_and_clears_it_on_full_roster() -> No
     )
     run(expanded)
     assert db.guardar_cambio.call_args.kwargs["autoridades_eventos"][0]["type"] == "designacion"
+    assert db.guardar_cambio.call_args.kwargs["feed_status"] == "primary"
     assert all(isinstance(item, Authority) for item in db.guardar_snapshot.call_args.args[4])
 
 
@@ -518,6 +711,7 @@ def test_monitor_treats_known_empty_baseline_as_designations() -> None:
         monitor.procesar_fuente(fuente)
 
     assert db.guardar_cambio.call_args.kwargs["autoridades_eventos"][0]["type"] == "designacion"
+    assert db.guardar_cambio.call_args.kwargs["feed_status"] == "primary"
 
 
 def test_monitor_does_not_fabricate_removals_without_configured_extractor() -> None:

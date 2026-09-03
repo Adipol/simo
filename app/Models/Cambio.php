@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Models;
 
+use App\Enums\CambioFeedStatus;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -22,6 +23,7 @@ class Cambio extends Model
     protected $fillable = [
         'fuente_id', 'fecha', 'hash_anterior', 'hash_nuevo',
         'lineas_quitadas', 'lineas_nuevas', 'diff_texto', 'autoridades_eventos_json',
+        'feed_status',
         'posibles_peps', 'revisado', 'revisado_at',
         'gemini_analyzed', 'gemini_analyzed_at', 'gemini_analisis_json',
         'imagenes_cambio_json',
@@ -36,6 +38,7 @@ class Cambio extends Model
         'gemini_analisis_json' => 'array',
         'imagenes_cambio_json' => 'array',
         'autoridades_eventos_json' => 'array',
+        'feed_status' => CambioFeedStatus::class,
     ];
 
     public function fuente(): BelongsTo
@@ -177,6 +180,27 @@ class Cambio extends Model
     }
 
     /**
+     * Scope: validated canonical authority events admitted to the primary feed.
+     *
+     * The JSON predicate mirrors AuthorityEventFeedService so a malformed payload
+     * cannot enter the feed even if its persisted destination was set incorrectly.
+     */
+    public function scopePrimaryFeed(Builder $query): Builder
+    {
+        return $query
+            ->where('feed_status', CambioFeedStatus::Primary)
+            ->whereRaw($this->primaryFeedPayloadPredicate());
+    }
+
+    /**
+     * Scope: uncertain changes awaiting human review.
+     */
+    public function scopeReviewFeed(Builder $query): Builder
+    {
+        return $query->where('feed_status', CambioFeedStatus::Review);
+    }
+
+    /**
      * Scope: cambios con persona detectada.
      *
      * Regla:
@@ -250,5 +274,111 @@ class Cambio extends Model
         }
 
         return array_filter(explode("\n", $this->posibles_peps));
+    }
+
+    /**
+     * Validate every JSON event in SQL so pagination and aggregate counts share
+     * exactly the same admission boundary on PostgreSQL and SQLite.
+     */
+    private function primaryFeedPayloadPredicate(): string
+    {
+        return match (DB::getDriverName()) {
+            'pgsql' => <<<'SQL'
+                jsonb_typeof(autoridades_eventos_json::jsonb) = 'object'
+                AND jsonb_typeof(autoridades_eventos_json::jsonb->'version') = 'number'
+                AND autoridades_eventos_json::jsonb->>'version' = '1'
+                AND jsonb_typeof(autoridades_eventos_json::jsonb->'events') = 'array'
+                AND jsonb_array_length(CASE WHEN jsonb_typeof(autoridades_eventos_json::jsonb->'events') = 'array' THEN autoridades_eventos_json::jsonb->'events' ELSE '[]'::jsonb END) > 0
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM jsonb_array_elements(CASE WHEN jsonb_typeof(autoridades_eventos_json::jsonb->'events') = 'array' THEN autoridades_eventos_json::jsonb->'events' ELSE '[]'::jsonb END) AS authority_event(value)
+                    WHERE (
+                        (
+                            authority_event.value->>'type' = 'designacion'
+                            AND authority_event.value->'old' = 'null'::jsonb
+                            AND jsonb_typeof(authority_event.value->'new') = 'object'
+                            AND jsonb_typeof(authority_event.value->'new'->'cargo') = 'string'
+                            AND btrim(authority_event.value->'new'->>'cargo', U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000') <> ''
+                            AND jsonb_typeof(authority_event.value->'new'->'persona') = 'string'
+                            AND btrim(authority_event.value->'new'->>'persona', U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000') <> ''
+                        ) OR (
+                            authority_event.value->>'type' = 'remocion'
+                            AND jsonb_typeof(authority_event.value->'old') = 'object'
+                            AND jsonb_typeof(authority_event.value->'old'->'cargo') = 'string'
+                            AND btrim(authority_event.value->'old'->>'cargo', U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000') <> ''
+                            AND jsonb_typeof(authority_event.value->'old'->'persona') = 'string'
+                            AND btrim(authority_event.value->'old'->>'persona', U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000') <> ''
+                            AND authority_event.value->'new' = 'null'::jsonb
+                        ) OR (
+                            authority_event.value->>'type' IN ('reemplazo', 'cambio_cargo')
+                            AND jsonb_typeof(authority_event.value->'old') = 'object'
+                            AND jsonb_typeof(authority_event.value->'old'->'cargo') = 'string'
+                            AND btrim(authority_event.value->'old'->>'cargo', U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000') <> ''
+                            AND jsonb_typeof(authority_event.value->'old'->'persona') = 'string'
+                            AND btrim(authority_event.value->'old'->>'persona', U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000') <> ''
+                            AND jsonb_typeof(authority_event.value->'new') = 'object'
+                            AND jsonb_typeof(authority_event.value->'new'->'cargo') = 'string'
+                            AND btrim(authority_event.value->'new'->>'cargo', U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000') <> ''
+                            AND jsonb_typeof(authority_event.value->'new'->'persona') = 'string'
+                            AND btrim(authority_event.value->'new'->>'persona', U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000') <> ''
+                        )
+                    ) IS NOT TRUE
+                )
+                SQL,
+            'sqlite' => $this->sqlitePrimaryFeedPayloadPredicate(),
+            default => throw new \RuntimeException('Unsupported DB driver: '.DB::getDriverName()),
+        };
+    }
+
+    private function sqlitePrimaryFeedPayloadPredicate(): string
+    {
+        $payload = "CASE WHEN json_valid(autoridades_eventos_json) THEN autoridades_eventos_json ELSE '{}' END";
+        $event = "CASE WHEN authority_event.type = 'object' THEN authority_event.value ELSE '{}' END";
+
+        return <<<SQL
+            json_type({$payload}, '$') = 'object'
+            AND json_type({$payload}, '$.version') = 'integer'
+            AND json_extract({$payload}, '$.version') = 1
+            AND json_type({$payload}, '$.events') = 'array'
+            AND json_array_length({$payload}, '$.events') > 0
+            AND NOT EXISTS (
+                SELECT 1
+                FROM json_each({$payload}, '$.events') AS authority_event
+                WHERE COALESCE((
+                    authority_event.type = 'object'
+                    AND (
+                        (
+                            json_extract({$event}, '$.type') = 'designacion'
+                            AND json_type({$event}, '$.old') = 'null'
+                            AND json_type({$event}, '$.new') = 'object'
+                            AND json_type({$event}, '$.new.cargo') = 'text'
+                            AND trim(json_extract({$event}, '$.new.cargo'), char(9, 10, 11, 12, 13, 32, 133, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288)) <> ''
+                            AND json_type({$event}, '$.new.persona') = 'text'
+                            AND trim(json_extract({$event}, '$.new.persona'), char(9, 10, 11, 12, 13, 32, 133, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288)) <> ''
+                        ) OR (
+                            json_extract({$event}, '$.type') = 'remocion'
+                            AND json_type({$event}, '$.old') = 'object'
+                            AND json_type({$event}, '$.old.cargo') = 'text'
+                            AND trim(json_extract({$event}, '$.old.cargo'), char(9, 10, 11, 12, 13, 32, 133, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288)) <> ''
+                            AND json_type({$event}, '$.old.persona') = 'text'
+                            AND trim(json_extract({$event}, '$.old.persona'), char(9, 10, 11, 12, 13, 32, 133, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288)) <> ''
+                            AND json_type({$event}, '$.new') = 'null'
+                        ) OR (
+                            json_extract({$event}, '$.type') IN ('reemplazo', 'cambio_cargo')
+                            AND json_type({$event}, '$.old') = 'object'
+                            AND json_type({$event}, '$.old.cargo') = 'text'
+                            AND trim(json_extract({$event}, '$.old.cargo'), char(9, 10, 11, 12, 13, 32, 133, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288)) <> ''
+                            AND json_type({$event}, '$.old.persona') = 'text'
+                            AND trim(json_extract({$event}, '$.old.persona'), char(9, 10, 11, 12, 13, 32, 133, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288)) <> ''
+                            AND json_type({$event}, '$.new') = 'object'
+                            AND json_type({$event}, '$.new.cargo') = 'text'
+                            AND trim(json_extract({$event}, '$.new.cargo'), char(9, 10, 11, 12, 13, 32, 133, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288)) <> ''
+                            AND json_type({$event}, '$.new.persona') = 'text'
+                            AND trim(json_extract({$event}, '$.new.persona'), char(9, 10, 11, 12, 13, 32, 133, 160, 5760, 8192, 8193, 8194, 8195, 8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288)) <> ''
+                        )
+                    )
+                ), 0) = 0
+            )
+            SQL;
     }
 }
