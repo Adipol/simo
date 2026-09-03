@@ -75,8 +75,8 @@ final class DashboardSummaryService
     // =========================================================================
 
     /**
-     * Return the single highest-scoring unread cambio with a detected persona,
-     * or null when there are no pending cambios to triage.
+     * Return the highest-scoring unread cambio admitted to the primary feed,
+     * or null when there are no validated pending events to triage.
      *
      * Score = (riesgo_alto_weight if riesgo='alto') + (es_mae_weight if es_mae=true)
      *         + EXTRACT(DAY FROM NOW()-fecha) / aging_divisor
@@ -109,28 +109,10 @@ final class DashboardSummaryService
         $scoreRaw = "({$riesgoExpr} + {$esMaeExpr} + {$agingExpr})";
 
         $row = Cambio::query()
+            ->primaryFeed()
             ->with('fuente')
             ->selectRaw("cambios.*, {$scoreRaw} AS score")
             ->where('revisado', false)
-            ->where(function (\Illuminate\Database\Eloquent\Builder $q) use ($isPgsql): void {
-                // conPersona semantics (mirrors Cambio::scopeConPersona)
-                $q->where(function (\Illuminate\Database\Eloquent\Builder $gemini) use ($isPgsql): void {
-                    $gemini->where('gemini_analyzed', true)
-                        ->where(function (\Illuminate\Database\Eloquent\Builder $p) use ($isPgsql): void {
-                            if ($isPgsql) {
-                                $p->whereRaw("gemini_analisis_json->>'persona_nueva' IS NOT NULL")
-                                    ->orWhereRaw("gemini_analisis_json->>'persona_removida' IS NOT NULL");
-                            } else {
-                                $p->whereRaw("json_extract(gemini_analisis_json, '$.persona_nueva') IS NOT NULL")
-                                    ->orWhereRaw("json_extract(gemini_analisis_json, '$.persona_removida') IS NOT NULL");
-                            }
-                        });
-                })->orWhere(function (\Illuminate\Database\Eloquent\Builder $fallback): void {
-                    $fallback->where('gemini_analyzed', false)
-                        ->whereNotNull('posibles_peps')
-                        ->where('posibles_peps', '!=', '');
-                });
-            })
             ->orderByRaw('score DESC, fecha DESC, id DESC')
             ->limit(1)
             ->first();
@@ -169,9 +151,8 @@ final class DashboardSummaryService
         $sparklines = [];
 
         foreach ($buckets as $name => $applyFilter) {
-            // Aplicar conPersona() para alinear con el filtro por defecto de la bandeja
-            // (ver bug de "37 vs 2" — el KPI debe contar lo mismo que la pantalla destino).
-            $base = Cambio::query()->where('revisado', false)->conPersona();
+            // The primaryFeed scope is the single admission contract shared with the destination page.
+            $base = Cambio::query()->primaryFeed()->where('revisado', false);
             $applyFilter($base);
 
             $counts[$name] = (int) (clone $base)->count();
@@ -281,6 +262,7 @@ final class DashboardSummaryService
         $threshold = (int) config('dashboard.backlog_aging_days', 3);
 
         $query = Cambio::query()
+            ->primaryFeed()
             ->where('revisado', false)
             ->where('fecha', '<', now()->subDays($threshold));
 
@@ -316,7 +298,7 @@ final class DashboardSummaryService
             ->limit(5)
             ->get();
 
-        $topPeps = $pepRows->map(fn (ResultadoScraping $r) => new PepHighConfidence(
+        $topPeps = $pepRows->map(fn (ResultadoScraping $r): PepHighConfidence => new PepHighConfidence(
             id: $r->id,
             nombre: (string) ($r->gemini_nombre ?? 'Desconocido'),
             cargo: $r->gemini_cargo,
@@ -327,7 +309,9 @@ final class DashboardSummaryService
         ))->values()->all();
 
         // Top 5 risk cambios from last 24h (alto OR medio)
-        $cambioRows = Cambio::with('fuente')
+        $cambioRows = Cambio::query()
+            ->primaryFeed()
+            ->with('fuente')
             ->where(function (\Illuminate\Database\Eloquent\Builder $q): void {
                 $q->where($this->riesgoFilter('alto'))
                     ->orWhere($this->riesgoFilter('medio'));
@@ -337,7 +321,7 @@ final class DashboardSummaryService
             ->limit(5)
             ->get();
 
-        $topCambios = $cambioRows->map(fn (Cambio $c) => new CambioSummary(
+        $topCambios = $cambioRows->map(fn (Cambio $c): CambioSummary => new CambioSummary(
             id: $c->id,
             fuente_nombre: $c->fuente?->nombre ?? 'Desconocida',
             riesgo: (string) ($c->gemini_analisis_json['riesgo'] ?? 'desconocido'),
@@ -359,7 +343,10 @@ final class DashboardSummaryService
      */
     private function ultimaActividadRevisada(): ?\DateTimeImmutable
     {
-        $maxFecha = Cambio::where('revisado', true)->max('fecha');
+        $maxFecha = Cambio::query()
+            ->primaryFeed()
+            ->where('revisado', true)
+            ->max('fecha');
 
         if ($maxFecha === null) {
             return null;

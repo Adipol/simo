@@ -9,7 +9,7 @@
     {{--
         URLs deben incluir EXACTAMENTE los mismos filtros que el KPI cuenta:
         - filtroRevisado=0 → bandeja muestra solo pendientes (KPI cuenta revisado=false)
-        - filtroConPersona=si es el default de la bandeja, no necesita explicitarse
+        - El feed principal validado es el default de la bandeja, no necesita explicitarse
         - filtroLeido=0 → unread (PHP cast: '0' → false; 'no' o cualquier string es truthy)
     --}}
 

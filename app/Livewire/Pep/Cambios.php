@@ -6,6 +6,9 @@ namespace App\Livewire\Pep;
 
 use App\Models\Cambio;
 use App\Models\Fuente;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\View\View;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Layout;
@@ -14,7 +17,7 @@ use Livewire\Component;
 use Livewire\WithPagination;
 
 #[Layout('layouts.app', ['title' => 'Cambios PEP'])]
-class Cambios extends Component
+final class Cambios extends Component
 {
     use WithPagination;
 
@@ -25,7 +28,10 @@ class Cambios extends Component
     public string $filtroRevisado = '';
 
     #[Url]
-    public string $filtroConPersona = 'si';
+    public string $feed = 'primary';
+
+    #[Url]
+    public string $filtroConPersona = '';
 
     #[Url]
     public string $filtroRiesgo = '';
@@ -42,6 +48,11 @@ class Cambios extends Component
         $this->resetPage();
     }
 
+    public function updatingFeed(): void
+    {
+        $this->resetPage();
+    }
+
     public function updatingFiltroConPersona(): void
     {
         $this->resetPage();
@@ -54,11 +65,15 @@ class Cambios extends Component
 
     public function marcarRevisado(int $id): void
     {
+        $this->authorize('marcar revisado pep');
+
         Cambio::marcarComoRevisado($id);
 
         if ($this->verDiffId === $id) {
             $this->verDiffId = null;
         }
+
+        unset($this->cambios);
     }
 
     public function toggleDiff(int $id): void
@@ -84,28 +99,58 @@ class Cambios extends Component
             : null;
     }
 
+    #[Computed]
+    public function cambios(): LengthAwarePaginator
+    {
+        $query = Cambio::query()
+            ->with('fuente')
+            ->orderByDesc('fecha');
+
+        match ($this->feed) {
+            'review' => $query->reviewFeed(),
+            'all' => $query,
+            default => $query->primaryFeed(),
+        };
+
+        $query
+            ->when(
+                $this->filtroFuente !== '',
+                fn (Builder $builder): Builder => $builder->where('fuente_id', $this->filtroFuente),
+            )
+            ->when(
+                $this->filtroRevisado !== '',
+                fn (Builder $builder): Builder => $builder->where('revisado', (bool) $this->filtroRevisado),
+            )
+            ->when(
+                $this->filtroConPersona === 'si',
+                fn (Builder $builder): Builder => $builder->conPersona(),
+            )
+            ->when(
+                $this->filtroConPersona === 'no',
+                fn (Builder $builder): Builder => $builder->sinPersona(),
+            )
+            ->when(
+                $this->filtroRiesgo !== '',
+                fn (Builder $builder): Builder => $builder->conRiesgo($this->filtroRiesgo),
+            );
+
+        return $query->paginate(20);
+    }
+
+    /** @return Collection<int,Fuente> */
+    #[Computed]
+    public function fuentes(): Collection
+    {
+        return Fuente::query()
+            ->orderBy('nombre')
+            ->get(['id', 'nombre', 'organismo']);
+    }
+
     public function render(): View
     {
-        $q = Cambio::with('fuente')->orderBy('fecha', 'desc');
-
-        if ($this->filtroFuente) {
-            $q->where('fuente_id', $this->filtroFuente);
-        }
-        if ($this->filtroRevisado !== '') {
-            $q->where('revisado', (bool) $this->filtroRevisado);
-        }
-        if ($this->filtroConPersona === 'si') {
-            $q->conPersona();
-        } elseif ($this->filtroConPersona === 'no') {
-            $q->sinPersona();
-        }
-        if ($this->filtroRiesgo !== '') {
-            $q->conRiesgo($this->filtroRiesgo);
-        }
-
         return view('livewire.pep.cambios', [
-            'cambios' => $q->paginate(20),
-            'fuentes' => Fuente::orderBy('nombre')->get(['id', 'nombre', 'organismo']),
+            'cambios' => $this->cambios,
+            'fuentes' => $this->fuentes,
         ]);
     }
 }

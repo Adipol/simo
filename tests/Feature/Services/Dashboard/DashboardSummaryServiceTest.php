@@ -25,6 +25,7 @@ class DashboardSummaryServiceTest extends TestCase
     use RefreshDatabase;
 
     private DashboardSummaryService $service;
+
     private DashboardCacheManager $cache;
 
     protected function setUp(): void
@@ -43,11 +44,11 @@ class DashboardSummaryServiceTest extends TestCase
         config(['dashboard.discovery_min_confidence' => 0.8]);
         config(['dashboard.hero_formula' => [
             'riesgo_alto_weight' => 3,
-            'es_mae_weight'      => 2,
-            'aging_divisor'      => 3,
+            'es_mae_weight' => 2,
+            'aging_divisor' => 3,
         ]]);
 
-        $this->cache   = new DashboardCacheManager();
+        $this->cache = new DashboardCacheManager;
         $this->service = new DashboardSummaryService($this->cache);
     }
 
@@ -75,9 +76,9 @@ class DashboardSummaryServiceTest extends TestCase
 
     public function test_hero_is_null_when_cambios_are_all_revisado(): void
     {
-        Cambio::factory()->create([
-            'revisado'             => true,
-            'gemini_analyzed'      => true,
+        Cambio::factory()->primaryFeed()->create([
+            'revisado' => true,
+            'gemini_analyzed' => true,
             'gemini_analisis_json' => ['persona_nueva' => 'Juan', 'riesgo' => 'alto', 'es_mae' => false],
         ]);
 
@@ -94,24 +95,24 @@ class DashboardSummaryServiceTest extends TestCase
     {
         $fuente = Fuente::factory()->create(['nombre' => 'Gaceta Oficial']);
 
-        // Low-score cambio: gemini_analyzed but no persona
-        Cambio::factory()->create([
-            'fuente_id'            => $fuente->id,
-            'revisado'             => false,
-            'gemini_analyzed'      => true,
+        // Low-score primary event: Gemini person fields do not control admission.
+        Cambio::factory()->primaryFeed()->create([
+            'fuente_id' => $fuente->id,
+            'revisado' => false,
+            'gemini_analyzed' => true,
             'gemini_analisis_json' => ['riesgo' => 'bajo', 'es_mae' => false],
         ]);
 
         // High-score cambio: riesgo alto + es_mae = true + pending persona
-        $hero = Cambio::factory()->create([
-            'fuente_id'            => $fuente->id,
-            'revisado'             => false,
-            'fecha'                => now()->subDays(6),
-            'gemini_analyzed'      => true,
+        $hero = Cambio::factory()->primaryFeed()->create([
+            'fuente_id' => $fuente->id,
+            'revisado' => false,
+            'fecha' => now()->subDays(6),
+            'gemini_analyzed' => true,
             'gemini_analisis_json' => [
                 'persona_nueva' => 'Eva Morales',
-                'riesgo'        => 'alto',
-                'es_mae'        => true,
+                'riesgo' => 'alto',
+                'es_mae' => true,
             ],
         ]);
 
@@ -125,38 +126,37 @@ class DashboardSummaryServiceTest extends TestCase
     }
 
     // =========================================================================
-    // T21 — Hero respects conPersona semantics: scraper fallback when no Gemini
+    // T21 — Hero uses the validated primary-feed contract
     // =========================================================================
 
-    public function test_hero_includes_scraper_fallback_cambio_when_gemini_not_analyzed(): void
+    public function test_hero_excludes_scraper_person_proxy_without_validated_events(): void
     {
         $fuente = Fuente::factory()->create(['nombre' => 'Scraper Fuente']);
 
-        $scraper = Cambio::factory()->create([
-            'fuente_id'            => $fuente->id,
-            'revisado'             => false,
-            'gemini_analyzed'      => false,
-            'posibles_peps'        => 'Juan Pérez',
+        Cambio::factory()->create([
+            'fuente_id' => $fuente->id,
+            'revisado' => false,
+            'gemini_analyzed' => false,
+            'posibles_peps' => 'Juan Pérez',
             'gemini_analisis_json' => null,
         ]);
 
         $snapshot = $this->service->getSnapshot();
 
-        $this->assertNotNull($snapshot->hero);
-        $this->assertSame($scraper->id, $snapshot->hero->id);
+        $this->assertNull($snapshot->hero);
     }
 
     public function test_hero_excludes_cambio_when_gemini_analyzed_and_no_persona(): void
     {
         Fuente::factory()->create(['nombre' => 'Test Fuente']);
 
-        // Gemini analyzed, no persona — should be excluded
+        // Gemini analysis and person proxies cannot promote a review row.
         Cambio::factory()->create([
-            'revisado'             => false,
-            'gemini_analyzed'      => true,
-            'posibles_peps'        => 'Old scraper signal — should be ignored by Gemini verdict',
+            'revisado' => false,
+            'gemini_analyzed' => true,
+            'posibles_peps' => 'Old scraper signal — should be ignored by Gemini verdict',
             'gemini_analisis_json' => [
-                'riesgo'          => 'bajo',
+                'riesgo' => 'bajo',
                 // no persona_nueva, no persona_removida
             ],
         ]);
@@ -175,35 +175,35 @@ class DashboardSummaryServiceTest extends TestCase
         // Override to custom weights to verify they matter
         config(['dashboard.hero_formula' => [
             'riesgo_alto_weight' => 10,
-            'es_mae_weight'      => 1,
-            'aging_divisor'      => 1,
+            'es_mae_weight' => 1,
+            'aging_divisor' => 1,
         ]]);
 
         $fuente = Fuente::factory()->create();
 
         // cambio A: es_mae pero bajo riesgo
-        Cambio::factory()->create([
-            'fuente_id'            => $fuente->id,
-            'revisado'             => false,
-            'fecha'                => now(),
-            'gemini_analyzed'      => true,
+        Cambio::factory()->primaryFeed()->create([
+            'fuente_id' => $fuente->id,
+            'revisado' => false,
+            'fecha' => now(),
+            'gemini_analyzed' => true,
             'gemini_analisis_json' => [
                 'persona_nueva' => 'Ana',
-                'riesgo'        => 'bajo',
-                'es_mae'        => true,
+                'riesgo' => 'bajo',
+                'es_mae' => true,
             ],
         ]);
 
         // cambio B: riesgo alto, no es_mae — should win with weight=10
-        $cambioB = Cambio::factory()->create([
-            'fuente_id'            => $fuente->id,
-            'revisado'             => false,
-            'fecha'                => now(),
-            'gemini_analyzed'      => true,
+        $cambioB = Cambio::factory()->primaryFeed()->create([
+            'fuente_id' => $fuente->id,
+            'revisado' => false,
+            'fecha' => now(),
+            'gemini_analyzed' => true,
             'gemini_analisis_json' => [
                 'persona_nueva' => 'Carlos',
-                'riesgo'        => 'alto',
-                'es_mae'        => false,
+                'riesgo' => 'alto',
+                'es_mae' => false,
             ],
         ]);
 
@@ -225,39 +225,39 @@ class DashboardSummaryServiceTest extends TestCase
         $fuente = Fuente::factory()->create();
 
         // 2 pending alto
-        Cambio::factory()->count(2)->create([
-            'fuente_id'            => $fuente->id,
-            'revisado'             => false,
-            'gemini_analyzed'      => true,
+        Cambio::factory()->count(2)->primaryFeed()->create([
+            'fuente_id' => $fuente->id,
+            'revisado' => false,
+            'gemini_analyzed' => true,
             'gemini_analisis_json' => ['riesgo' => 'alto', 'persona_nueva' => 'Test Person'],
         ]);
 
         // 1 pending medio
-        Cambio::factory()->create([
-            'fuente_id'            => $fuente->id,
-            'revisado'             => false,
-            'gemini_analyzed'      => true,
+        Cambio::factory()->primaryFeed()->create([
+            'fuente_id' => $fuente->id,
+            'revisado' => false,
+            'gemini_analyzed' => true,
             'gemini_analisis_json' => ['riesgo' => 'medio', 'persona_nueva' => 'Test Person'],
         ]);
 
         // 3 pending bajo
-        Cambio::factory()->count(3)->create([
-            'fuente_id'            => $fuente->id,
-            'revisado'             => false,
-            'gemini_analyzed'      => true,
+        Cambio::factory()->count(3)->primaryFeed()->create([
+            'fuente_id' => $fuente->id,
+            'revisado' => false,
+            'gemini_analyzed' => true,
             'gemini_analisis_json' => ['riesgo' => 'bajo', 'persona_nueva' => 'Test Person'],
         ]);
 
         // 1 revisado — must NOT be counted
-        Cambio::factory()->create([
-            'fuente_id'            => $fuente->id,
-            'revisado'             => true,
-            'gemini_analyzed'      => true,
+        Cambio::factory()->primaryFeed()->create([
+            'fuente_id' => $fuente->id,
+            'revisado' => true,
+            'gemini_analyzed' => true,
             'gemini_analisis_json' => ['riesgo' => 'alto', 'persona_nueva' => 'Test Person'],
         ]);
 
         $snapshot = $this->service->getSnapshot();
-        $triage   = $snapshot->triage;
+        $triage = $snapshot->triage;
 
         $this->assertSame(2, $triage->pendientes_alto);
         $this->assertSame(1, $triage->pendientes_medio);
@@ -268,35 +268,35 @@ class DashboardSummaryServiceTest extends TestCase
     {
         // 2 valid primaries — must count
         ResultadoScraping::factory()->count(2)->create([
-            'leido'           => false,
-            'descartado'      => false,
-            'archivado_at'    => null,
+            'leido' => false,
+            'descartado' => false,
+            'archivado_at' => null,
             'gemini_analyzed' => true,
-            'secundario_de'   => null,
+            'secundario_de' => null,
         ]);
 
         // 1 unanalyzed — must NOT count
         ResultadoScraping::factory()->sinAnalizar()->create([
-            'leido'           => false,
-            'descartado'      => false,
-            'archivado_at'    => null,
-            'secundario_de'   => null,
+            'leido' => false,
+            'descartado' => false,
+            'archivado_at' => null,
+            'secundario_de' => null,
         ]);
 
         // 1 secondary — must NOT count (needs a real primary FK first)
         $primaryForFk = ResultadoScraping::factory()->create([
-            'leido'           => false,
-            'descartado'      => false,
-            'archivado_at'    => null,
+            'leido' => false,
+            'descartado' => false,
+            'archivado_at' => null,
             'gemini_analyzed' => true,
-            'secundario_de'   => null,
+            'secundario_de' => null,
         ]);
         ResultadoScraping::factory()->create([
-            'leido'           => false,
-            'descartado'      => false,
-            'archivado_at'    => null,
+            'leido' => false,
+            'descartado' => false,
+            'archivado_at' => null,
             'gemini_analyzed' => true,
-            'secundario_de'   => $primaryForFk->id,
+            'secundario_de' => $primaryForFk->id,
         ]);
 
         $snapshot = $this->service->getSnapshot();
@@ -308,7 +308,7 @@ class DashboardSummaryServiceTest extends TestCase
     public function test_triage_sparklines_have_exactly_7_elements(): void
     {
         $snapshot = $this->service->getSnapshot();
-        $triage   = $snapshot->triage;
+        $triage = $snapshot->triage;
 
         $this->assertCount(7, $triage->sparkline_alto);
         $this->assertCount(7, $triage->sparkline_medio);
@@ -321,20 +321,20 @@ class DashboardSummaryServiceTest extends TestCase
         $fuente = Fuente::factory()->create();
 
         // Create 2 "alto" cambios exactly 1 day ago
-        Cambio::factory()->count(2)->create([
-            'fuente_id'            => $fuente->id,
-            'revisado'             => false,
-            'fecha'                => now()->subDays(1),
-            'gemini_analyzed'      => true,
+        Cambio::factory()->count(2)->primaryFeed()->create([
+            'fuente_id' => $fuente->id,
+            'revisado' => false,
+            'fecha' => now()->subDays(1),
+            'gemini_analyzed' => true,
             'gemini_analisis_json' => ['riesgo' => 'alto', 'persona_nueva' => 'Test Person'],
         ]);
 
         // Create 1 "alto" cambio older than 7 days — must NOT appear in sparkline
-        Cambio::factory()->create([
-            'fuente_id'            => $fuente->id,
-            'revisado'             => false,
-            'fecha'                => now()->subDays(10),
-            'gemini_analyzed'      => true,
+        Cambio::factory()->primaryFeed()->create([
+            'fuente_id' => $fuente->id,
+            'revisado' => false,
+            'fecha' => now()->subDays(10),
+            'gemini_analyzed' => true,
             'gemini_analisis_json' => ['riesgo' => 'alto', 'persona_nueva' => 'Test Person'],
         ]);
 
@@ -357,24 +357,24 @@ class DashboardSummaryServiceTest extends TestCase
         $fuente = Fuente::factory()->create();
 
         // Old cambio (4 days ago) — must be counted
-        Cambio::factory()->create([
+        Cambio::factory()->primaryFeed()->create([
             'fuente_id' => $fuente->id,
-            'revisado'  => false,
-            'fecha'     => now()->subDays(4),
+            'revisado' => false,
+            'fecha' => now()->subDays(4),
         ]);
 
         // Recent cambio (1 day ago) — must NOT be counted
-        Cambio::factory()->create([
+        Cambio::factory()->primaryFeed()->create([
             'fuente_id' => $fuente->id,
-            'revisado'  => false,
-            'fecha'     => now()->subDays(1),
+            'revisado' => false,
+            'fecha' => now()->subDays(1),
         ]);
 
         // Revisado cambio (5 days old) — must NOT be counted
-        Cambio::factory()->create([
+        Cambio::factory()->primaryFeed()->create([
             'fuente_id' => $fuente->id,
-            'revisado'  => true,
-            'fecha'     => now()->subDays(5),
+            'revisado' => true,
+            'fecha' => now()->subDays(5),
         ]);
 
         $snapshot = $this->service->getSnapshot();
@@ -391,33 +391,33 @@ class DashboardSummaryServiceTest extends TestCase
     {
         // High-confidence PEP from 12h ago — must appear
         $highConf = ResultadoScraping::factory()->create([
-            'gemini_analyzed'  => true,
-            'gemini_is_pep'    => true,
+            'gemini_analyzed' => true,
+            'gemini_is_pep' => true,
             'gemini_confianza' => 90,
             'fecha_encontrado' => now()->subHours(12),
-            'gemini_nombre'    => 'Juan García',
-            'gemini_cargo'     => 'Ministro',
+            'gemini_nombre' => 'Juan García',
+            'gemini_cargo' => 'Ministro',
             'gemini_categoria' => 'PEP',
         ]);
 
         // Low-confidence PEP from 12h ago — must NOT appear (below threshold 80)
         ResultadoScraping::factory()->create([
-            'gemini_analyzed'  => true,
-            'gemini_is_pep'    => true,
+            'gemini_analyzed' => true,
+            'gemini_is_pep' => true,
             'gemini_confianza' => 50,
             'fecha_encontrado' => now()->subHours(12),
         ]);
 
         // High-confidence PEP but older than 24h — must NOT appear
         ResultadoScraping::factory()->create([
-            'gemini_analyzed'  => true,
-            'gemini_is_pep'    => true,
+            'gemini_analyzed' => true,
+            'gemini_is_pep' => true,
             'gemini_confianza' => 95,
             'fecha_encontrado' => now()->subHours(30),
         ]);
 
-        $snapshot  = $this->service->getSnapshot();
-        $peps      = $snapshot->discoveries->top_peps;
+        $snapshot = $this->service->getSnapshot();
+        $peps = $snapshot->discoveries->top_peps;
 
         $this->assertCount(1, $peps);
         $this->assertSame($highConf->id, $peps[0]->id);
@@ -429,34 +429,34 @@ class DashboardSummaryServiceTest extends TestCase
         $fuente = Fuente::factory()->create(['nombre' => 'Fuente Risk']);
 
         // Recent high-risk cambio — must appear
-        $riskCambio = Cambio::factory()->create([
-            'fuente_id'            => $fuente->id,
-            'revisado'             => false,
-            'fecha'                => now()->subHours(6),
-            'gemini_analyzed'      => true,
+        $riskCambio = Cambio::factory()->primaryFeed()->create([
+            'fuente_id' => $fuente->id,
+            'revisado' => false,
+            'fecha' => now()->subHours(6),
+            'gemini_analyzed' => true,
             'gemini_analisis_json' => ['riesgo' => 'alto', 'es_mae' => false],
         ]);
 
         // Old high-risk cambio — must NOT appear (>24h)
-        Cambio::factory()->create([
-            'fuente_id'            => $fuente->id,
-            'revisado'             => false,
-            'fecha'                => now()->subHours(30),
-            'gemini_analyzed'      => true,
+        Cambio::factory()->primaryFeed()->create([
+            'fuente_id' => $fuente->id,
+            'revisado' => false,
+            'fecha' => now()->subHours(30),
+            'gemini_analyzed' => true,
             'gemini_analisis_json' => ['riesgo' => 'alto', 'es_mae' => false],
         ]);
 
         // Low risk cambio (recent) — must NOT appear
-        Cambio::factory()->create([
-            'fuente_id'            => $fuente->id,
-            'revisado'             => false,
-            'fecha'                => now()->subHours(3),
-            'gemini_analyzed'      => true,
+        Cambio::factory()->primaryFeed()->create([
+            'fuente_id' => $fuente->id,
+            'revisado' => false,
+            'fecha' => now()->subHours(3),
+            'gemini_analyzed' => true,
             'gemini_analisis_json' => ['riesgo' => 'bajo', 'es_mae' => false],
         ]);
 
         $snapshot = $this->service->getSnapshot();
-        $cambios  = $snapshot->discoveries->top_cambios;
+        $cambios = $snapshot->discoveries->top_cambios;
 
         $this->assertCount(1, $cambios);
         $this->assertSame($riskCambio->id, $cambios[0]->id);
@@ -477,23 +477,23 @@ class DashboardSummaryServiceTest extends TestCase
     {
         $fuente = Fuente::factory()->create();
 
-        $older = Cambio::factory()->create([
+        $older = Cambio::factory()->primaryFeed()->create([
             'fuente_id' => $fuente->id,
-            'revisado'  => true,
-            'fecha'     => now()->subDays(2),
+            'revisado' => true,
+            'fecha' => now()->subDays(2),
         ]);
 
-        $newer = Cambio::factory()->create([
+        $newer = Cambio::factory()->primaryFeed()->create([
             'fuente_id' => $fuente->id,
-            'revisado'  => true,
-            'fecha'     => now()->subHours(3),
+            'revisado' => true,
+            'fecha' => now()->subHours(3),
         ]);
 
         // Non-revisado: must NOT affect result
-        Cambio::factory()->create([
+        Cambio::factory()->primaryFeed()->create([
             'fuente_id' => $fuente->id,
-            'revisado'  => false,
-            'fecha'     => now(),
+            'revisado' => false,
+            'fecha' => now(),
         ]);
 
         $snapshot = $this->service->getSnapshot();
@@ -517,14 +517,14 @@ class DashboardSummaryServiceTest extends TestCase
     public function test_cache_hit_returns_same_dto_on_second_call(): void
     {
         $fuente = Fuente::factory()->create();
-        Cambio::factory()->create([
-            'fuente_id'            => $fuente->id,
-            'revisado'             => false,
-            'gemini_analyzed'      => true,
+        Cambio::factory()->primaryFeed()->create([
+            'fuente_id' => $fuente->id,
+            'revisado' => false,
+            'gemini_analyzed' => true,
             'gemini_analisis_json' => ['persona_nueva' => 'Ana', 'riesgo' => 'alto', 'es_mae' => false],
         ]);
 
-        $first  = $this->service->getSnapshot();
+        $first = $this->service->getSnapshot();
         $second = $this->service->getSnapshot();
 
         // Both calls must return valid DTOs with same hero ID
@@ -540,10 +540,10 @@ class DashboardSummaryServiceTest extends TestCase
     public function test_bust_clears_summary_cache(): void
     {
         $fuente = Fuente::factory()->create();
-        Cambio::factory()->create([
-            'fuente_id'            => $fuente->id,
-            'revisado'             => false,
-            'gemini_analyzed'      => true,
+        Cambio::factory()->primaryFeed()->create([
+            'fuente_id' => $fuente->id,
+            'revisado' => false,
+            'gemini_analyzed' => true,
             'gemini_analisis_json' => ['persona_nueva' => 'Marco', 'riesgo' => 'alto', 'es_mae' => false],
         ]);
 

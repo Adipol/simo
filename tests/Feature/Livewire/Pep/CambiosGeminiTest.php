@@ -65,10 +65,10 @@ class CambiosGeminiTest extends TestCase
 
         // Note: $cambio->id only appears in HTML attributes (wire:key="cambio-N", wire:click="toggleDiff(N)")
         // so assertSeeText (which strips tags) cannot find it. Use assertViewHas to inspect the
-        // underlying collection directly — same pattern used by CambiosFiltroPersonaTest which
-        // exercises the same scope without driver skip.
+        // underlying collection directly — the feed-filter tests use the same pattern.
         Livewire::actingAs($user)
             ->test('pep.cambios')
+            ->set('feed', 'all')
             ->assertSee('MAE')
             ->assertViewHas(
                 'cambios',
@@ -98,6 +98,7 @@ class CambiosGeminiTest extends TestCase
 
         Livewire::actingAs($user)
             ->test('pep.cambios')
+            ->set('feed', 'all')
             ->assertDontSee('MAE');
     }
 
@@ -126,7 +127,8 @@ class CambiosGeminiTest extends TestCase
         ]);
 
         $component = Livewire::actingAs($user)
-            ->test('pep.cambios');
+            ->test('pep.cambios')
+            ->set('feed', 'all');
 
         // Click "Ver diff" to open panel
         $component->call('toggleDiff', $cambio->id);
@@ -166,6 +168,7 @@ class CambiosGeminiTest extends TestCase
 
         $component = Livewire::actingAs($user)
             ->test('pep.cambios')
+            ->set('feed', 'all')
             ->call('toggleDiff', $cambio->id);
 
         // Assert "medio" risk is shown (amber color applied via class)
@@ -190,6 +193,7 @@ class CambiosGeminiTest extends TestCase
 
         $component = Livewire::actingAs($user)
             ->test('pep.cambios')
+            ->set('feed', 'all')
             ->call('toggleDiff', $cambio->id);
 
         // Should NOT see Gemini analysis section
@@ -221,6 +225,7 @@ class CambiosGeminiTest extends TestCase
 
         $component = Livewire::actingAs($user)
             ->test('pep.cambios')
+            ->set('feed', 'all')
             ->call('toggleDiff', $cambio->id);
 
         // Should see section but not optional analisis field; persona_removida is null so "Removido:" hidden
@@ -248,6 +253,7 @@ class CambiosGeminiTest extends TestCase
 
         Livewire::actingAs($user)
             ->test('pep.cambios')
+            ->set('feed', 'all')
             ->call('toggleDiff', $cambio->id)
             ->assertSee('Cambios estructurados de autoridades')
             ->assertSee('reemplazo')
