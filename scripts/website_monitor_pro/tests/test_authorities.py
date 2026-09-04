@@ -14,7 +14,7 @@ from authorities import (
     extract_authorities,
     is_valid_authority_event_payload,
 )
-from pep_monitor import DatabaseManager, PEPMonitor
+from pep_monitor import DatabaseManager, PEPMonitor, authority_extraction_complete
 
 
 ASUSS_HTML = (Path(__file__).parent / "fixtures" / "asuss_autoridades.html").read_text(encoding="utf-8")
@@ -378,6 +378,61 @@ def test_monitor_persists_structured_event_when_flat_text_is_unchanged() -> None
     alert.assert_called_once()
     assert call_order == ["alert", "snapshot"]
     assert db.guardar_snapshot.call_args.args[4][0].persona == "Lic. Ana Pérez"
+
+
+def test_monitor_ignores_divi_authorities_outside_entry_content() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    html = """
+    <main class="entry-content">
+      <div class="et_pb_blurb_container">
+        <h4>Presidenta</h4>
+        <p>Ana Interna</p>
+      </div>
+    </main>
+    <footer>
+      <div class="et_pb_blurb_container">
+        <h4>Director Institucional</h4>
+        <p>Bruno Footer</p>
+      </div>
+    </footer>
+    """
+    fuente = {
+        "id": 13, "url": "https://example.test/authorities", "nombre": "Example",
+        "tipo": "html", "selector_css": ".entry-content",
+        "autoridades_extractor": "divi_blurb", "analizar_imagenes": False,
+    }
+    db.get_ultimo_snapshot.return_value = {
+        "hash": "same-text-hash",
+        "texto": "contenido sin cambios",
+        "autoridades_json": [{"cargo": "Presidenta", "persona": "Ana Interna"}],
+    }
+    db.guardar_cambio.return_value = 942
+    current = extract_authorities(html, "divi_blurb")
+    previous = [Authority("Presidenta", "Ana Interna")]
+
+    assert authority_extraction_complete(html, "divi_blurb", current) is True
+    events = compare_authorities(previous, current)
+    assert events == []
+    assert classify_authority_event_payload({"version": 1, "events": events}) == "review"
+
+    with patch.object(DatabaseManager, "__init__", return_value=None), \
+         patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+         patch.object(PEPMonitor, "_obtener_html_raw", return_value=(html, "html_estatico")), \
+         patch("pep_monitor.limpiar_html", return_value=(["contenido sin cambios"], "html_estatico")), \
+         patch("pep_monitor.mostrar_alerta"), \
+         patch("pep_monitor.hashlib.sha256") as sha:
+        sha.return_value.hexdigest.return_value = "same-text-hash"
+        monitor = PEPMonitor()
+        monitor.db = db
+        monitor.procesar_fuente(fuente)
+
+    db.guardar_cambio.assert_not_called()
+    db.guardar_snapshot.assert_not_called()
+    stored = db.actualizar_autoridades_ultimo_snapshot.call_args.args[1]
+    assert [item.to_dict() for item in current] == [
+        {"cargo": "Presidenta", "persona": "Ana Interna"},
+    ]
+    assert stored == current
 
 
 def test_monitor_automatically_persists_removals_for_explicitly_empty_roster() -> None:

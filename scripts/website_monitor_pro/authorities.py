@@ -53,9 +53,13 @@ def extract_divi_blurbs(html: str) -> list[Authority]:
     from bs4 import BeautifulSoup
 
     soup = BeautifulSoup(html, "lxml")
+    area = soup.select_one(".entry-content")
+    if area is None:
+        return []
+
     authorities: list[Authority] = []
     seen: set[tuple[str, str]] = set()
-    for block in soup.select(".et_pb_blurb_container"):
+    for block in area.select(".et_pb_blurb_container"):
         heading = block.find("h4")
         description = block.find("p")
         cargo = " ".join(heading.get_text(" ", strip=True).split()) if heading else ""
