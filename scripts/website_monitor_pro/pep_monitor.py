@@ -269,6 +269,13 @@ def authority_extraction_complete(
     text = " ".join(area.get_text(" ", strip=True).casefold().split())
     if not authorities:
         return re.search(r"\bsin autoridades\b", text) is not None
+    for block in area.select(".et_pb_blurb_container"):
+        heading = block.find("h4")
+        description = block.find("p")
+        cargo = " ".join(heading.get_text(" ", strip=True).split()) if heading else ""
+        persona = " ".join(description.get_text(" ", strip=True).split()) if description else ""
+        if not cargo or not persona:
+            return False
     return True
 
 
