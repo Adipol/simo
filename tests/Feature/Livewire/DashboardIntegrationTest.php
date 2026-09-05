@@ -46,51 +46,54 @@ class DashboardIntegrationTest extends TestCase
         // 4 high-risk cambios with person detected (required for hero card conPersona logic)
         Cambio::factory()
             ->count(4)
+            ->primaryFeed()
             ->create([
-                'revisado'             => false,
-                'gemini_analyzed'      => true,
+                'revisado' => false,
+                'gemini_analyzed' => true,
                 'gemini_analisis_json' => [
-                    'riesgo'         => 'alto',
-                    'es_mae'         => false,
-                    'persona_nueva'  => 'Test Persona',
+                    'riesgo' => 'alto',
+                    'es_mae' => false,
+                    'persona_nueva' => 'Test Persona',
                 ],
-                'fecha'                => now()->subHours(2),
+                'fecha' => now()->subHours(2),
             ]);
 
         // 3 medium-risk cambios with person detected
         Cambio::factory()
             ->count(3)
+            ->primaryFeed()
             ->create([
-                'revisado'             => false,
-                'gemini_analyzed'      => true,
+                'revisado' => false,
+                'gemini_analyzed' => true,
                 'gemini_analisis_json' => [
-                    'riesgo'        => 'medio',
-                    'es_mae'        => false,
+                    'riesgo' => 'medio',
+                    'es_mae' => false,
                     'persona_nueva' => 'Otra Persona',
                 ],
-                'fecha'                => now()->subHours(5),
+                'fecha' => now()->subHours(5),
             ]);
 
         // 3 low-risk cambios
         Cambio::factory()
             ->count(3)
+            ->primaryFeed()
             ->create([
-                'revisado'             => false,
-                'gemini_analyzed'      => true,
+                'revisado' => false,
+                'gemini_analyzed' => true,
                 'gemini_analisis_json' => ['riesgo' => 'bajo', 'es_mae' => false],
-                'fecha'                => now()->subHours(8),
+                'fecha' => now()->subHours(8),
             ]);
 
         // 5 high-confidence PEPs in last 24h
         ResultadoScraping::factory()
             ->count(5)
             ->create([
-                'gemini_analyzed'  => true,
-                'gemini_is_pep'    => true,
+                'gemini_analyzed' => true,
+                'gemini_is_pep' => true,
                 'gemini_confianza' => 90,
-                'gemini_nombre'    => 'Test PEP',
+                'gemini_nombre' => 'Test PEP',
                 'fecha_encontrado' => now()->subHours(1),
-                'leido'            => false,
+                'leido' => false,
             ]);
 
         // Recent LogScript (scraper ran 30 mins ago)
