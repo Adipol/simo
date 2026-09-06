@@ -167,9 +167,12 @@ En el VPS Ubuntu/Debian objetivo, `sync -f` solicita vaciar al almacenamiento el
 
 ## Workflow de actualización en VPS
 
-**Precondición obligatoria:** el respaldo anterior debe haber finalizado correctamente y el operador debe haber confirmado un `BACKUP_READY` nuevo y vigente. No ejecutar `artisan migrate` si esa confirmación falta.
+**Precondiciones obligatorias:** el respaldo anterior debe haber finalizado correctamente y el operador debe haber confirmado un `BACKUP_READY` nuevo y vigente. Además, Node.js 20+ y npm deben resolver en el mismo contexto no interactivo de `www-data` que ejecutará el build. Si cualquiera de estas comprobaciones falla, detener el deploy: no ejecutar `git pull`, `artisan migrate` ni el build, y no improvisar una instalación o un cambio de `PATH` durante la ventana.
 
 ```bash
+# PRE-FLIGHT: exige Node.js 20+ y npm en el contexto exacto del build.
+sudo -u www-data -- sh -c 'set -eu; cd /var/www/simo; command -v node >/dev/null 2>&1; command -v npm >/dev/null 2>&1; node -e "const major = Number(process.versions.node.split(\".\")[0]); if (!Number.isInteger(major) || major < 20) process.exit(1)"; node --version; npm --version'
+
 sudo -u www-data git -C /var/www/simo pull origin main
 
 # PUERTA DE CONTROL: detenerse aquí si no se confirmó el BACKUP_READY vigente.
@@ -179,8 +182,7 @@ sudo -u www-data php /var/www/simo/artisan migrate
 # OJO: el CSS compilado (public/build) está gitignored — NO viaja con git pull,
 # hay que rebuildearlo en cada entorno o el navegador sirve estilos viejos.
 sudo -u www-data php /var/www/simo/artisan view:cache    # precompila vistas (Tailwind escanea storage/framework/views)
-npm run build                                            # como root si npm no está en el PATH de www-data
-chown -R www-data:www-data /var/www/simo/public/build    # devolver ownership (igual que storage)
+sudo -u www-data -- sh -c 'cd /var/www/simo && npm run build'
 # Después: hard-refresh del navegador (Ctrl+Shift+R) para bajar el CSS nuevo.
 
 supervisorctl restart simo-pep-monitor
@@ -189,7 +191,7 @@ supervisorctl restart simo-dedupe-worker
 supervisorctl restart simo-gaceta-runner   # ver sección "Colector de la Gaceta"
 ```
 
-> **Lección (2026-06):** correr cualquier `artisan`/`npm` como **root** deja archivos root-owned que rompen php-fpm (cache de Spatie, `storage/`, `public/build`). Usar siempre `sudo -u www-data ...`, y si algo se corre como root (ej. `npm` cuando solo está en el PATH de root), hacer `chown -R www-data:www-data` del output. **Nunca** correr la suite de tests (`php artisan test`) apuntando a la BD real — `RefreshDatabase` hace `migrate:fresh` y la borra entera.
+> **Lección (2026-06):** correr cualquier `artisan`/`npm` como **root** deja archivos root-owned que rompen php-fpm (cache de Spatie, `storage/`, `public/build`). El pre-flight y el build deben ejecutarse siempre como `www-data`; si el output no conserva ese ownership, detenerse e investigar en vez de normalizar un build de root mediante un `chown -R`. **Nunca** correr la suite de tests (`php artisan test`) apuntando a la BD real — `RefreshDatabase` hace `migrate:fresh` y la borra entera.
 
 ---
 
@@ -540,29 +542,38 @@ stdout_logfile=/var/www/simo/storage/logs/pep-monitor.log
 
 ### Activar workers dedicados (primer deploy)
 
-Al agregar `[program:simo-dedupe-worker]` o `[program:simo-site-validation-worker]` por primera vez, ejecutar:
+`simo-dedupe-worker` y `simo-site-validation-worker` son programas independientes. Este checklist no presupone que ninguno esté configurado, cargado ni activo.
+
+Antes de ejecutar `reread`, `update` o `start`, el operador debe:
+
+1. Identificar el archivo de configuración real que define cada programa; no asumir que ambos están en el mismo archivo ni que `/etc/supervisor/conf.d/simo.conf` es el target vigente.
+2. Establecer para cada archivo que se modificará una copia de respaldo no sobrescribible y una ruta de rollback comprobada que restaure únicamente ese archivo.
+3. Comparar la configuración real con los bloques exactos documentados arriba y confirmar cuál de los dos programas falta.
+4. Confirmar que la actualización no contiene cambios pendientes para otros programas de Supervisor.
+
+Si el target real, el respaldo no sobrescribible o la ruta de rollback no están identificados, detenerse. No ejecutar `reread`, `update` ni `start`, y no reiniciar workers existentes no relacionados.
+
+Una vez superada esa puerta de control:
 
 ```bash
-# 1. Copiar el bloque de configuración a supervisor
-sudo cp /etc/supervisor/conf.d/simo.conf /etc/supervisor/conf.d/simo.conf.bak
+# 1. Agregar al target real únicamente los bloques ausentes de los dos programas (ver arriba)
+#    y validar que el rollback no sobrescribirá un respaldo anterior.
 
-# 2. Editar el archivo y agregar el bloque [program:simo-dedupe-worker] (ver arriba)
-sudo nano /etc/supervisor/conf.d/simo.conf
-
-# 3. Recargar la configuración de supervisor
+# 2. Recargar la configuración de supervisor
 sudo supervisorctl reread && sudo supervisorctl update
 
-# 4. Iniciar el worker
+# 3. Iniciar únicamente cada worker confirmado como nuevo y todavía no activo
 sudo supervisorctl start simo-dedupe-worker
 sudo supervisorctl start simo-site-validation-worker
 
-# 5. Verificar que están corriendo
+# 4. Verificar el estado real de ambos; no asumir que site-validation quedó activo
 sudo supervisorctl status simo-dedupe-worker
 sudo supervisorctl status simo-site-validation-worker
-# Esperado: ambos RUNNING
+# Continuar solo si ambos reportan RUNNING.
 
-# 6. Verificar el log
+# 5. Verificar los logs de ambos workers
 tail -20 /var/www/simo/storage/logs/dedupe-worker.log
+tail -20 /var/www/simo/storage/logs/site-validation-worker.log
 ```
 
 > **Kill switch**: Para deshabilitar temporalmente el processing de dedupe sin detener el worker,

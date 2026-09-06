@@ -38,6 +38,7 @@ venv/
 scripts/scraper_v2.2/logs/
 scripts/website_monitor_pro/*.log
 scripts/website_monitor_pro/exports/
+scripts/website_monitor_pro/runner.lock
 
 # Test artifacts (JUnit XML regenerated on each run)
 test-results.xml
