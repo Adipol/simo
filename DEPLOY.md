@@ -176,7 +176,7 @@ sudo -u www-data -- sh -c 'set -eu; cd /var/www/simo; command -v node >/dev/null
 sudo -u www-data git -C /var/www/simo pull origin main
 
 # PUERTA DE CONTROL: detenerse aquí si no se confirmó el BACKUP_READY vigente.
-sudo -u www-data php /var/www/simo/artisan migrate
+sudo -u www-data php /var/www/simo/artisan migrate --force
 
 # Si el pull trae cambios de UI (blade / css / js), recompilar los assets.
 # OJO: el CSS compilado (public/build) está gitignored — NO viaja con git pull,
@@ -406,7 +406,7 @@ sudo -u www-data git -C /var/www/simo pull origin main
 
 # 2. Migraciones (crea gaceta_normas, gaceta_eventos_pep, índices trigram/GiST,
 #    widening de log_scripts.script a 'gaceta'/'gaceta_backfill', cargo_referenciado)
-sudo -u www-data php /var/www/simo/artisan migrate
+sudo -u www-data php /var/www/simo/artisan migrate --force
 
 # 3. venv propio del colector (igual que website_monitor_pro)
 cd /var/www/simo/scripts/gaceta_collector
