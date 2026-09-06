@@ -170,8 +170,38 @@ En el VPS Ubuntu/Debian objetivo, `sync -f` solicita vaciar al almacenamiento el
 **Precondiciones obligatorias:** el respaldo anterior debe haber finalizado correctamente y el operador debe haber confirmado un `BACKUP_READY` nuevo y vigente. Además, Node.js 20+ y npm deben resolver en el mismo contexto no interactivo de `www-data` que ejecutará el build. Si cualquiera de estas comprobaciones falla, detener el deploy: no ejecutar `git pull`, `artisan migrate` ni el build, y no improvisar una instalación o un cambio de `PATH` durante la ventana.
 
 ```bash
-# PRE-FLIGHT: exige Node.js 20+ y npm en el contexto exacto del build.
-sudo -u www-data -- sh -c 'set -eu; cd /var/www/simo; command -v node >/dev/null 2>&1; command -v npm >/dev/null 2>&1; node -e "const major = Number(process.versions.node.split(\".\")[0]); if (!Number.isInteger(major) || major < 20) process.exit(1)"; node --version; npm --version'
+# PRE-FLIGHT: exige Node.js 20+, npm y un estado seguro de Vite en el contexto exacto del build.
+(
+    set -euo pipefail
+
+    project=/var/www/simo
+    vite_temp="$project/node_modules/.vite-temp"
+
+    sudo -u www-data -- sh -c 'set -eu; cd /var/www/simo; command -v node >/dev/null 2>&1; command -v npm >/dev/null 2>&1; node -e "const major = Number(process.versions.node.split(\".\")[0]); if (!Number.isInteger(major) || major < 20) process.exit(1)"; node --version; npm --version'
+
+    if sudo test -e "$vite_temp" || sudo test -L "$vite_temp"; then
+        if sudo test -L "$vite_temp" || ! sudo test -d "$vite_temp"; then
+            printf 'ERROR: %s debe ser un directorio real, no un enlace simbólico.\n' "$vite_temp" >&2
+            exit 1
+        fi
+
+        owner="$(sudo stat --format='%U:%G' -- "$vite_temp")"
+        if [[ "$owner" != www-data:www-data ]]; then
+            printf 'ERROR: ownership inesperado en %s: %s.\n' "$vite_temp" "$owner" >&2
+            exit 1
+        fi
+
+        if ! sudo -u www-data -- test -w "$vite_temp"; then
+            printf 'ERROR: www-data no puede escribir en %s.\n' "$vite_temp" >&2
+            exit 1
+        fi
+
+        if ! sudo -u www-data -- test -x "$vite_temp"; then
+            printf 'ERROR: www-data no puede atravesar %s.\n' "$vite_temp" >&2
+            exit 1
+        fi
+    fi
+)
 
 sudo -u www-data git -C /var/www/simo pull origin main
 
@@ -192,6 +222,281 @@ supervisorctl restart simo-gaceta-runner   # ver sección "Colector de la Gaceta
 ```
 
 > **Lección (2026-06):** correr cualquier `artisan`/`npm` como **root** deja archivos root-owned que rompen php-fpm (cache de Spatie, `storage/`, `public/build`). El pre-flight y el build deben ejecutarse siempre como `www-data`; si el output no conserva ese ownership, detenerse e investigar en vez de normalizar un build de root mediante un `chown -R`. **Nunca** correr la suite de tests (`php artisan test`) apuntando a la BD real — `RefreshDatabase` hace `migrate:fresh` y la borra entera.
+
+La puerta de Vite es permanente y fail-closed. En un deploy normal no autoriza `chown`, `chmod`, `rm -rf`, builds como root, reinstalación de dependencias ni cambio del config loader de Vite. Si falla, detenerse y diagnosticar fuera de la ventana; no normalizar permisos para forzar el build.
+
+---
+
+## Recuperación única del incidente Vite en `4db1450`
+
+Este procedimiento sirve **una sola vez** para continuar el incidente que quedó detenido, antes de los reinicios, sobre el `HEAD` productivo exacto `4db14509564880449564285cbefdf92a3ba629ed`. En ese intento ya finalizaron correctamente `migrate --force` y `view:cache`: **no repetir ninguno de los dos comandos**. La procedencia del directorio root-owned no está demostrada y no debe atribuirse.
+
+Los bloques siguientes documentan planes condicionados; **no conceden autorización vigente**. La Etapa A y la Etapa B requieren resúmenes separados y autorización explícita para el commit exacto antes de ejecutar cualquier mutación.
+
+### Prueba local de publicación
+
+La excepción solo adquiere autoridad cuando `RECOVERY_COMMIT` sea el hijo directo de `4db14509564880449564285cbefdf92a3ba629ed`, esté publicado como `origin/main` y su diff completo modifique exactamente `DEPLOY.md`. Validar ese vínculo en un checkout local confiable, limpio y actualizado; **no ejecutar este bloque en el VPS**:
+
+```bash
+(
+    set -euo pipefail
+
+    base=4db14509564880449564285cbefdf92a3ba629ed
+    : "${RECOVERY_COMMIT:?Defina el SHA completo del commit de recuperación publicado}"
+
+    [[ "$RECOVERY_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+    [[ "$RECOVERY_COMMIT" != "$base" ]]
+    branch="$(git branch --show-current)"
+    head="$(git rev-parse HEAD)"
+    parents="$(git show -s --format='%P' "$RECOVERY_COMMIT")"
+    worktree_status="$(git status --porcelain=v1 --untracked-files=all)"
+    [[ "$branch" == main ]]
+    [[ "$head" == "$RECOVERY_COMMIT" ]]
+    [[ "$parents" == "$base" ]]
+    [[ -z "$worktree_status" ]]
+
+    published_line="$(git ls-remote --exit-code origin refs/heads/main)"
+    read -r published_commit published_ref <<< "$published_line"
+    [[ "$published_commit" == "$RECOVERY_COMMIT" ]]
+    [[ "$published_ref" == refs/heads/main ]]
+
+    changed_paths="$(git diff --name-only --diff-filter=ACDMRTUXB "$base" "$RECOVERY_COMMIT")"
+    [[ "$changed_paths" == DEPLOY.md ]]
+)
+```
+
+La prueba local debe registrarse en el resumen de la Etapa A sin incluir datos del respaldo. Antes de abrir la ventana, el operador debe exportar estas variables en la misma shell:
+
+| Variable | Valor requerido |
+|---|---|
+| `RECOVERY_COMMIT` | SHA completo validado por el bloque local anterior |
+| `RUNBOOK_ONLY_COMMIT_ATTESTED` | Mismo valor que `RECOVERY_COMMIT` |
+| `STAGE_A_AUTHORIZED_FOR_COMMIT` | Mismo valor que `RECOVERY_COMMIT`, solo tras autorización explícita de la Etapa A |
+| `BACKUP_READY` | Literal opaco `CONFIRMADO` |
+| `BACKUP_READY_ATTESTED_FOR_HEAD` | `4db14509564880449564285cbefdf92a3ba629ed` |
+| `EXCLUSIVE_DEPLOYMENT_WINDOW` | `CONFIRMADA` |
+
+`BACKUP_READY=CONFIRMADO` no contiene una ruta ni contenido del respaldo. Este flujo nunca solicita, exporta, almacena, inspecciona ni muestra una ruta o contenido de respaldo; el token solo atestigua un respaldo fresco para el commit base exacto y la ventana exclusiva actual. No reutilizar el token en otra ventana.
+
+### Etapa A — bootstrap exclusivo del runbook
+
+Antes de ejecutar, presentar un resumen que limite esta etapa al fetch, la verificación inmutable y el fast-forward exacto del commit documental autorizado, y obtener autorización explícita para la Etapa A. El fetch es una mutación explícita de metadatos de Git que actualiza `FETCH_HEAD`, no el worktree. El bloque se detiene ante el primer fallo; no ejecuta migraciones, cache, build ni reinicios.
+
+```bash
+(
+    set -euo pipefail
+
+    base=4db14509564880449564285cbefdf92a3ba629ed
+    project=/var/www/simo
+    runbook="$project/DEPLOY.md"
+
+    fail() {
+        printf 'ERROR: %s\n' "$1" >&2
+        exit 1
+    }
+
+    : "${RECOVERY_COMMIT:?Falta el SHA del commit publicado y validado localmente}"
+    [[ "$RECOVERY_COMMIT" =~ ^[0-9a-f]{40}$ ]] || fail 'RECOVERY_COMMIT no es un SHA completo'
+    [[ "$RECOVERY_COMMIT" != "$base" ]] || fail 'RECOVERY_COMMIT no puede ser el commit base'
+    [[ "${RUNBOOK_ONLY_COMMIT_ATTESTED:-}" == "$RECOVERY_COMMIT" ]] || fail 'falta la prueba local del commit publicado que solo modifica DEPLOY.md'
+    [[ "${STAGE_A_AUTHORIZED_FOR_COMMIT:-}" == "$RECOVERY_COMMIT" ]] || fail 'la Etapa A no está autorizada para RECOVERY_COMMIT'
+    [[ "${BACKUP_READY:-}" == CONFIRMADO ]] || fail 'falta el token opaco BACKUP_READY=CONFIRMADO'
+    [[ "${BACKUP_READY_ATTESTED_FOR_HEAD:-}" == "$base" ]] || fail 'BACKUP_READY no está atestado para el commit base exacto'
+    [[ "${EXCLUSIVE_DEPLOYMENT_WINDOW:-}" == CONFIRMADA ]] || fail 'la ventana exclusiva de deploy no está confirmada'
+
+    if sudo test -L "$project" || ! sudo test -d "$project"; then
+        fail "el proyecto debe ser un directorio real: $project"
+    fi
+
+    production_branch="$(sudo -u www-data -- git -C "$project" branch --show-current)"
+    production_head="$(sudo -u www-data -- git -C "$project" rev-parse HEAD)"
+    production_status="$(sudo -u www-data -- git -C "$project" status --porcelain=v1 --untracked-files=all)"
+    [[ "$production_branch" == main ]] || fail 'producción no está en main'
+    [[ "$production_head" == "$base" ]] || fail 'HEAD productivo no coincide con el incidente'
+    [[ -z "$production_status" ]] || fail 'el worktree productivo no está limpio'
+
+    # Esta operación actualiza solo metadatos de Git (FETCH_HEAD), no el worktree.
+    sudo -u www-data -- git -C "$project" fetch --no-tags origin refs/heads/main
+
+    fetched_commit="$(sudo -u www-data -- git -C "$project" rev-parse FETCH_HEAD)"
+    fetched_parents="$(sudo -u www-data -- git -C "$project" show -s --format='%P' "$fetched_commit")"
+    changed_paths="$(sudo -u www-data -- git -C "$project" diff --name-only --diff-filter=ACDMRTUXB "$base" "$fetched_commit")"
+    [[ "$fetched_commit" == "$RECOVERY_COMMIT" ]] || fail 'FETCH_HEAD no coincide con RECOVERY_COMMIT'
+    [[ "$fetched_parents" == "$base" ]] || fail 'FETCH_HEAD no es hijo directo único del commit base'
+    [[ "$changed_paths" == DEPLOY.md ]] || fail 'el diff obtenido desde el commit base no es exactamente DEPLOY.md'
+
+    sudo -u www-data -- git -C "$project" merge --ff-only "$fetched_commit"
+
+    production_head="$(sudo -u www-data -- git -C "$project" rev-parse HEAD)"
+    production_parents="$(sudo -u www-data -- git -C "$project" show -s --format='%P' "$fetched_commit")"
+    production_status="$(sudo -u www-data -- git -C "$project" status --porcelain=v1 --untracked-files=all)"
+    changed_paths="$(sudo -u www-data -- git -C "$project" diff --name-only --diff-filter=ACDMRTUXB "$base" "$fetched_commit")"
+    [[ "$production_head" == "$fetched_commit" ]] || fail 'el fast-forward no dejó HEAD exactamente en el objeto verificado'
+    [[ "$production_head" == "$RECOVERY_COMMIT" ]] || fail 'HEAD no coincide con RECOVERY_COMMIT'
+    [[ "$production_parents" == "$base" ]] || fail 'el objeto verificado no es hijo directo único del commit base'
+    [[ -z "$production_status" ]] || fail 'el worktree no quedó limpio después del fast-forward'
+    [[ "$changed_paths" == DEPLOY.md ]] || fail 'el diff desplegado desde el commit base no es exactamente DEPLOY.md'
+
+    if sudo test -L "$runbook" || ! sudo test -f "$runbook"; then
+        fail "el runbook desplegado debe ser un archivo real: $runbook"
+    fi
+)
+```
+
+### Lectura obligatoria entre etapas
+
+Tras finalizar la Etapa A, detenerse. El operador debe releer **completo** el runbook ya desplegado antes de resumir la Etapa B y solicitar una autorización nueva y específica:
+
+```bash
+sudo -u www-data -- cat -- /var/www/simo/DEPLOY.md
+```
+
+La lectura no autoriza la Etapa B. Solo después de completarla, exportar `DEPLOYED_RUNBOOK_REREAD_FOR_COMMIT` y `STAGE_B_AUTHORIZED_FOR_COMMIT`, ambos con el valor exacto de `RECOVERY_COMMIT`; el segundo únicamente después de recibir autorización explícita para la Etapa B.
+
+### Etapa B — recuperación de Vite y reinicios acotados
+
+Ejecutar todo el bloque en una sola shell después de la lectura y autorización anteriores. Se detiene ante el primer fallo. La única remediación manual permitida es el `rmdir` exacto indicado; el build es el único paso de aplicación que se reintenta.
+
+```bash
+(
+    set -euo pipefail
+
+    base=4db14509564880449564285cbefdf92a3ba629ed
+    project=/var/www/simo
+    node_modules="$project/node_modules"
+    vite_temp="$node_modules/.vite-temp"
+    public_dir="$project/public"
+    build_dir="$public_dir/build"
+
+    fail() {
+        printf 'ERROR: %s\n' "$1" >&2
+        exit 1
+    }
+
+    require_real_directory() {
+        local path="$1"
+        local label="$2"
+
+        if sudo test -L "$path" || ! sudo test -d "$path"; then
+            fail "$label debe ser un directorio real, no un enlace simbólico: $path"
+        fi
+    }
+
+    require_running() {
+        local identity="$1"
+        local status_line observed_identity observed_state remainder
+
+        status_line="$(sudo supervisorctl status "$identity")"
+        read -r observed_identity observed_state remainder <<< "$status_line"
+        if [[ "$observed_identity" != "$identity" || "$observed_state" != RUNNING ]]; then
+            fail "Supervisor no confirmó RUNNING para la identidad exacta $identity"
+        fi
+    }
+
+    : "${RECOVERY_COMMIT:?Falta el SHA del commit publicado y desplegado}"
+    [[ "$RECOVERY_COMMIT" =~ ^[0-9a-f]{40}$ ]] || fail 'RECOVERY_COMMIT no es un SHA completo'
+    [[ "$RECOVERY_COMMIT" != "$base" ]] || fail 'RECOVERY_COMMIT no puede ser el commit base'
+    [[ "${RUNBOOK_ONLY_COMMIT_ATTESTED:-}" == "$RECOVERY_COMMIT" ]] || fail 'falta la prueba local del commit publicado que solo modifica DEPLOY.md'
+    [[ "${BACKUP_READY:-}" == CONFIRMADO ]] || fail 'falta el token opaco BACKUP_READY=CONFIRMADO'
+    [[ "${BACKUP_READY_ATTESTED_FOR_HEAD:-}" == "$base" ]] || fail 'BACKUP_READY no está atestado para el commit base exacto'
+    [[ "${EXCLUSIVE_DEPLOYMENT_WINDOW:-}" == CONFIRMADA ]] || fail 'la ventana exclusiva de deploy no está confirmada'
+    [[ "${DEPLOYED_RUNBOOK_REREAD_FOR_COMMIT:-}" == "$RECOVERY_COMMIT" ]] || fail 'no se atestó la lectura del runbook desplegado para RECOVERY_COMMIT'
+    [[ "${STAGE_B_AUTHORIZED_FOR_COMMIT:-}" == "$RECOVERY_COMMIT" ]] || fail 'la Etapa B no está autorizada para RECOVERY_COMMIT'
+
+    require_real_directory "$project" 'El proyecto'
+    require_real_directory "$node_modules" 'El parent de Vite'
+    require_real_directory "$public_dir" 'El directorio public'
+
+    production_branch="$(sudo -u www-data -- git -C "$project" branch --show-current)"
+    production_head="$(sudo -u www-data -- git -C "$project" rev-parse HEAD)"
+    production_parents="$(sudo -u www-data -- git -C "$project" show -s --format='%P' "$RECOVERY_COMMIT")"
+    production_status="$(sudo -u www-data -- git -C "$project" status --porcelain=v1 --untracked-files=all)"
+    changed_paths="$(sudo -u www-data -- git -C "$project" diff --name-only --diff-filter=ACDMRTUXB "$base" "$RECOVERY_COMMIT")"
+    [[ "$production_branch" == main ]] || fail 'producción no está en main'
+    [[ "$production_head" == "$RECOVERY_COMMIT" ]] || fail 'HEAD productivo no coincide con RECOVERY_COMMIT'
+    [[ "$production_parents" == "$base" ]] || fail 'RECOVERY_COMMIT no es hijo directo único del commit base'
+    [[ -z "$production_status" ]] || fail 'el worktree productivo no está limpio'
+    [[ "$changed_paths" == DEPLOY.md ]] || fail 'la aplicación difiere del commit base en rutas distintas de DEPLOY.md'
+
+    node_modules_owner="$(sudo stat --format='%U:%G' -- "$node_modules")"
+    node_modules_mode="$(sudo stat --format='%a' -- "$node_modules")"
+    [[ "$node_modules_owner" == www-data:www-data ]] || fail 'node_modules no pertenece a www-data:www-data'
+    [[ "$node_modules_mode" == 755 ]] || fail 'node_modules no tiene modo 0755 exacto'
+    sudo -u www-data -- test -w "$node_modules" || fail 'www-data no puede escribir en node_modules'
+    sudo -u www-data -- test -x "$node_modules" || fail 'www-data no puede atravesar node_modules'
+
+    require_real_directory "$vite_temp" 'El directorio temporal de Vite'
+    vite_temp_owner="$(sudo stat --format='%U:%G' -- "$vite_temp")"
+    vite_temp_mode="$(sudo stat --format='%a' -- "$vite_temp")"
+    [[ "$vite_temp_owner" == root:root ]] || fail '.vite-temp no pertenece a root:root'
+    [[ "$vite_temp_mode" == 755 ]] || fail '.vite-temp no tiene modo 0755 exacto'
+    vite_temp_entry="$(sudo find "$vite_temp" -mindepth 1 -maxdepth 1 -print -quit)"
+    [[ -z "$vite_temp_entry" ]] || fail '.vite-temp no está vacío'
+
+    sudo -u www-data -- sh -c 'set -eu; cd /var/www/simo; command -v node >/dev/null 2>&1; command -v npm >/dev/null 2>&1; node -e "const major = Number(process.versions.node.split(\".\")[0]); if (!Number.isInteger(major) || major < 20) process.exit(1)"; node --version; npm --version'
+
+    for command_name in npm node vite; do
+        if pgrep -x -- "$command_name" >/dev/null; then
+            fail "hay un proceso activo con nombre exacto $command_name"
+        else
+            pgrep_status=$?
+            [[ "$pgrep_status" == 1 ]] || fail "no se pudo verificar la ausencia de procesos $command_name"
+        fi
+    done
+
+    supervisor_identities=(
+        'simo-pep-monitor'
+        'simo-runner'
+        'simo-gaceta-runner'
+        'simo-site-validation-worker:simo-site-validation-worker_00'
+        'simo-dedupe-worker'
+        'simo-gemini-worker'
+    )
+    for identity in "${supervisor_identities[@]}"; do
+        require_running "$identity"
+    done
+
+    if sudo test -e "$build_dir" || sudo test -L "$build_dir"; then
+        require_real_directory "$build_dir" 'public/build'
+        unexpected_build_owner="$(sudo find "$build_dir" -xdev \( ! -user www-data -o ! -group www-data \) -print -quit)"
+        [[ -z "$unexpected_build_owner" ]] || fail 'public/build contiene ownership distinto de www-data:www-data antes del build'
+    fi
+
+    sudo -u www-data -- rmdir -- "$vite_temp"
+    if sudo test -e "$vite_temp" || sudo test -L "$vite_temp"; then
+        fail 'rmdir no eliminó únicamente .vite-temp'
+    fi
+
+    sudo -u www-data -- sh -c 'set -eu; cd /var/www/simo; npm run build'
+
+    require_real_directory "$vite_temp" 'El .vite-temp recreado por Vite'
+    recreated_owner="$(sudo stat --format='%U:%G' -- "$vite_temp")"
+    [[ "$recreated_owner" == www-data:www-data ]] || fail 'Vite no recreó .vite-temp como www-data:www-data'
+    sudo -u www-data -- test -w "$vite_temp" || fail 'www-data no puede escribir en el .vite-temp recreado'
+    sudo -u www-data -- test -x "$vite_temp" || fail 'www-data no puede atravesar el .vite-temp recreado'
+    recreated_entry="$(sudo find "$vite_temp" -mindepth 1 -maxdepth 1 -print -quit)"
+    [[ -z "$recreated_entry" ]] || fail 'el .vite-temp recreado no quedó vacío'
+
+    require_real_directory "$build_dir" 'public/build después del build'
+    unexpected_build_owner="$(sudo find "$build_dir" -xdev \( ! -user www-data -o ! -group www-data \) -print -quit)"
+    [[ -z "$unexpected_build_owner" ]] || fail 'public/build contiene ownership distinto de www-data:www-data'
+    production_head="$(sudo -u www-data -- git -C "$project" rev-parse HEAD)"
+    production_status="$(sudo -u www-data -- git -C "$project" status --porcelain=v1 --untracked-files=all)"
+    [[ "$production_head" == "$RECOVERY_COMMIT" ]] || fail 'HEAD cambió durante la recuperación'
+    [[ -z "$production_status" ]] || fail 'Git no quedó limpio después del build'
+
+    sudo supervisorctl restart simo-pep-monitor
+    sudo supervisorctl restart simo-gemini-worker
+    sudo supervisorctl restart simo-dedupe-worker
+    sudo supervisorctl restart simo-gaceta-runner
+
+    for identity in "${supervisor_identities[@]}"; do
+        require_running "$identity"
+    done
+)
+```
+
+No usar esta sección con otro commit base, otro `RECOVERY_COMMIT`, otro estado de `.vite-temp` ni otra ventana. En la Etapa B no ejecutar `migrate --force`, `view:cache`, `rm -rf`, `chown`, `chmod`, normalización amplia de ownership, reinstalación de dependencias, cambio del config loader ni mutaciones manuales sobre otra ruta. No reiniciar `simo-runner` ni `simo-site-validation-worker`. No ejecutar tests en producción, inspeccionar la base de datos, improvisar rollback, normalizar ownership de assets ni inventar un health check; ante cualquier fallo, detenerse y obtener nueva autoridad.
 
 ---
 
