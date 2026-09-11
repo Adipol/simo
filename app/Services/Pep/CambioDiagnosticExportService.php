@@ -114,6 +114,7 @@ final class CambioDiagnosticExportService
                 'lineas_nuevas',
                 'diff_texto',
                 'autoridades_eventos_json',
+                'feed_status',
                 'posibles_peps',
                 'revisado',
                 'gemini_analyzed',
@@ -192,6 +193,7 @@ final class CambioDiagnosticExportService
         return CambioDiagnosticSampleDTO::fromArray([
             'sample_stratum' => $stratum,
             'cambio_id' => (int) $cambio->id,
+            'feed_status' => $cambio->feed_status->value,
             'fecha' => $cambio->fecha?->toISOString() ?? '',
             'source' => [
                 'id' => (int) $cambio->fuente_id,

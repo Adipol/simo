@@ -15,6 +15,7 @@ final readonly class CambioDiagnosticSampleDTO
     public function __construct(
         public string $sampleStratum,
         public int $cambioId,
+        public string $feedStatus,
         public string $fecha,
         public array $source,
         public int $lineasNuevas,
@@ -42,6 +43,7 @@ final readonly class CambioDiagnosticSampleDTO
      * @param  array{
      *     sample_stratum:string,
      *     cambio_id:int,
+     *     feed_status:string,
      *     fecha:string,
      *     source:array{id:int,nombre:?string,organismo:?string,pais:?string,url:?string},
      *     lineas_nuevas:int,
@@ -70,6 +72,7 @@ final readonly class CambioDiagnosticSampleDTO
         return new self(
             sampleStratum: $data['sample_stratum'],
             cambioId: $data['cambio_id'],
+            feedStatus: $data['feed_status'],
             fecha: $data['fecha'],
             source: $data['source'],
             lineasNuevas: $data['lineas_nuevas'],
@@ -100,6 +103,7 @@ final readonly class CambioDiagnosticSampleDTO
         return [
             'sample_stratum' => $this->sampleStratum,
             'cambio_id' => $this->cambioId,
+            'feed_status' => $this->feedStatus,
             'fecha' => $this->fecha,
             'source' => $this->source,
             'lineas_nuevas' => $this->lineasNuevas,

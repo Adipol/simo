@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Pep;
 
+use App\Enums\CambioFeedStatus;
 use App\Models\AuthorityRemovalReview;
 use App\Models\Cambio;
 use App\Models\Fuente;
@@ -74,6 +75,7 @@ final class CambioDiagnosticExportTest extends TestCase
                 ]],
                 'filesystem_path' => '/private/authority.json',
             ],
+            'feed_status' => CambioFeedStatus::Primary,
             'revisado' => true,
             'gemini_analyzed' => true,
             'gemini_analyzed_at' => now()->subHour(),
@@ -129,6 +131,7 @@ final class CambioDiagnosticExportTest extends TestCase
         $this->assertSame([
             'sample_stratum',
             'cambio_id',
+            'feed_status',
             'fecha',
             'source',
             'lineas_nuevas',
@@ -151,6 +154,11 @@ final class CambioDiagnosticExportTest extends TestCase
             'revisado',
         ], array_keys($record));
         $this->assertArrayNotHasKey('analysis_request_type', $record);
+        $this->assertSame(CambioFeedStatus::Primary->value, $record['feed_status']);
+        $this->assertSame('Replacement detected.', $record['analisis']);
+        $this->assertSame([
+            ['nombre' => 'New Person', 'cargo' => 'Director'],
+        ], $record['personas_detectadas']);
         $this->assertSame(['id', 'nombre', 'organismo', 'pais', 'url'], array_keys($record['source']));
         $this->assertSame(['present' => true, 'status' => 'confirmed'], $record['authority_review']);
         $this->assertTrue($record['has_images']);

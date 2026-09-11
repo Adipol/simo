@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Gemini;
 
+use App\Enums\CambioFeedStatus;
 use App\Exceptions\Gemini\GeminiBadRequestException;
 use App\Exceptions\Gemini\GeminiImageReadException;
 use App\Exceptions\Gemini\GeminiInvalidResponseException;
@@ -12,15 +13,21 @@ use App\Models\Cambio;
 use App\Models\GeminiUsageLog;
 use App\Services\Gemini\DTOs\AnalisisCambioDTO;
 use App\Services\Gemini\DTOs\GeminiResponseDTO;
+use App\Services\Pep\AuthorityEventFeedService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 
 class GeminiAnalisisService
 {
+    private readonly AuthorityEventFeedService $feedClassifier;
+
     public function __construct(
         private GeminiService $gemini,
         private GeminiPromptBuilder $builder,
-    ) {}
+        ?AuthorityEventFeedService $feedClassifier = null,
+    ) {
+        $this->feedClassifier = $feedClassifier ?? new AuthorityEventFeedService;
+    }
 
     public function analizarLote(Collection $records): void
     {
@@ -157,7 +164,7 @@ class GeminiAnalisisService
     }
 
     /**
-     * Resolve image entries from cambio JSON to absolute filesystem paths, filtering unreadable files.
+     * Resolve untrusted Cambio image metadata to readable files below img_cambios.
      *
      * @return array<int,array{path:string,mime_type:string}>
      */
@@ -165,17 +172,43 @@ class GeminiAnalisisService
     {
         $entries = $cambio->imagenes_cambio_json ?? [];
 
+        if (! is_array($entries) || ! array_is_list($entries)) {
+            return [];
+        }
+
+        $root = realpath(storage_path('app/img_cambios'));
+
+        if ($root === false || ! is_dir($root)) {
+            return [];
+        }
+
+        $prefix = rtrim($root, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR;
         $resolved = [];
 
         foreach ($entries as $entry) {
-            $absPath = storage_path('app/'.$entry['path']);
+            if (! is_array($entry)
+                || ! is_string($entry['path'] ?? null)
+                || ! is_string($entry['mime_type'] ?? null)) {
+                continue;
+            }
 
-            if (! is_readable($absPath)) {
-                Log::channel('gemini')->warning('resolverImagenes: image not readable, skipping', [
-                    'cambio_id' => $cambio->id,
-                    'path' => $absPath,
-                ]);
+            $path = $entry['path'];
 
+            // The producer stores storage/app-relative paths, never URLs or absolute paths.
+            if (! str_starts_with($path, 'img_cambios/')
+                || str_contains($path, '\\')
+                || preg_match('/[\x00-\x1F\x7F]/', $path) === 1
+                || preg_match('#\Aimage/[a-zA-Z0-9][a-zA-Z0-9.+-]*\z#', $entry['mime_type']) !== 1) {
+                continue;
+            }
+
+            $absPath = realpath(storage_path('app/'.$path));
+
+            // MIME metadata is not evidence of containment; check the canonical file itself.
+            if ($absPath === false
+                || ! str_starts_with($absPath, $prefix)
+                || ! is_file($absPath)
+                || ! is_readable($absPath)) {
                 continue;
             }
 
@@ -209,6 +242,11 @@ class GeminiAnalisisService
                 'analisis' => $dto->analisis,
                 'personas_detectadas' => $dto->personasDetectadas,
             ],
+            'feed_status' => $this->feedClassifier->classifyAnalyzedCandidate(
+                $cambio->autoridades_eventos_json,
+                $cambio->feed_status ?? CambioFeedStatus::Review,
+                $dto,
+            ),
         ]);
 
         // Write usage log if we have a real Gemini response (not a no-op guard path).
@@ -253,14 +291,14 @@ class GeminiAnalisisService
         // row (which has analyzed=true but analyzed_at=null). This makes the Stranded predicate
         // (analyzed=true AND analyzed_at IS NULL) precise: only failed()-stranded rows match.
         $cambio->update([
-            'gemini_analyzed'    => true,
+            'gemini_analyzed' => true,
             'gemini_analyzed_at' => now(),
         ]);
 
         Log::channel('gemini')->warning('AnalisisCambio fallido, registro marcado', [
             'cambio_id' => $cambio->id,
             'exception' => $e::class,
-            'message'   => $e->getMessage(),
+            'message' => $e->getMessage(),
         ]);
     }
 }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Services\Pep;
 
 use App\Enums\CambioFeedStatus;
+use App\Services\Gemini\DTOs\AnalisisCambioDTO;
 use App\Services\Pep\AuthorityEventFeedService;
 use PHPUnit\Framework\TestCase;
 
@@ -98,6 +99,45 @@ final class AuthorityEventFeedServiceTest extends TestCase
         foreach ([CambioFeedStatus::Review, CambioFeedStatus::Suppressed, CambioFeedStatus::SourceHealth] as $destination) {
             $this->assertSame($destination, $this->service->classify(null, $destination));
         }
+    }
+
+    public function test_invalid_primary_without_candidate_evidence_is_suppressed_after_analysis(): void
+    {
+        $this->assertSame(
+            CambioFeedStatus::Suppressed,
+            $this->service->classifyAnalyzedCandidate(
+                ['version' => 1, 'events' => []],
+                CambioFeedStatus::Primary,
+                AnalisisCambioDTO::sinNovedad('No candidate evidence.'),
+            ),
+        );
+    }
+
+    public function test_analyzed_candidate_preserves_admitted_and_ambiguous_destinations(): void
+    {
+        $analysisWithoutEvidence = AnalisisCambioDTO::sinNovedad('No candidate evidence.');
+        $validPayload = $this->payload(version: 1);
+        $ambiguousPayload = [
+            'version' => 2,
+            'events' => [['type' => 'designacion', 'old' => null, 'new' => $this->authority('Directora', 'Ana Pérez')]],
+        ];
+
+        $this->assertSame(
+            CambioFeedStatus::Primary,
+            $this->service->classifyAnalyzedCandidate($validPayload, CambioFeedStatus::Primary, $analysisWithoutEvidence),
+        );
+        $this->assertSame(
+            CambioFeedStatus::Review,
+            $this->service->classifyAnalyzedCandidate($ambiguousPayload, CambioFeedStatus::Primary, $analysisWithoutEvidence),
+        );
+        $this->assertSame(
+            CambioFeedStatus::Suppressed,
+            $this->service->classifyAnalyzedCandidate(null, CambioFeedStatus::Suppressed, $analysisWithoutEvidence),
+        );
+        $this->assertSame(
+            CambioFeedStatus::SourceHealth,
+            $this->service->classifyAnalyzedCandidate(null, CambioFeedStatus::SourceHealth, $analysisWithoutEvidence),
+        );
     }
 
     /** @return array{cargo:string,persona:string} */

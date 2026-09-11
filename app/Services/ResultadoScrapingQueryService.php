@@ -74,6 +74,12 @@ class ResultadoScrapingQueryService
             $q->where('descartado', true);
         }
 
+        // The discarded view is a complete review set, regardless of archive,
+        // Gemini processing, or deduplication status.
+        if ($filtroDescartado === '1') {
+            return $q;
+        }
+
         if ($filtroArchivado === '0') {
             $q->noArchivado();
         } elseif ($filtroArchivado === '1') {
