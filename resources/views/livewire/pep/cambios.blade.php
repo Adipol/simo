@@ -15,7 +15,7 @@
         </select>
         <select wire:model.live="feed" class="simo-select">
             <option value="primary">Feed principal validado</option>
-            <option value="review">Pendientes de revisión</option>
+            <option value="review">Pendientes de revisión (vista inicial)</option>
             <option value="all">Todos los cambios registrados</option>
         </select>
         <select wire:model.live="filtroConPersona" class="simo-select">
@@ -54,7 +54,7 @@
         </div>
     @elseif($feed === 'review')
         <div class="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-700">
-            <span>Cambios amplios o inciertos pendientes de revisión; no forman parte del feed principal.</span>
+            <span>Vista inicial: cambios amplios o inciertos pendientes de revisión; no forman parte del feed principal.</span>
         </div>
     @elseif($feed === 'all')
         <div class="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-600">

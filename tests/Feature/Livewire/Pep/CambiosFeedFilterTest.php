@@ -31,7 +31,31 @@ final class CambiosFeedFilterTest extends TestCase
         $this->fuente = Fuente::factory()->create();
     }
 
-    public function test_default_filter_only_shows_schema_valid_primary_rows(): void
+    public function test_default_filter_shows_review_queue(): void
+    {
+        $primary = $this->makeCambio(CambioFeedStatus::Primary, $this->payload());
+        $review = $this->makeCambio(CambioFeedStatus::Review, null, [
+            'gemini_analyzed' => true,
+            'gemini_analisis_json' => ['persona_nueva' => 'Ana Pérez', 'riesgo' => 'alto'],
+        ]);
+        $suppressed = $this->makeCambio(CambioFeedStatus::Suppressed, null);
+
+        Livewire::actingAs($this->user)
+            ->test(Cambios::class)
+            ->assertSet('feed', 'review')
+            ->assertSee('Pendientes de revisión (vista inicial)')
+            ->assertSee('Vista inicial: cambios amplios o inciertos pendientes de revisión')
+            ->assertSeeHtml("wire:key=\"cambio-{$review->id}\"")
+            ->assertViewHas('cambios', function ($cambios) use ($primary, $review, $suppressed): bool {
+                $ids = $cambios->pluck('id');
+
+                return $ids->contains($review->id)
+                    && ! $ids->contains($primary->id)
+                    && ! $ids->contains($suppressed->id);
+            });
+    }
+
+    public function test_explicit_primary_filter_only_shows_schema_valid_canonical_rows(): void
     {
         $primary = $this->makeCambio(CambioFeedStatus::Primary, $this->payload());
         $review = $this->makeCambio(CambioFeedStatus::Review, $this->payload());
@@ -47,6 +71,7 @@ final class CambiosFeedFilterTest extends TestCase
         $editorial = $this->makeCambio(CambioFeedStatus::Review, null, ['diff_texto' => '+ Menú institucional']);
 
         Livewire::actingAs($this->user)
+            ->withQueryParams(['feed' => 'primary'])
             ->test(Cambios::class)
             ->assertSet('feed', 'primary')
             ->assertSee('Feed principal validado')
@@ -149,13 +174,13 @@ final class CambiosFeedFilterTest extends TestCase
     public function test_changing_feed_resets_pagination(): void
     {
         for ($index = 0; $index < 25; $index++) {
-            $this->makeCambio(CambioFeedStatus::Primary, $this->payload((string) $index));
+            $this->makeCambio(CambioFeedStatus::Review, $this->payload((string) $index));
         }
 
         Livewire::actingAs($this->user)
             ->test(Cambios::class)
             ->call('gotoPage', 2)
-            ->set('feed', 'review')
+            ->set('feed', 'primary')
             ->assertSet('paginators', ['page' => 1]);
     }
 
@@ -187,7 +212,7 @@ final class CambiosFeedFilterTest extends TestCase
     public function test_review_action_visibility_matches_review_permission(): void
     {
         $authorizedUser = $this->makeUserWithReviewPermission();
-        $this->makeCambio(CambioFeedStatus::Primary, $this->payload(), ['revisado' => false]);
+        $this->makeCambio(CambioFeedStatus::Review, null, ['revisado' => false]);
 
         Livewire::actingAs($this->user)
             ->test(Cambios::class)

@@ -28,7 +28,7 @@ final class Cambios extends Component
     public string $filtroRevisado = '';
 
     #[Url]
-    public string $feed = 'primary';
+    public string $feed = 'review';
 
     #[Url]
     public string $filtroConPersona = '';
