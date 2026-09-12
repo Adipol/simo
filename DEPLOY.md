@@ -836,7 +836,7 @@ stdout_logfile=/var/www/simo/storage/logs/site-validation-worker.log
 
 [program:simo-pep-monitor]
 process_name=%(program_name)s_%(process_num)02d
-command=python3 /var/www/simo/scripts/website_monitor_pro/pep_monitor.py
+command=python3 /var/www/simo/scripts/website_monitor_pro/pep_monitor.py run
 autostart=true
 autorestart=true
 user=www-data
