@@ -256,12 +256,25 @@ class _PinnedIPAdapter(HTTPAdapter):
         return response
 
 
+def umsa_profile_baseline_is_usable(value: object) -> bool:
+    """Accept exactly one complete UMSA profile as a comparison baseline."""
+    if not isinstance(value, list) or len(value) != 1 or not isinstance(value[0], dict):
+        return False
+
+    return all(
+        isinstance(value[0].get(field), str) and bool(value[0][field].strip())
+        for field in ("cargo", "persona")
+    )
+
+
 def authority_extraction_complete(
     html: str, extractor: Optional[str], authorities: list[Authority]
 ) -> bool:
     """Confirm that a configured extractor produced an authoritative roster."""
     if not extractor:
         return False
+    if extractor == "umsa_rectorado_profile":
+        return len(authorities) == 1
     if extractor != "divi_blurb":
         return bool(authorities)
 
@@ -2317,6 +2330,17 @@ class PEPMonitor:
                 extraccion_autoridades_completa = authority_extraction_complete(
                     html_raw, extractor_autoridades, autoridades_actuales
                 )
+            if extractor_autoridades == "umsa_rectorado_profile":
+                if not extraccion_autoridades_completa:
+                    estado = "parse_error"
+                    error_mensaje = "UMSA Rectorado profile header is missing, incomplete, or ambiguous"
+                    return
+                lineas_nuevas = [
+                    autoridades_actuales[0].normalized_cargo,
+                    autoridades_actuales[0].normalized_persona,
+                ]
+                metodo = "umsa_rectorado_profile"
+
             if not lineas_nuevas:
                 logger.warning(f"Sin contenido extraido de: {nombre}")
                 if structured_source:
@@ -2366,6 +2390,19 @@ class PEPMonitor:
                     persistence_succeeded = True
                 return
 
+            if (
+                extractor_autoridades == "umsa_rectorado_profile"
+                and not umsa_profile_baseline_is_usable(
+                    snapshot_anterior.get("autoridades_json")
+                )
+            ):
+                self.db.guardar_snapshot(
+                    fuente_id, hash_nuevo, texto_nuevo, metodo, autoridades_actuales
+                )
+                self.db.update_ultimo_check(fuente_id)
+                estado = "first_snapshot"
+                return
+
             # ── Cascada de imágenes ────────────────────────────────
             max_image_bytes = int(
                 os.getenv("GEMINI_MULTIMODAL_MAX_IMAGE_BYTES", str(5 * 1024 * 1024))
@@ -2392,14 +2429,19 @@ class PEPMonitor:
             if texto_cambio:
                 lineas_anteriores = snapshot_anterior["texto"].split("\n")
                 diff = calcular_diff(lineas_anteriores, lineas_nuevas)
+                if extractor_autoridades == "umsa_rectorado_profile":
+                    diff["posibles_peps"] = ""
                 hay_diff_texto = bool(diff.get("quitadas") or diff.get("nuevas"))
 
             tiene_linea_base_autoridades = (
                 fuente.get("autoridades_extractor")
                 and snapshot_anterior.get("autoridades_json") is not None
             )
+            authority_type = type(autoridades_actuales[0]) if (
+                extractor_autoridades == "umsa_rectorado_profile" and autoridades_actuales
+            ) else Authority
             autoridades_anteriores = [
-                Authority(cargo=item["cargo"], persona=item["persona"])
+                authority_type(cargo=item["cargo"], persona=item["persona"])
                 for item in (snapshot_anterior.get("autoridades_json") or [])
                 if isinstance(item, dict) and item.get("cargo") and item.get("persona")
             ]

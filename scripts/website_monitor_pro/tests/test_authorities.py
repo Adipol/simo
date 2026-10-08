@@ -29,6 +29,167 @@ COMPLETE_ASUSS_HTML = ASUSS_HTML.replace(
     '  <div class="et_pb_blurb_container">\n    <h4>Sin persona</h4>\n  </div>\n',
     "",
 )
+UMSA_HTML = (Path(__file__).parent / "fixtures" / "umsa_rectorado_profile.html").read_text(encoding="utf-8")
+UMSA_SOURCE = {
+    "id": 61,
+    "url": "https://www.umsa.bo/web/guest/rectorado",
+    "nombre": "UMSA Rectorado",
+    "tipo": "html",
+    "selector_css": None,
+    "autoridades_extractor": "umsa_rectorado_profile",
+    "analizar_imagenes": False,
+}
+
+
+def _run_umsa_monitor(db: MagicMock, html: str) -> None:
+    with patch.object(DatabaseManager, "__init__", return_value=None), \
+         patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+         patch.object(PEPMonitor, "_obtener_html_raw", return_value=(html, "html_estatico")), \
+         patch("pep_monitor.mostrar_alerta"), \
+         patch("pep_monitor.hashlib.sha256") as sha:
+        sha.side_effect = lambda value: MagicMock(hexdigest=lambda: f"hash-{value.decode('utf-8')}")
+        monitor = PEPMonitor()
+        monitor.db = db
+        monitor.procesar_fuente(UMSA_SOURCE)
+
+
+def test_umsa_rectorado_extracts_only_the_explicit_profile_header() -> None:
+    authorities = extract_authorities(UMSA_HTML, "umsa_rectorado_profile")
+
+    assert [authority.to_dict() for authority in authorities] == [{
+        "cargo": "Rectora UMSA",
+        "persona": "María Eugenia García Moreno Ph.D.",
+    }]
+
+
+def test_umsa_rectorado_rejects_missing_duplicate_or_incomplete_profile_components() -> None:
+    invalid_pages = [
+        UMSA_HTML.replace("> Rectorado </h2>", "> Autoridades </h2>"),
+        UMSA_HTML + UMSA_HTML,
+        UMSA_HTML.replace('</h2>', '</h2><h2 class="portlet-title-text">Rectorado</h2>', 1),
+        UMSA_HTML.replace('<div class="parte2">', '<div class="parte2"></div><div class="parte2">', 1),
+        UMSA_HTML.replace('Rectora UMSA</b>', 'Rectora UMSA</b><b>Extra</b>'),
+        UMSA_HTML.replace('Rectora UMSA</b>', '</b>'),
+        UMSA_HTML.replace('María Eugenia García Moreno&nbsp;Ph.D.&nbsp;</b>', '</b>'),
+        UMSA_HTML.replace('<div class="journal-content-article">', '<div class="journal-content-article"><div class="journal-content-article">', 1),
+    ]
+
+    assert all(extract_authorities(page, "umsa_rectorado_profile") == [] for page in invalid_pages)
+
+
+def test_umsa_monitor_establishes_complete_baseline_silently() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    db.get_ultimo_snapshot.return_value = None
+
+    _run_umsa_monitor(db, UMSA_HTML)
+
+    db.guardar_cambio.assert_not_called()
+    assert db.guardar_snapshot.call_args.args[4][0].cargo == "Rectora UMSA"
+    assert db.registrar_fuente_run.call_args.kwargs["estado"] == "first_snapshot"
+
+
+def test_umsa_monitor_rebases_legacy_baseline_coherently_and_next_run_is_a_no_op() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    snapshots = [{"hash": "legacy", "texto": "old whole page", "autoridades_json": None}]
+    db.get_ultimo_snapshot.side_effect = lambda _fuente_id: snapshots[-1]
+
+    def save_snapshot(_fuente_id: int, hash_: str, texto: str, metodo: str, authorities: list[Authority]) -> None:
+        snapshots.append({
+            "hash": hash_, "texto": texto, "metodo": metodo,
+            "autoridades_json": [authority.to_dict() for authority in authorities],
+        })
+
+    db.guardar_snapshot.side_effect = save_snapshot
+
+    _run_umsa_monitor(db, UMSA_HTML)
+    _run_umsa_monitor(db, UMSA_HTML)
+
+    assert len(snapshots) == 2
+    assert snapshots[-1]["texto"] == "rectora umsa\nmaria eugenia garcia moreno"
+    assert snapshots[-1]["metodo"] == "umsa_rectorado_profile"
+    db.guardar_cambio.assert_not_called()
+    assert db.registrar_fuente_run.call_args_list[0].kwargs["estado"] == "first_snapshot"
+    assert db.registrar_fuente_run.call_args_list[-1].kwargs["estado"] == "no_change"
+
+
+def test_umsa_monitor_rebases_unusable_structured_baselines_without_designations() -> None:
+    unusable_baselines = [
+        [], [{}], [{"cargo": "", "persona": "Ana"}], [{"cargo": "Rectora", "persona": "  "}],
+        [{"cargo": "Rectora", "persona": 3}], [{"cargo": "Rectora", "persona": "Ana"}, {"cargo": "Vicerrector", "persona": "Luis"}],
+        {"cargo": "Rectora", "persona": "Ana"}, "invalid",
+    ]
+    for baseline in unusable_baselines:
+        db = MagicMock(spec=DatabaseManager)
+        db.get_ultimo_snapshot.return_value = {
+            "hash": "old", "texto": "old", "autoridades_json": baseline,
+        }
+
+        _run_umsa_monitor(db, UMSA_HTML)
+
+        db.guardar_cambio.assert_not_called()
+        db.guardar_snapshot.assert_called_once()
+        assert db.registrar_fuente_run.call_args.kwargs["estado"] == "first_snapshot"
+
+
+def test_umsa_monitor_preserves_baseline_and_records_non_success_for_partial_profile() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    previous = [{"cargo": "Rectora UMSA", "persona": "María Eugenia García Moreno Ph.D."}]
+    db.get_ultimo_snapshot.return_value = {"hash": "old", "texto": "old", "autoridades_json": previous}
+
+    _run_umsa_monitor(db, UMSA_HTML.replace('Rectora UMSA</b>', '</b>'))
+
+    db.guardar_cambio.assert_not_called()
+    db.guardar_snapshot.assert_not_called()
+    db.actualizar_autoridades_ultimo_snapshot.assert_not_called()
+    assert db.registrar_fuente_run.call_args.kwargs["estado"] == "parse_error"
+    assert db.registrar_fuente_run.call_args.kwargs["error_mensaje"]
+
+
+def test_umsa_monitor_ignores_menu_biography_and_terminal_credentials_without_candidates() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    db.get_ultimo_snapshot.return_value = {
+        "hash": "hash-rectora umsa\nmaria eugenia garcia moreno",
+        "texto": "rectora umsa\nmaria eugenia garcia moreno",
+        "autoridades_json": [{"cargo": "Rectora UMSA", "persona": "María Eugenia García Moreno PhD"}],
+    }
+    noisy = UMSA_HTML.replace("María Menú Cambiante", "Otra Persona") .replace("En 2024 fue elegida Rectora.", "Biografía actualizada.")
+
+    _run_umsa_monitor(db, noisy)
+
+    db.guardar_cambio.assert_not_called()
+    db.guardar_snapshot.assert_not_called()
+
+
+def test_umsa_monitor_emits_canonical_header_events_without_text_candidates() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    db.get_ultimo_snapshot.return_value = {
+        "hash": "old", "texto": "rectora umsa\nmaria eugenia garcia moreno",
+        "autoridades_json": [{"cargo": "Rectora UMSA", "persona": "María Eugenia García Moreno Ph.D."}],
+    }
+    db.guardar_cambio.return_value = 991
+    replacement = UMSA_HTML.replace("María Eugenia García Moreno", "Ana Pérez", 2)
+
+    _run_umsa_monitor(db, replacement)
+
+    kwargs = db.guardar_cambio.call_args.kwargs
+    assert kwargs["autoridades_eventos"][0]["type"] == "reemplazo"
+    assert kwargs["posibles_peps"] == ""
+    assert kwargs["feed_status"] == "primary"
+
+
+def test_umsa_monitor_emits_cargo_change_using_existing_comparator() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    db.get_ultimo_snapshot.return_value = {
+        "hash": "old", "texto": "rectora umsa\nmaria eugenia garcia moreno",
+        "autoridades_json": [{"cargo": "Rectora UMSA", "persona": "María Eugenia García Moreno Ph.D."}],
+    }
+    db.guardar_cambio.return_value = 992
+
+    _run_umsa_monitor(db, UMSA_HTML.replace("Rectora UMSA", "Presidenta UMSA"))
+
+    assert db.guardar_cambio.call_args.kwargs["autoridades_eventos"][0]["type"] == "cambio_cargo"
+
+
 def test_divi_blurb_extracts_display_pairs_and_ignores_malformed_blocks() -> None:
     authorities = extract_authorities(ASUSS_HTML, "divi_blurb")
 
@@ -2175,7 +2336,7 @@ def test_preview_worker_bounds_candidates_and_isolates_one_job_failure_from_acti
     source, html, _ = _structured_reduction_source()
     sources = [{**copy.deepcopy(source), "id": index} for index in range(81, 111)]
     monitor, db, cursor = _worker_monitor(sources)
-    active = {**copy.deepcopy(source), "id": 180, "activo": True}
+    active = {**UMSA_SOURCE}
     db.get_fuentes_activas = MagicMock(return_value=[active])
     db.log_inicio = MagicMock(return_value=1)
     db.log_fin = MagicMock()
