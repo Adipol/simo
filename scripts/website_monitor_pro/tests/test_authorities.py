@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
 import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
+import requests
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -15,6 +21,7 @@ from authorities import (
     is_valid_authority_event_payload,
 )
 from pep_monitor import DatabaseManager, PEPMonitor, authority_extraction_complete
+from structured_authorities import extract_structured_authorities
 
 
 ASUSS_HTML = (Path(__file__).parent / "fixtures" / "asuss_autoridades.html").read_text(encoding="utf-8")
@@ -22,8 +29,6 @@ COMPLETE_ASUSS_HTML = ASUSS_HTML.replace(
     '  <div class="et_pb_blurb_container">\n    <h4>Sin persona</h4>\n  </div>\n',
     "",
 )
-
-
 def test_divi_blurb_extracts_display_pairs_and_ignores_malformed_blocks() -> None:
     authorities = extract_authorities(ASUSS_HTML, "divi_blurb")
 
@@ -830,6 +835,925 @@ def test_monitor_treats_known_empty_baseline_as_designations() -> None:
 
     assert db.guardar_cambio.call_args.kwargs["autoridades_eventos"][0]["type"] == "designacion"
     assert db.guardar_cambio.call_args.kwargs["feed_status"] == "primary"
+
+
+def _run_structured_with_sql_spy(source: dict, html: str, current: dict, *, fetch_error: Exception | None = None, during_fetch: object = None) -> tuple[DatabaseManager, list[str], dict]:
+    """Exercise the real process and persistence guard, not a mocked guard."""
+    statements: list[str] = []
+    state = {"current": current, "fetch_source": None}
+
+    class CursorSpy:
+        def execute(self, sql: str, params: tuple[object, ...]) -> None:
+            statement = " ".join(sql.split())
+            statements.append(statement)
+            if statement.startswith(("INSERT", "UPDATE", "DELETE")):
+                raise AssertionError(f"Unexpected persistence: {statement}")
+
+        def fetchone(self) -> dict | None:
+            return state["current"]
+
+        def fetchall(self) -> list:
+            return []
+
+    db = object.__new__(DatabaseManager)
+    db.connection = MagicMock(autocommit=True, closed=False)
+    db.cursor = CursorSpy()
+
+    def fetch(_monitor: PEPMonitor, fetched_source: dict) -> tuple[str, str]:
+        state["fetch_source"] = fetched_source
+        if during_fetch is not None:
+            during_fetch(current)
+        if fetch_error:
+            raise fetch_error
+        return html, "html_estatico"
+
+    with patch.object(DatabaseManager, "__init__", return_value=None), \
+         patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+         patch.object(PEPMonitor, "_obtener_html_raw", fetch), \
+         patch("pep_monitor.limpiar_html", return_value=(["directory"], "html_estatico")):
+        monitor = PEPMonitor()
+        monitor.db = db
+        monitor.procesar_fuente(source)
+    return db, statements, state
+
+
+def test_structured_fetch_uses_pre_fetch_detached_source_token() -> None:
+    source, html, _ = _structured_reduction_source()
+    original_url = source["url"]
+    current = {**source}
+    seen: list[str] = []
+
+    def fetch(_monitor: PEPMonitor, fetched_source: dict) -> tuple[str, str]:
+        source["url"] = "https://example.test/new-authorities"
+        seen.append(fetched_source["url"])
+        return html, "html_estatico"
+
+    with patch.object(DatabaseManager, "__init__", return_value=None), \
+         patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+         patch.object(PEPMonitor, "_obtener_html_raw", fetch), \
+         patch("pep_monitor.limpiar_html", return_value=(["directory"], "html_estatico")):
+        monitor = PEPMonitor()
+        monitor.db = MagicMock(spec=DatabaseManager)
+        monitor.db.begin_source_persistence.return_value = False
+        monitor.procesar_fuente(source)
+
+    assert seen == [original_url]
+    assert monitor.db.begin_source_persistence.call_args.args[0]["url"] == original_url
+    monitor.db.registrar_fuente_run.assert_not_called()
+
+
+@pytest.mark.parametrize("route,html,error", [
+    ("no_content", "", None),
+    ("incomplete", "<section class='directory'></section>", None),
+    ("unconfigured", "<section class='directory'></section>", None),
+    ("fetch_failure", "", requests.exceptions.Timeout("fetch timed out")),
+    ("inactive", "<section class='directory'></section>", None),
+    ("unconfirmed", "<section class='directory'></section>", None),
+])
+def test_structured_pre_cas_routes_leave_no_database_writes(route: str, html: str, error: Exception | None) -> None:
+    source, _, _ = _structured_reduction_source()
+    if route == "unconfigured":
+        source["authority_extraction_config"] = None
+    if route == "inactive":
+        source["activo"] = False
+    if route == "unconfirmed":
+        source["authority_extraction_confirmed_revision"] = None
+    db, statements, _ = _run_structured_with_sql_spy(source, html, source, fetch_error=error)
+    assert statements == []
+    db.connection.commit.assert_not_called()
+    db.connection.rollback.assert_not_called()
+    assert db.connection.autocommit is True
+
+
+@pytest.mark.parametrize("field,value", [
+    ("url", "https://example.test/changed"),
+    ("tipo", "js"),
+    ("autoridades_extractor", "divi_blurb"),
+    ("authority_extraction_config", {"version": 1, "container_selector": ".other", "row_selector": ".row", "person_selector": ".person", "role_selector": ".role"}),
+    ("activo", False),
+    ("authority_extraction_revision", "revision-b"),
+    ("authority_extraction_confirmed_revision", None),
+])
+def test_structured_fetch_race_discards_each_changed_token_field(field: str, value: object) -> None:
+    source, html, _ = _structured_reduction_source()
+    current = dict(source)
+    db, statements, state = _run_structured_with_sql_spy(
+        source, html, current, during_fetch=lambda row: row.__setitem__(field, value)
+    )
+    assert state["fetch_source"]["url"] == source["url"]
+    assert len(statements) == 1 and "FROM fuentes" in statements[0] and "FOR UPDATE" in statements[0]
+    db.connection.rollback.assert_called_once()
+    db.connection.commit.assert_not_called()
+    assert db.connection.autocommit is True
+
+
+def test_structured_equivalent_default_config_passes_token_check() -> None:
+    source, _, _ = _structured_reduction_source()
+    current = {**source, "authority_extraction_config": {
+        **source["authority_extraction_config"], "min_rows": 1, "max_rows": 200,
+    }}
+    db = object.__new__(DatabaseManager)
+    db.connection = MagicMock(autocommit=True, closed=False)
+    db.cursor = MagicMock()
+    db.cursor.fetchone.return_value = current
+
+    assert db.begin_source_persistence(source) is True
+    db.finish_source_persistence(commit=False)
+    assert db.connection.autocommit is True
+
+
+def test_structured_process_sql_locks_source_reviews_snapshot_in_order_and_reads_locked_baseline() -> None:
+    source, html, baseline = _structured_reduction_source()
+    fingerprint = extract_structured_authorities(html, source["authority_extraction_config"]).config_fingerprint
+    calls: list[str] = []
+    snapshot = {
+        "id": 22, "hash": hashlib.sha256(b"directory").hexdigest(),
+        "texto": "directory", "autoridades_json": baseline[:2],
+        "authority_extraction_revision": "revision-a",
+        "authority_extraction_config_fingerprint": fingerprint,
+    }
+
+    class CursorSpy:
+        def execute(self, sql: str, params: tuple[object, ...]) -> None:
+            calls.append(" ".join(sql.split()))
+
+        def fetchone(self) -> dict | None:
+            if "FROM fuentes" in calls[-1]:
+                return source
+            if "FROM snapshots" in calls[-1]:
+                return snapshot
+            return None
+
+        def fetchall(self) -> list:
+            return []
+
+    db = object.__new__(DatabaseManager)
+    db.connection = MagicMock(autocommit=True, closed=False)
+    db.cursor = CursorSpy()
+    with patch.object(DatabaseManager, "__init__", return_value=None), \
+         patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+         patch.object(PEPMonitor, "_obtener_html_raw", return_value=(html, "html_estatico")), \
+         patch("pep_monitor.limpiar_html", return_value=(["directory"], "html_estatico")):
+        monitor = PEPMonitor()
+        monitor.db = db
+        monitor.procesar_fuente(source)
+
+    assert "FROM fuentes" in calls[0] and "FOR UPDATE" in calls[0]
+    assert "FROM revisiones_remocion_autoridades" in calls[1] and "FOR UPDATE" in calls[1]
+    assert "FROM snapshots" in calls[2] and "FOR UPDATE" in calls[2]
+    assert not any("INSERT INTO snapshots" in sql or "INSERT INTO cambios" in sql for sql in calls)
+    db.connection.commit.assert_called_once()
+    assert db.connection.autocommit is True
+
+
+def test_structured_source_guard_locks_current_row_before_any_persistence() -> None:
+    class CursorSpy:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, tuple[object, ...]]] = []
+
+        def execute(self, sql: str, params: tuple[object, ...]) -> None:
+            self.calls.append((" ".join(sql.split()), params))
+
+        def fetchone(self) -> dict[str, object]:
+            return {
+                "id": 81,
+                "url": "https://example.test/authorities",
+                "tipo": "html",
+                "autoridades_extractor": "structured_css_v1",
+                "authority_extraction_config": {
+                    "version": 1,
+                    "container_selector": ".directory",
+                    "row_selector": ".row",
+                    "person_selector": ".person",
+                    "role_selector": ".role",
+                },
+                "activo": True,
+                "authority_extraction_revision": "revision-a",
+                "authority_extraction_confirmed_revision": "revision-a",
+            }
+
+    db = object.__new__(DatabaseManager)
+    db.connection = MagicMock(autocommit=True, closed=False)
+    db.cursor = CursorSpy()
+    captured = {
+        "id": 81,
+        "url": "https://example.test/authorities",
+        "tipo": "html",
+        "autoridades_extractor": "structured_css_v1",
+        "authority_extraction_config": {
+            "version": 1,
+            "container_selector": ".directory",
+            "row_selector": ".row",
+            "person_selector": ".person",
+            "role_selector": ".role",
+        },
+        "activo": True,
+        "authority_extraction_revision": "revision-a",
+        "authority_extraction_confirmed_revision": "revision-a",
+    }
+
+    assert db.begin_source_persistence(captured) is True
+    assert "FOR UPDATE" in db.cursor.calls[0][0]
+    assert db.connection.autocommit is False
+    db.finish_source_persistence(commit=False)
+    db.connection.rollback.assert_called_once()
+    assert db.connection.autocommit is True
+
+
+def _structured_reduction_source() -> tuple[dict, str, list[dict]]:
+    html = """
+    <section class="directory">
+      <article class="row"><span class="person">Ana Uno</span><span class="role">President</span></article>
+      <article class="row"><span class="person">Luis Dos</span><span class="role">Secretary</span></article>
+    </section>
+    """
+    source = {
+        "id": 81,
+        "url": "https://example.test/authorities",
+        "nombre": "Structured example",
+        "tipo": "html",
+        "selector_css": ".directory",
+        "autoridades_extractor": "structured_css_v1",
+        "authority_extraction_config": {
+            "version": 1,
+            "container_selector": ".directory",
+            "row_selector": ".row",
+            "person_selector": ".person",
+            "role_selector": ".role",
+        },
+        "authority_extraction_revision": "revision-a",
+        "authority_extraction_confirmed_revision": "revision-a",
+        "activo": True,
+        "analizar_imagenes": False,
+    }
+    baseline = [
+        {"cargo": "President", "persona": "Ana Uno"},
+        {"cargo": "Secretary", "persona": "Luis Dos"},
+        {"cargo": "Treasurer", "persona": "Marta Tres"},
+    ]
+    return source, html, baseline
+
+
+def test_structured_reduction_saves_observed_snapshot_before_linked_review() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    source, html, baseline = _structured_reduction_source()
+    fingerprint = extract_structured_authorities(html, source["authority_extraction_config"]).config_fingerprint
+    db.begin_source_persistence.return_value = True
+    db.get_ultimo_snapshot.return_value = {
+        "id": 22,
+        "hash": hashlib.sha256(b"same content").hexdigest(),
+        "texto": "same content",
+        "autoridades_json": baseline,
+        "authority_extraction_revision": "revision-a",
+        "authority_extraction_config_fingerprint": fingerprint,
+    }
+    db.guardar_snapshot.return_value = 87
+    db.registrar_revision_remocion_autoridades.return_value = "pending"
+
+    with patch.object(DatabaseManager, "__init__", return_value=None), \
+         patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+         patch.object(PEPMonitor, "_obtener_html_raw", return_value=(html, "html_estatico")), \
+         patch("pep_monitor.limpiar_html", return_value=(["same content"], "html_estatico")):
+        monitor = PEPMonitor()
+        monitor.db = db
+        monitor.procesar_fuente(source)
+
+    db.guardar_cambio.assert_not_called()
+    snapshot_position = next(index for index, call in enumerate(db.mock_calls) if call[0] == "guardar_snapshot")
+    review_position = next(index for index, call in enumerate(db.mock_calls) if call[0] == "registrar_revision_remocion_autoridades")
+    assert snapshot_position < review_position
+    assert [item.to_dict() for item in db.guardar_snapshot.call_args.args[4]] == baseline
+    review = db.registrar_revision_remocion_autoridades.call_args.kwargs
+    assert review["snapshot_observado_id"] == 87
+    assert review["evidence"] == {
+        "version": 1,
+        "source_revision": "revision-a",
+        "config_fingerprint": fingerprint,
+        "snapshot_base_id": 22,
+        "snapshot_observado_id": 87,
+        "source_url": "https://example.test/authorities",
+        "extractor": "structured_css_v1",
+        "baseline_hash": hashlib.sha256(b"same content").hexdigest(),
+        "candidate_hash": hashlib.sha256(b"same content").hexdigest(),
+        "observed_at": review["evidence"]["observed_at"],
+    }
+    db.actualizar_autoridades_ultimo_snapshot.assert_not_called()
+    db.finish_source_persistence.assert_called_once_with(commit=True)
+
+
+def test_structured_reduction_snapshot_failure_rolls_back_without_review() -> None:
+    db = MagicMock(spec=DatabaseManager)
+    source, html, baseline = _structured_reduction_source()
+    fingerprint = extract_structured_authorities(html, source["authority_extraction_config"]).config_fingerprint
+    db.begin_source_persistence.return_value = True
+    db.get_ultimo_snapshot.return_value = {
+        "id": 22,
+        "hash": hashlib.sha256(b"same content").hexdigest(),
+        "texto": "same content",
+        "autoridades_json": baseline,
+        "authority_extraction_revision": "revision-a",
+        "authority_extraction_config_fingerprint": fingerprint,
+    }
+    db.guardar_snapshot.side_effect = RuntimeError("snapshot insert failed")
+
+    with patch.object(DatabaseManager, "__init__", return_value=None), \
+         patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+         patch.object(PEPMonitor, "_obtener_html_raw", return_value=(html, "html_estatico")), \
+         patch("pep_monitor.limpiar_html", return_value=(["same content"], "html_estatico")):
+        monitor = PEPMonitor()
+        monitor.db = db
+        monitor.procesar_fuente(source)
+
+    db.registrar_revision_remocion_autoridades.assert_not_called()
+    db.guardar_cambio.assert_not_called()
+    db.finish_source_persistence.assert_called_once_with(commit=False)
+
+
+def test_review_handoff_persists_observed_snapshot_id_in_review_sql() -> None:
+    db = object.__new__(DatabaseManager)
+    db.connection = MagicMock(autocommit=True, closed=False)
+    db.cursor = MagicMock()
+    db.cursor.fetchone.return_value = {"estado": "pending"}
+
+    db.registrar_revision_remocion_autoridades(
+        fuente_id=13,
+        snapshot_base_id=22,
+        snapshot_observado_id=87,
+        baseline=[{"cargo": "President", "persona": "Ana Uno"}],
+        candidate=[{"cargo": "President", "persona": "Ana Uno"}],
+        proposed_events=[],
+        evidence={"version": 1, "snapshot_observado_id": 87},
+    )
+
+    insert_sql, insert_params = db.cursor.execute.call_args_list[1].args
+    assert "snapshot_observado_id" in insert_sql
+    assert insert_params[2] == 87
+
+
+def test_pending_review_refresh_keeps_observed_snapshot_column_and_evidence_in_sync() -> None:
+    db = object.__new__(DatabaseManager)
+    db.connection = MagicMock(autocommit=True, closed=False)
+    db.cursor = MagicMock()
+    baseline = [
+        {"cargo": "President", "persona": "Ana Uno"},
+        {"cargo": "Secretary", "persona": "Luis Dos"},
+    ]
+    candidate = baseline[:1]
+    stored: dict[str, object] = {}
+    selected: dict[str, str] | None = None
+    fingerprints: list[str] = []
+
+    def execute(sql: str, params: tuple[object, ...]) -> None:
+        nonlocal selected
+        statement = " ".join(sql.split())
+        selected = None
+        if statement.startswith("UPDATE revisiones_remocion_autoridades"):
+            return
+        if statement.startswith("INSERT INTO revisiones_remocion_autoridades"):
+            fingerprints.append(str(params[-1]))
+            if not stored:
+                stored.update({
+                    "snapshot_base_id": params[1],
+                    "snapshot_observado_id": params[2],
+                    "linea_base_json": params[3],
+                    "evidencia_json": params[6],
+                    "estado": "pending",
+                })
+            elif stored["estado"] == "pending":
+                update_clause = statement.split("DO UPDATE SET ", 1)[1].split(" WHERE ", 1)[0]
+                if "snapshot_base_id = EXCLUDED.snapshot_base_id" in update_clause:
+                    stored["snapshot_base_id"] = params[1]
+                if "snapshot_observado_id = EXCLUDED.snapshot_observado_id" in update_clause:
+                    stored["snapshot_observado_id"] = params[2]
+                if "evidencia_json = EXCLUDED.evidencia_json" in update_clause:
+                    stored["evidencia_json"] = params[6]
+            selected = {"estado": str(stored["estado"])}
+            return
+        raise AssertionError(f"Unexpected SQL: {statement}")
+
+    db.cursor.execute.side_effect = execute
+    db.cursor.fetchone.side_effect = lambda: selected
+    for base_id, snapshot_id in ((22, 87), (87, 88)):
+        assert db.registrar_revision_remocion_autoridades(
+            fuente_id=13,
+            snapshot_base_id=base_id,
+            snapshot_observado_id=snapshot_id,
+            baseline=baseline,
+            candidate=candidate,
+            proposed_events=[{"type": "remocion"}],
+            evidence={"version": 1, "snapshot_base_id": base_id, "snapshot_observado_id": snapshot_id},
+        ) == "pending"
+
+    assert fingerprints[0] == fingerprints[1]
+    assert stored["snapshot_base_id"] == 87
+    assert json.loads(str(stored["evidencia_json"]))["snapshot_base_id"] == 87
+    assert json.loads(str(stored["linea_base_json"])) == baseline
+    assert stored["snapshot_observado_id"] == 88
+    assert json.loads(str(stored["evidencia_json"]))["snapshot_observado_id"] == 88
+    insert_sql = db.cursor.execute.call_args_list[-1].args[0]
+    assert "WHERE revisiones_remocion_autoridades.estado = 'pending'" in insert_sql
+
+
+class _BaselineCursor:
+    """SQL spy with a mutable latest snapshot; never supplies a canned baseline."""
+
+    def __init__(self, source: dict, snapshots: list[dict] | None = None) -> None:
+        self.source = source
+        self.snapshots = list(snapshots or [])
+        self.statements: list[str] = []
+        self.selected: dict | None = None
+        self.reviews: list[dict] = []
+        self.changes: list[tuple] = []
+
+    def execute(self, sql: str, params: tuple = ()) -> None:
+        statement = " ".join(sql.split())
+        self.statements.append(statement)
+        self.selected = None
+        if statement.startswith("SELECT") and "FROM fuentes" in statement:
+            assert "FOR UPDATE" in statement
+            self.selected = self.source
+        elif statement.startswith("SELECT") and "FROM snapshots" in statement:
+            assert "FOR UPDATE" in statement
+            assert "ORDER BY fecha DESC, id DESC LIMIT 1" in statement
+            self.selected = self.snapshots[-1] if self.snapshots else None
+        elif statement.startswith("SELECT") and "FROM revisiones_remocion_autoridades" in statement:
+            assert "FOR UPDATE" in statement
+        elif statement.startswith("SELECT") and "FROM snapshot_imagenes" in statement:
+            pass
+        elif statement.startswith("UPDATE snapshots SET autoridades_json"):
+            assert self.snapshots
+            self.snapshots[-1]["autoridades_json"] = json.loads(params[0])
+        elif statement.startswith("INSERT INTO snapshots"):
+            assert "authority_extraction_revision" in statement
+            assert "authority_extraction_config_fingerprint" in statement
+            source_id, hash_, text, method, roster, revision, fingerprint = params
+            self.selected = {"id": len(self.snapshots) + 1}
+            self.snapshots.append({
+                "id": self.selected["id"], "fuente_id": source_id, "hash": hash_,
+                "texto": text, "metodo": method,
+                "autoridades_json": json.loads(roster) if roster is not None else None,
+                "authority_extraction_revision": revision,
+                "authority_extraction_config_fingerprint": fingerprint,
+            })
+        elif statement.startswith("INSERT INTO revisiones_remocion_autoridades"):
+            self.reviews.append({"snapshot_base_id": params[1], "snapshot_observado_id": params[2],
+                                 "baseline": json.loads(params[3]), "candidate": json.loads(params[4])})
+            self.selected = {"estado": "pending"}
+        elif statement.startswith("INSERT INTO cambios"):
+            self.changes.append(params)
+            self.selected = {"id": len(self.changes)}
+        elif statement.startswith("UPDATE revisiones_remocion_autoridades"):
+            pass
+        elif statement.startswith("UPDATE fuentes SET ultimo_check"):
+            pass
+        elif statement.startswith("INSERT INTO log_fuente_runs"):
+            self.run_status = params[3]
+        else:
+            raise AssertionError(f"Unexpected SQL: {statement}")
+
+    def fetchone(self) -> dict | None:
+        return self.selected
+
+    def fetchall(self) -> list:
+        return []
+
+
+class _TiedSnapshotCursor(_BaselineCursor):
+    """Evaluate latest-snapshot SQL against equal timestamps in unfavorable physical order."""
+
+    def execute(self, sql: str, params: tuple = ()) -> None:
+        statement = " ".join(sql.split())
+        if statement.startswith("SELECT") and "FROM snapshots" in statement:
+            self.statements.append(statement)
+            assert "ORDER BY fecha DESC" in statement
+            rows = [row for row in self.snapshots if row["fuente_id"] == params[0]]
+            # Model an unfavorable physical scan for equal dates, independent of list[-1].
+            rows.reverse()
+            rows.sort(key=lambda row: row["fecha"], reverse=True)
+            if "fecha DESC, id DESC" in statement:
+                rows.sort(key=lambda row: (row["fecha"], row["id"]), reverse=True)
+            self.selected = rows[0] if rows else None
+            return
+        if statement.startswith("UPDATE snapshots SET autoridades_json"):
+            self.statements.append(statement)
+            assert "ORDER BY fecha DESC, id DESC LIMIT 1" in statement
+            subselect = statement.split("SELECT id FROM snapshots", 1)[1]
+            self.execute("SELECT id FROM snapshots" + subselect.split(")", 1)[0], (params[1],))
+            if self.selected:
+                self.selected["autoridades_json"] = json.loads(params[0])
+            return
+        if statement.startswith("INSERT INTO snapshots"):
+            next_id = max((row["id"] for row in self.snapshots), default=0) + 1
+            super().execute(sql, params)
+            self.snapshots[-1]["id"] = next_id
+            self.snapshots[-1]["fecha"] = "2026-09-26 12:00:00"
+            self.selected = {"id": next_id}
+            return
+        if statement.startswith("INSERT INTO revisiones_remocion_autoridades"):
+            self.statements.append(statement)
+            evidence = json.loads(params[6])
+            if not self.reviews:
+                self.reviews.append({"snapshot_base_id": params[1], "snapshot_observado_id": params[2],
+                                     "baseline": json.loads(params[3]), "candidate": json.loads(params[4]),
+                                     "evidence": evidence})
+            else:
+                updates = statement.split("DO UPDATE SET ", 1)[1].split(" WHERE ", 1)[0]
+                for column, value in (("snapshot_base_id", params[1]),
+                                      ("snapshot_observado_id", params[2]),
+                                      ("evidencia_json", evidence)):
+                    if f"{column} = EXCLUDED.{column}" in updates:
+                        self.reviews[0]["evidence" if column == "evidencia_json" else column] = value
+            self.selected = {"estado": "pending"}
+            return
+        super().execute(sql, params)
+
+
+def test_tied_snapshot_latest_drives_repeated_generic_review_without_direct_removal() -> None:
+    source, html, roster = _structured_reduction_source()
+    fingerprint = extract_structured_authorities(html, source["authority_extraction_config"]).config_fingerprint
+    old = {"id": 22, "fuente_id": source["id"], "fecha": "2026-09-26 12:00:00",
+           "hash": hashlib.sha256(b"older page").hexdigest(), "texto": "older page",
+           "autoridades_json": roster, "authority_extraction_revision": "revision-a",
+           "authority_extraction_config_fingerprint": fingerprint}
+    latest = {**old, "id": 87, "hash": hashlib.sha256(b"current page").hexdigest(),
+              "texto": "current page"}
+    db = _baseline_db(source)
+    db.cursor = _TiedSnapshotCursor(source, [latest, old])
+    assert db.get_ultimo_snapshot(source["id"])["id"] == 87
+    for base_id, observed_id in ((87, 88), (88, 89)):
+        db.cursor.statements.clear()
+        _process_structured_baseline(db, source, html)
+        _assert_locked_snapshot_read(db.cursor)
+        assert db.cursor.run_status == "authority_review_pending"
+        review = db.cursor.reviews[0]
+        evidence = review["evidence"]
+        assert review["snapshot_base_id"] == evidence["snapshot_base_id"] == base_id
+        assert review["snapshot_observado_id"] == evidence["snapshot_observado_id"] == observed_id
+        assert evidence["baseline_hash"] == next(s["hash"] for s in db.cursor.snapshots if s["id"] == base_id)
+        assert evidence["candidate_hash"] == next(s["hash"] for s in db.cursor.snapshots if s["id"] == observed_id)
+        assert review["baseline"] == roster and review["candidate"] == roster[:2]
+        assert next(s for s in db.cursor.snapshots if s["id"] == observed_id)["autoridades_json"] == roster
+        assert not db.cursor.changes
+        db.cursor.snapshots.reverse()
+    assert len(db.cursor.reviews) == 1
+
+
+def test_tied_snapshot_authority_update_targets_highest_id_only() -> None:
+    source, html, roster = _structured_reduction_source()
+    fingerprint = extract_structured_authorities(html, source["authority_extraction_config"]).config_fingerprint
+    old = {"id": 22, "fuente_id": source["id"], "fecha": "2026-09-26 12:00:00", "autoridades_json": roster}
+    latest = {**old, "id": 87, "autoridades_json": []}
+    db = _baseline_db(source)
+    db.cursor = _TiedSnapshotCursor(source, [latest, old])
+    db.actualizar_autoridades_ultimo_snapshot(source["id"], roster[:2])
+    assert latest["autoridades_json"] == roster[:2]
+    assert old["autoridades_json"] == roster
+
+
+def _process_structured_baseline(db: DatabaseManager, source: dict, html: str) -> None:
+    with patch.object(DatabaseManager, "__init__", return_value=None), \
+         patch("pep_monitor.create_http_session", return_value=MagicMock()), \
+         patch.object(PEPMonitor, "_obtener_html_raw", return_value=(html, "html_estatico")):
+        monitor = PEPMonitor()
+        monitor.db = db
+        monitor.procesar_fuente(source)
+
+
+def _baseline_db(source: dict, snapshots: list[dict] | None = None) -> DatabaseManager:
+    db = object.__new__(DatabaseManager)
+    db.connection = MagicMock(autocommit=True, closed=False)
+    db.cursor = _BaselineCursor(source, snapshots)
+    return db
+
+
+def _assert_locked_snapshot_read(cursor: _BaselineCursor) -> None:
+    statements = cursor.statements
+    assert "FROM fuentes" in statements[0] and "FOR UPDATE" in statements[0]
+    assert "FROM revisiones_remocion_autoridades" in statements[1]
+    assert "FROM snapshots" in statements[2] and "FOR UPDATE" in statements[2]
+    assert not any("FROM snapshots" in sql for sql in statements[:2])
+
+
+@pytest.mark.parametrize("terminal_status", ["confirmed", "rejected"])
+def test_structured_repeated_reduction_refreshes_pending_review_base_and_observation(terminal_status: str) -> None:
+    class ReviewCursor(_BaselineCursor):
+        def execute(self, sql: str, params: tuple = ()) -> None:
+            statement = " ".join(sql.split())
+            if statement.startswith("INSERT INTO revisiones_remocion_autoridades"):
+                self.statements.append(statement)
+                evidence = json.loads(params[6])
+                fingerprint = params[7]
+                existing = next((row for row in self.reviews if row["fingerprint"] == fingerprint), None)
+                if existing is None:
+                    self.reviews.append({
+                        "fuente_id": params[0], "snapshot_base_id": params[1],
+                        "snapshot_observado_id": params[2], "baseline": json.loads(params[3]),
+                        "candidate": json.loads(params[4]), "evidence": evidence,
+                        "fingerprint": fingerprint, "estado": "pending",
+                    })
+                    self.selected = {"estado": "pending"}
+                elif existing["estado"] == "pending":
+                    assignments = statement.split("DO UPDATE SET ", 1)[1].split(" WHERE ", 1)[0]
+                    for column, value in (("snapshot_base_id", params[1]),
+                                          ("snapshot_observado_id", params[2]),
+                                          ("evidencia_json", evidence)):
+                        if f"{column} = EXCLUDED.{column}" in assignments:
+                            existing["evidence" if column == "evidencia_json" else column] = value
+                    self.selected = {"estado": "pending"}
+                else:
+                    assert "WHERE revisiones_remocion_autoridades.estado = 'pending'" in statement
+                    self.selected = None
+                return
+            if statement.startswith("SELECT estado FROM revisiones_remocion_autoridades"):
+                self.statements.append(statement)
+                self.selected = {"estado": self.reviews[0]["estado"]}
+                return
+            super().execute(sql, params)
+
+    source, html, old_roster = _structured_reduction_source()
+    fingerprint = extract_structured_authorities(html, source["authority_extraction_config"]).config_fingerprint
+    baseline = {"id": 22, "fuente_id": source["id"], "hash": hashlib.sha256(b"old page").hexdigest(),
+                "texto": "old page", "autoridades_json": old_roster,
+                "authority_extraction_revision": "revision-a",
+                "authority_extraction_config_fingerprint": fingerprint}
+    db = _baseline_db(source, [baseline])
+    db.cursor = ReviewCursor(source, [baseline])
+
+    for expected_base, expected_observed in ((22, 2), (2, 3)):
+        _process_structured_baseline(db, source, html)
+        assert db.cursor.run_status == "authority_review_pending"
+        assert len(db.cursor.reviews) == 1
+        review = db.cursor.reviews[0]
+        evidence = review["evidence"]
+        assert review["snapshot_base_id"] == evidence["snapshot_base_id"] == expected_base
+        assert review["snapshot_observado_id"] == evidence["snapshot_observado_id"] == expected_observed
+        assert db.cursor.snapshots[-1]["id"] == expected_observed
+        base = next(snapshot for snapshot in db.cursor.snapshots if snapshot["id"] == expected_base)
+        assert base["fuente_id"] == source["id"]
+        assert base["hash"] == evidence["baseline_hash"]
+        assert review["baseline"] == old_roster
+        assert review["candidate"] == old_roster[:2]
+        assert db.cursor.snapshots[-1]["autoridades_json"] == old_roster
+        assert not db.cursor.changes
+
+    review_before = copy.deepcopy(db.cursor.reviews[0])
+    db.cursor.reviews[0]["estado"] = terminal_status
+    review_before["estado"] = terminal_status
+    _process_structured_baseline(db, source, html)
+    assert db.cursor.reviews == [review_before]
+    assert not db.cursor.changes
+
+
+def test_structured_first_baseline_and_identical_retry_use_locked_latest_snapshot() -> None:
+    source, html, _ = _structured_reduction_source()
+    db = _baseline_db(source)
+    expected = [item.to_dict() for item in extract_structured_authorities(html, source["authority_extraction_config"]).authorities]
+    fingerprint = extract_structured_authorities(html, source["authority_extraction_config"]).config_fingerprint
+
+    _process_structured_baseline(db, source, html)
+    _assert_locked_snapshot_read(db.cursor)
+    assert db.cursor.run_status == "first_snapshot"
+    assert len(db.cursor.snapshots) == 1
+    assert db.cursor.snapshots[0]["autoridades_json"] == expected
+    assert db.cursor.snapshots[0]["authority_extraction_revision"] == "revision-a"
+    assert db.cursor.snapshots[0]["authority_extraction_config_fingerprint"] == fingerprint
+    assert not db.cursor.changes and not db.cursor.reviews
+    db.connection.commit.assert_called_once()
+
+    db.cursor.statements.clear()
+    _process_structured_baseline(db, source, html)
+    _assert_locked_snapshot_read(db.cursor)
+    assert db.cursor.run_status == "no_change"
+    assert len(db.cursor.snapshots) == 1
+    assert not db.cursor.changes and not db.cursor.reviews
+    assert db.connection.commit.call_count == 2
+    assert db.connection.autocommit is True
+
+
+@pytest.mark.parametrize("transition", ["revision", "config", "legacy"])
+def test_structured_confirmed_version_change_rebases_without_removal(transition: str) -> None:
+    source, html, old_roster = _structured_reduction_source()
+    db = _baseline_db(source)
+    # Establish a genuine accepted baseline using the SQL insert, then simulate a
+    # previously accepted larger roster at the same version (or legacy metadata).
+    _process_structured_baseline(db, source, html)
+    prior = db.cursor.snapshots[-1]
+    prior["autoridades_json"] = old_roster
+    if transition == "revision":
+        source = {**source, "authority_extraction_revision": "revision-b",
+                  "authority_extraction_confirmed_revision": "revision-b"}
+    elif transition == "config":
+        source = {**source, "authority_extraction_config": {
+            **source["authority_extraction_config"], "max_rows": 100,
+        }}
+    else:
+        prior["authority_extraction_revision"] = None
+        prior["authority_extraction_config_fingerprint"] = None
+    db.cursor.source = source
+    expected_fingerprint = extract_structured_authorities(html, source["authority_extraction_config"]).config_fingerprint
+    old_roster_copy = list(old_roster)
+    db.cursor.statements.clear()
+
+    _process_structured_baseline(db, source, html)
+    _assert_locked_snapshot_read(db.cursor)
+    assert prior["autoridades_json"] == old_roster_copy
+    assert db.cursor.run_status == "first_snapshot"
+    assert len(db.cursor.snapshots) == 2
+    assert db.cursor.snapshots[-1]["autoridades_json"] == old_roster[:2]
+    assert db.cursor.snapshots[-1]["authority_extraction_revision"] == source["authority_extraction_revision"]
+    assert db.cursor.snapshots[-1]["authority_extraction_config_fingerprint"] == expected_fingerprint
+    assert not db.cursor.changes and not db.cursor.reviews
+    assert db.connection.autocommit is True
+
+
+def test_structured_same_version_reduction_reviews_but_incomplete_never_replaces_roster() -> None:
+    source, html, old_roster = _structured_reduction_source()
+    db = _baseline_db(source)
+    _process_structured_baseline(db, source, html)
+    db.cursor.snapshots[-1]["autoridades_json"] = old_roster
+    db.cursor.statements.clear()
+    _process_structured_baseline(db, source, html)
+    _assert_locked_snapshot_read(db.cursor)
+    assert db.cursor.run_status == "authority_review_pending"
+    assert db.cursor.reviews == [{"snapshot_base_id": 1, "snapshot_observado_id": 2,
+                                  "baseline": old_roster, "candidate": old_roster[:2]}]
+    assert db.cursor.snapshots[-1]["autoridades_json"] == old_roster
+    assert not db.cursor.changes
+
+    db.cursor.statements.clear()
+    _process_structured_baseline(db, source, "<section class='directory'></section>")
+    assert db.cursor.statements == []
+    assert db.cursor.snapshots[-1]["autoridades_json"] == old_roster
+    assert len(db.cursor.reviews) == 1 and not db.cursor.changes
+
+    unconfigured = {**source, "authority_extraction_config": None}
+    db.cursor.source = unconfigured
+    _process_structured_baseline(db, unconfigured, html)
+    assert db.cursor.statements == []
+    assert db.cursor.snapshots[-1]["autoridades_json"] == old_roster
+    assert len(db.cursor.reviews) == 1 and not db.cursor.changes
+
+
+class _FailureCursor(_BaselineCursor):
+    """Transactional SQL spy: undo all process writes on rollback, including writes before failure."""
+
+    def __init__(self, source: dict, snapshots: list[dict], fail_at: str, *, return_none: bool = False) -> None:
+        super().__init__(source, snapshots)
+        self.fail_at = fail_at
+        self.return_none = return_none
+        self.attempted: list[str] = []
+        self.original = copy.deepcopy((self.snapshots, self.reviews, self.changes))
+
+    def execute(self, sql: str, params: tuple = ()) -> None:
+        statement = " ".join(sql.split())
+        if statement.startswith(("INSERT INTO snapshots", "INSERT INTO revisiones_remocion_autoridades",
+                                  "INSERT INTO cambios", "UPDATE fuentes SET ultimo_check")):
+            self.attempted.append(statement)
+            if self.fail_at in statement:
+                if self.return_none:
+                    self.statements.append(statement)
+                    self.selected = None
+                    return
+                raise RuntimeError(f"injected {self.fail_at}")
+        super().execute(sql, params)
+
+    def undo(self) -> None:
+        self.snapshots[:], self.reviews[:], self.changes[:] = copy.deepcopy(self.original)
+
+
+def _run_transaction_failure(path: str, failure: str, *, return_none: bool = False) -> tuple[DatabaseManager, _FailureCursor]:
+    source, html, roster = _structured_reduction_source()
+    fingerprint = extract_structured_authorities(html, source["authority_extraction_config"]).config_fingerprint
+    baseline = {"id": 22, "hash": hashlib.sha256(b"old directory").hexdigest(),
+                "texto": "old directory", "autoridades_json": roster,
+                "authority_extraction_revision": "revision-a",
+                "authority_extraction_config_fingerprint": fingerprint}
+    if path == "event":
+        baseline["autoridades_json"] = roster[:1]
+    cursor = _FailureCursor(source, [baseline], failure, return_none=return_none)
+    db = object.__new__(DatabaseManager)
+    db.connection = MagicMock(autocommit=True, closed=False)
+    db.connection.rollback.side_effect = cursor.undo
+    db.cursor = cursor
+    _process_structured_baseline(db, source, html)
+    return db, cursor
+
+
+@pytest.mark.parametrize("path,failure,return_none", [
+    ("review", "INSERT INTO snapshots", False),
+    ("review", "INSERT INTO snapshots", True),
+    ("review", "INSERT INTO revisiones_remocion_autoridades", False),
+    ("review", "UPDATE fuentes SET ultimo_check", False),
+    ("event", "INSERT INTO cambios", False),
+    ("event", "INSERT INTO cambios", True),
+    ("event", "INSERT INTO snapshots", False),
+    ("event", "UPDATE fuentes SET ultimo_check", False),
+])
+def test_structured_process_rolls_back_failed_writes(path: str, failure: str, return_none: bool) -> None:
+    db, cursor = _run_transaction_failure(path, failure, return_none=return_none)
+    assert any(failure in sql for sql in cursor.attempted)
+    assert (cursor.snapshots, cursor.reviews, cursor.changes) == cursor.original
+    db.connection.rollback.assert_called_once()
+    db.connection.commit.assert_not_called()
+    assert db.connection.autocommit is True
+
+
+def test_structured_process_preserves_sql_diagnostic_when_rollback_also_fails(caplog: pytest.LogCaptureFixture) -> None:
+    source, html, roster = _structured_reduction_source()
+    fingerprint = extract_structured_authorities(html, source["authority_extraction_config"]).config_fingerprint
+    baseline = {"id": 22, "hash": hashlib.sha256(b"old directory").hexdigest(),
+                "texto": "old directory", "autoridades_json": roster,
+                "authority_extraction_revision": "revision-a",
+                "authority_extraction_config_fingerprint": fingerprint}
+    cursor = _FailureCursor(source, [baseline], "INSERT INTO snapshots")
+    db = object.__new__(DatabaseManager)
+    db.connection = MagicMock(autocommit=True, closed=False)
+    db.connection.rollback.side_effect = RuntimeError("rollback failed")
+    db.cursor = cursor
+
+    assert _process_structured_baseline(db, source, html) is None
+    assert any("INSERT INTO snapshots" in sql for sql in cursor.attempted)
+    assert "injected INSERT INTO snapshots" in caplog.text
+    assert "rollback failed" in caplog.text
+    db.connection.rollback.assert_called_once()
+    db.connection.commit.assert_not_called()
+    assert db.connection.autocommit is False
+    assert not any("INSERT INTO log_fuente_runs" in sql for sql in cursor.statements)
+    assert not cursor.reviews and not cursor.changes
+    assert cursor.snapshots == [baseline]  # The failed write never happened; no rollback success is assumed.
+
+
+def test_review_helper_missing_status_is_failure_not_none_success() -> None:
+    db = object.__new__(DatabaseManager)
+    db.connection = MagicMock(autocommit=True, closed=False)
+    db.cursor = MagicMock()
+    db.cursor.fetchone.return_value = None
+
+    with pytest.raises(RuntimeError, match="review status unavailable"):
+        db.registrar_revision_remocion_autoridades(
+            fuente_id=13, snapshot_base_id=22, snapshot_observado_id=87,
+            baseline=[{"cargo": "President", "persona": "Ana Uno"}],
+            candidate=[{"cargo": "President", "persona": "Ana Uno"}],
+            proposed_events=[], evidence={"version": 1},
+        )
+    db.connection.rollback.assert_called_once()
+    db.connection.commit.assert_not_called()
+
+
+def test_structured_process_commit_failure_rolls_back_without_partial_state() -> None:
+    source, html, roster = _structured_reduction_source()
+    fingerprint = extract_structured_authorities(html, source["authority_extraction_config"]).config_fingerprint
+    baseline = {"id": 22, "hash": hashlib.sha256(b"old directory").hexdigest(),
+                "texto": "old directory", "autoridades_json": roster,
+                "authority_extraction_revision": "revision-a", "authority_extraction_config_fingerprint": fingerprint}
+    cursor = _FailureCursor(source, [baseline], "never")
+    db = object.__new__(DatabaseManager)
+    db.connection = MagicMock(autocommit=True, closed=False)
+    db.connection.commit.side_effect = RuntimeError("commit failed")
+    db.connection.rollback.side_effect = cursor.undo
+    db.cursor = cursor
+    with pytest.raises(RuntimeError, match="commit failed"):
+        _process_structured_baseline(db, source, html)
+    assert cursor.attempted
+    assert (cursor.snapshots, cursor.reviews, cursor.changes) == cursor.original
+    db.connection.commit.assert_called_once()
+    db.connection.rollback.assert_called_once()
+    assert db.connection.autocommit is True
+
+
+def test_structured_commit_and_rollback_failures_preserve_commit_error() -> None:
+    source, _, _ = _structured_reduction_source()
+    db = _baseline_db(source)
+    db.connection.commit.side_effect = RuntimeError("commit failed")
+    db.connection.rollback.side_effect = RuntimeError("rollback failed")
+    assert db.begin_source_persistence(source) is True
+    with pytest.raises(RuntimeError, match="commit failed"):
+        db.finish_source_persistence(commit=True)
+    db.connection.rollback.assert_called_once()
+    assert db.connection.autocommit is False  # no restoration promise for an unhealthy connection
+
+
+def test_structured_process_guard_query_failure_rolls_back_without_writes() -> None:
+    source, html, _ = _structured_reduction_source()
+    db = _baseline_db(source)
+    def fail_query(sql: str, params: tuple = ()) -> None:
+        raise RuntimeError("guard query failed")
+    db.cursor.execute = fail_query
+    _process_structured_baseline(db, source, html)
+    db.connection.rollback.assert_called_once()
+    db.connection.commit.assert_not_called()
+    assert db.connection.autocommit is True
+
+
+def test_structured_guard_rollback_failure_preserves_primary_query_error() -> None:
+    source, _, _ = _structured_reduction_source()
+    db = _baseline_db(source)
+    db.cursor.execute = MagicMock(side_effect=RuntimeError("guard query failed"))
+    db.connection.rollback.side_effect = RuntimeError("rollback failed")
+    with pytest.raises(RuntimeError, match="guard query failed"):
+        db.begin_source_persistence(source)
+    db.connection.rollback.assert_called_once()
+    assert db.connection.autocommit is False  # rollback failed: connection health is unknown
 
 
 def test_monitor_does_not_fabricate_removals_without_configured_extractor() -> None:
