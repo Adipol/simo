@@ -25,6 +25,8 @@ import difflib
 import unicodedata
 import ipaddress
 import socket
+import uuid
+from datetime import timedelta
 from typing import Optional
 from unittest.mock import Mock
 from datetime import datetime, timezone
@@ -42,7 +44,7 @@ import psycopg2
 import psycopg2.extras
 from pathlib import Path
 from dotenv import load_dotenv
-from structured_authorities import extract_structured_authorities
+from structured_authorities import StructuredAuthoritiesResult, extract_structured_authorities
 from authorities import (
     FEED_STATUSES,
     PRIMARY_FEED,
@@ -414,6 +416,265 @@ class DatabaseManager:
         if ok:
             logger.info(f"Fuente desactivada: {url}")
         return ok
+
+    def discover_preview_candidates(self, limit: int = 25) -> list[int]:
+        """Read a bounded preview queue without consulting active-source monitoring."""
+        self._ensure_connection()
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+            raise ValueError("preview candidate limit must be positive")
+        self.cursor.execute(
+            """SELECT fuente_id FROM authority_extraction_previews
+               WHERE status = 'pending'
+                  OR (status = 'running' AND lease_expires_at <= NOW())
+               ORDER BY requested_at, id LIMIT %s""",
+            (min(limit, 50),),
+        )
+        return [row["fuente_id"] for row in self.cursor.fetchall()]
+
+    def claim_preview(self, fuente_id: int) -> Optional[dict]:
+        """Lock source then preview; claim current work without fetching or persisting results."""
+        self._ensure_connection()
+        if not self.connection.autocommit:
+            raise RuntimeError("preview claim transaction already active")
+        self.connection.autocommit = False
+        closed = False
+        try:
+            self.cursor.execute(
+                """SELECT id, url, tipo, autoridades_extractor, authority_extraction_config,
+                          authority_extraction_revision, authority_extraction_confirmed_revision, activo
+                   FROM fuentes WHERE id = %s FOR UPDATE""", (fuente_id,),
+            )
+            source = self.cursor.fetchone()
+            self.cursor.execute(
+                """SELECT fuente_id, source_revision, source_url, status, attempts,
+                          lease_token, lease_expires_at
+                   FROM authority_extraction_previews WHERE fuente_id = %s FOR UPDATE""",
+                (fuente_id,),
+            )
+            preview = self.cursor.fetchone()
+            if preview is None:
+                self.connection.rollback()
+                closed = True
+                return None
+            config = (
+                extract_structured_authorities("", source.get("authority_extraction_config"))
+                if source is not None and source.get("autoridades_extractor") == "structured_css_v1"
+                else None
+            )
+            valid = (
+                source is not None
+                and source.get("id") == fuente_id
+                and source.get("tipo") == "html"
+                and source.get("autoridades_extractor") == "structured_css_v1"
+                and config is not None and config.config_fingerprint is not None
+                and source.get("authority_extraction_revision") is not None
+                and preview["source_revision"] == source["authority_extraction_revision"]
+                and preview["source_url"] == source.get("url")
+            )
+            if not valid:
+                if preview["status"] != "stale":
+                    self.cursor.execute(
+                        """UPDATE authority_extraction_previews SET status = 'stale',
+                                  lease_token = NULL, lease_expires_at = NULL,
+                                  authorities_json = NULL, config_fingerprint = NULL,
+                                  error_code = NULL, completed_at = NULL, updated_at = NOW()
+                           WHERE fuente_id = %s""", (fuente_id,),
+                    )
+                    self.connection.commit()
+                else:
+                    self.connection.rollback()
+                closed = True
+                return None
+            expires = preview["lease_expires_at"]
+            if preview["status"] != "pending" and not (
+                preview["status"] == "running" and expires is not None
+                and expires <= datetime.now(timezone.utc).replace(tzinfo=expires.tzinfo)
+            ):
+                self.connection.rollback()
+                closed = True
+                return None
+            if preview["attempts"] >= 3:
+                self.cursor.execute(
+                    """UPDATE authority_extraction_previews SET status = 'error',
+                              error_code = 'attempts_exhausted', authorities_json = NULL,
+                              config_fingerprint = NULL, lease_token = NULL,
+                              lease_expires_at = NULL, completed_at = NOW(), updated_at = NOW()
+                       WHERE fuente_id = %s""", (fuente_id,),
+                )
+                self.connection.commit()
+                closed = True
+                return None
+            token = str(uuid.uuid4())
+            lease_expiry = datetime.now(timezone.utc) + timedelta(minutes=5)
+            self.cursor.execute(
+                """UPDATE authority_extraction_previews SET status = 'running',
+                          attempts = attempts + 1, lease_token = %s,
+                          lease_expires_at = %s, error_code = NULL,
+                          authorities_json = NULL, config_fingerprint = NULL,
+                          completed_at = NULL, updated_at = NOW()
+                   WHERE fuente_id = %s""", (token, lease_expiry, fuente_id),
+            )
+            self.connection.commit()
+            closed = True
+            return {"fuente_id": fuente_id, "source_revision": preview["source_revision"],
+                    "source_url": preview["source_url"], "config_fingerprint": config.config_fingerprint,
+                    "lease_token": token, "source": copy.deepcopy(source)}
+        except Exception:
+            try:
+                self.connection.rollback()
+                closed = True
+            except Exception:
+                logger.warning("Preview claim rollback failed; preserving original error")
+            raise
+        finally:
+            if closed:
+                self.connection.autocommit = True
+
+    def complete_preview(self, claim: dict, result: StructuredAuthoritiesResult | dict) -> bool:
+        """Complete only the current, unexpired claim under source -> preview locks.
+
+        The worker supplies a pure parser result, or a fixed transport failure code.
+        This method does not fetch or write monitoring/review state.
+        """
+        if not isinstance(claim, dict) or not isinstance(claim.get("source"), dict):
+            raise ValueError("invalid preview claim")
+        captured = claim["source"]
+        fuente_id = claim.get("fuente_id")
+        token = claim.get("lease_token")
+        revision = claim.get("source_revision")
+        if (type(fuente_id) is not int or fuente_id < 1 or captured.get("id") != fuente_id
+                or not isinstance(token, str) or not token
+                or not isinstance(revision, str) or not revision
+                or captured.get("authority_extraction_revision") != revision
+                or not isinstance(captured.get("url"), str)
+                or captured["url"] != claim.get("source_url")
+                or extract_structured_authorities("", captured.get("authority_extraction_config")).config_fingerprint
+                   != claim.get("config_fingerprint")):
+            raise ValueError("invalid preview claim")
+        expected_fingerprint = claim["config_fingerprint"]
+        status, authorities, fingerprint, error_code = self._preview_result_payload(
+            result, expected_fingerprint
+        )
+        self._ensure_connection()
+        if not self.connection.autocommit:
+            raise RuntimeError("preview completion transaction already active")
+        self.connection.autocommit = False
+        closed = False
+        try:
+            self.cursor.execute(
+                """SELECT id, url, tipo, autoridades_extractor, authority_extraction_config,
+                          authority_extraction_revision
+                   FROM fuentes WHERE id = %s FOR UPDATE""", (fuente_id,),
+            )
+            source = self.cursor.fetchone()
+            self.cursor.execute(
+                """SELECT fuente_id, source_revision, source_url, status, lease_token,
+                          lease_expires_at FROM authority_extraction_previews
+                   WHERE fuente_id = %s FOR UPDATE""", (fuente_id,),
+            )
+            preview = self.cursor.fetchone()
+            expires = preview.get("lease_expires_at") if preview is not None else None
+            if (preview is None or preview.get("fuente_id") != fuente_id
+                    or preview.get("source_revision") != revision
+                    or preview.get("source_url") != captured["url"]
+                    or preview.get("status") != "running"
+                    or preview.get("lease_token") != token
+                    or not isinstance(expires, datetime)
+                    or expires <= datetime.now(timezone.utc).replace(tzinfo=expires.tzinfo)):
+                self.connection.rollback()
+                closed = True
+                return False
+
+            captured_config = extract_structured_authorities(
+                "", captured.get("authority_extraction_config")
+            ).config_fingerprint
+            current_config = (
+                extract_structured_authorities("", source.get("authority_extraction_config")).config_fingerprint
+                if source is not None and source.get("autoridades_extractor") == "structured_css_v1"
+                else None
+            )
+            identity_matches = (
+                source is not None and source.get("id") == fuente_id
+                and source.get("url") == captured["url"]
+                and source.get("authority_extraction_revision") == revision
+                and source.get("tipo") == captured.get("tipo") == "html"
+                and source.get("autoridades_extractor") == captured.get("autoridades_extractor") == "structured_css_v1"
+                and captured_config is not None and current_config == captured_config
+            )
+            if not identity_matches:
+                self.cursor.execute(
+                    """UPDATE authority_extraction_previews SET status = 'stale',
+                              authorities_json = NULL, config_fingerprint = NULL,
+                              error_code = NULL, lease_token = NULL, lease_expires_at = NULL,
+                              completed_at = NULL, updated_at = NOW() WHERE fuente_id = %s""",
+                    (fuente_id,),
+                )
+                self.connection.commit()
+                closed = True
+                return False
+
+            self.cursor.execute(
+                """UPDATE authority_extraction_previews SET status = %s,
+                          authorities_json = %s, config_fingerprint = %s,
+                          error_code = %s, lease_token = NULL, lease_expires_at = NULL,
+                          completed_at = NOW(), updated_at = NOW() WHERE fuente_id = %s""",
+                (status, authorities, fingerprint, error_code, fuente_id),
+            )
+            self.connection.commit()
+            closed = True
+            return True
+        except Exception:
+            try:
+                self.connection.rollback()
+                closed = True
+            except Exception:
+                logger.warning("Preview completion rollback failed; connection state unknown")
+            raise
+        finally:
+            if closed:
+                self.connection.autocommit = True
+
+    @staticmethod
+    def _preview_result_payload(
+        result: StructuredAuthoritiesResult | dict, expected_fingerprint: str
+    ) -> tuple[str, Optional[str], Optional[str], Optional[str]]:
+        """Serialize only validated parser values or a small, fixed error vocabulary."""
+        if isinstance(result, dict):
+            if set(result) != {"status", "error_code"} or result != {"status": "error", "error_code": "fetch_error"}:
+                raise ValueError("invalid preview transport result")
+            return "error", None, None, "fetch_error"
+        if not isinstance(result, StructuredAuthoritiesResult):
+            raise ValueError("invalid preview parser result")
+        fingerprint = result.config_fingerprint
+        if fingerprint is not None and (not isinstance(fingerprint, str)
+                                        or re.fullmatch(r"[0-9a-f]{64}", fingerprint) is None
+                                        or fingerprint != expected_fingerprint):
+            raise ValueError("invalid preview fingerprint")
+        if result.status == "unconfigured" and result.authorities == () and fingerprint is None and result.error_code is None:
+            return "incomplete", None, None, "unconfigured"
+        parser_errors = {
+            "invalid_config", "html_invalid", "html_too_large", "container_scope_invalid",
+            "row_count_out_of_bounds", "field_scope_invalid", "field_too_long", "duplicate_authority",
+        }
+        if result.status == "incomplete" and result.authorities == () and result.error_code in parser_errors:
+            if (result.error_code == "invalid_config") != (fingerprint is None):
+                raise ValueError("invalid preview parser state")
+            return "incomplete", None, fingerprint, result.error_code
+        if (result.status != "ready" or result.error_code is not None
+                or fingerprint != expected_fingerprint or not isinstance(result.authorities, tuple)
+                or not 1 <= len(result.authorities) <= 200):
+            raise ValueError("invalid preview parser state")
+        payload = []
+        for authority in result.authorities:
+            if not isinstance(authority, Authority):
+                raise ValueError("invalid preview authority")
+            fields = authority.to_dict()
+            if (set(fields) != {"cargo", "persona"}
+                    or any(not isinstance(value, str) or not value.strip() or len(value) > 300
+                           for value in fields.values())):
+                raise ValueError("invalid preview authority")
+            payload.append({"cargo": fields["cargo"], "persona": fields["persona"]})
+        return "ready", json.dumps(payload, ensure_ascii=False), fingerprint, None
 
     def get_fuentes_activas(self) -> list[dict]:
         self._ensure_connection()
@@ -1082,7 +1343,7 @@ def _playwright_route_handler(route, request, session: requests.Session) -> None
             response.close()
 
 
-def obtener_html_js(url: str, session: requests.Session) -> tuple[str, str]:
+def obtener_html_js(url: str, session: requests.Session, *, preview: bool = False) -> tuple[str, str]:
     """Renderiza una pagina con Playwright y retorna el HTML completo."""
     try:
         from playwright.sync_api import sync_playwright
@@ -1112,7 +1373,8 @@ def obtener_html_js(url: str, session: requests.Session) -> tuple[str, str]:
                 browser.close()
         return html, "js_playwright"
     except Exception as e:
-        logger.error(f"Error Playwright en {url}: {e}")
+        if not preview:
+            logger.error(f"Error Playwright en {url}: {e}")
         return "", "error_playwright"
 
 
@@ -1902,7 +2164,7 @@ class PEPMonitor:
             logger.warning(f"No se pudo leer snapshot_imagenes para fuente {fuente_id}: {e}")
             return []
 
-    def _obtener_html_raw(self, fuente: dict) -> tuple[str, str]:
+    def _obtener_html_raw(self, fuente: dict, *, preview: bool = False) -> tuple[str, str]:
         """
         Retorna el HTML crudo (sin limpiar) junto con el método usado.
         Necesario para extraer imágenes antes de limpiar el texto.
@@ -1916,7 +2178,7 @@ class PEPMonitor:
             return "", "pdf"
 
         if tipo == "js":
-            html, metodo_js = obtener_html_js(url, self.http)
+            html, metodo_js = obtener_html_js(url, self.http, preview=preview)
             return html, "js_playwright"
 
         try:
@@ -1933,7 +2195,7 @@ class PEPMonitor:
             # Fallback JS si el HTML tiene poco contenido
             lineas_test, _ = limpiar_html(html, selector)
             if len(lineas_test) < 3:
-                html_js, _ = obtener_html_js(url, self.http)
+                html_js, _ = obtener_html_js(url, self.http, preview=preview)
                 if html_js:
                     lineas_js, _ = limpiar_html(html_js, selector)
                     if len(lineas_js) > len(lineas_test):
@@ -1942,7 +2204,8 @@ class PEPMonitor:
         except requests.ConnectionError:
             raise
         except (requests.RequestException, OutboundUrlError, ImageTooLargeError) as e:
-            logger.error(f"Error HTTP en {url}: {e}")
+            if not preview:
+                logger.error(f"Error HTTP en {url}: {e}")
             return "", "error_http"
 
     def procesar_fuente(self, fuente: dict) -> None:
@@ -2415,13 +2678,47 @@ class PEPMonitor:
             except psycopg2.Error as e:
                 logger.warning(f"Failed to log fuente run for {fuente_id}: {e}")
 
+    def _process_preview_candidates(self, candidates: list[int]) -> None:
+        """Fetch each claimed preview once per cycle, outside its claim transaction."""
+        for fuente_id in candidates:
+            if not self.running:
+                break
+            try:
+                claim = self.db.claim_preview(fuente_id)
+                if claim is None:
+                    continue
+                try:
+                    html, method = self._obtener_html_raw(claim["source"], preview=True)
+                    if (not isinstance(html, str) or not html
+                            or not isinstance(method, str) or method.startswith("error")):
+                        result = {"status": "error", "error_code": "fetch_error"}
+                    else:
+                        result = extract_structured_authorities(
+                            html, claim["source"]["authority_extraction_config"]
+                        )
+                except Exception:
+                    # Transport errors (including SSRF/TLS/timeouts) never enter the row.
+                    result = {"status": "error", "error_code": "fetch_error"}
+                self.db.complete_preview(claim, result)
+            except Exception:
+                logger.warning("Preview processing failed for source id=%s", fuente_id)
+
     def check_all(self) -> None:
-        """Verifica todas las fuentes activas."""
+        """Process bounded previews independently of active-source monitoring."""
+        try:
+            candidates = self.db.discover_preview_candidates(limit=25)
+        except Exception:
+            # Preview discovery is optional; never leak DB diagnostics or block active sources.
+            logger.warning("Preview discovery failed; continuing active-source monitoring")
+            candidates = []
+        else:
+            self._process_preview_candidates(candidates)
         fuentes = self.db.get_fuentes_activas()
         if not fuentes:
-            logger.warning(
-                "No hay fuentes registradas. Usa: python pep_monitor.py add <url>"
-            )
+            if not candidates:
+                logger.warning(
+                    "No hay fuentes registradas. Usa: python pep_monitor.py add <url>"
+                )
             return
 
         log_id = self.db.log_inicio()

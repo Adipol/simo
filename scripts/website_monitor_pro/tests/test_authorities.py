@@ -1785,3 +1785,597 @@ def test_monitor_does_not_fabricate_removals_without_configured_extractor() -> N
 
     db.guardar_cambio.assert_not_called()
     db.guardar_snapshot.assert_not_called()
+
+
+class _PreviewCursor:
+    """SQL-sensitive state spy; not a substitute for concurrent PostgreSQL tests."""
+
+    def __init__(self, source: dict | None, preview: dict) -> None:
+        self.source, self.preview = source, preview
+        self.calls: list[str] = []
+        self.selected: dict | None = None
+        self.fail_update = False
+
+    def execute(self, sql: str, params: tuple = ()) -> None:
+        statement = " ".join(sql.split())
+        self.calls.append(statement)
+        self.selected = None
+        if statement.startswith("SELECT") and "FROM fuentes" in statement:
+            assert "FOR UPDATE" in statement
+            self.selected = self.source
+        elif statement.startswith("SELECT") and "FROM authority_extraction_previews" in statement:
+            assert "FOR UPDATE" in statement
+            self.selected = self.preview
+        elif statement.startswith("UPDATE authority_extraction_previews"):
+            if self.fail_update:
+                raise RuntimeError("preview write failed")
+            assert "WHERE fuente_id = %s" in statement
+            if "status = 'stale'" in statement:
+                self.preview.update(status="stale", lease_token=None, lease_expires_at=None,
+                                    authorities_json=None, config_fingerprint=None, error_code=None)
+            elif "status = 'error'" in statement:
+                assert "attempts_exhausted" in statement
+                self.preview.update(status="error", lease_token=None, lease_expires_at=None,
+                                    authorities_json=None, config_fingerprint=None, error_code="attempts_exhausted")
+            else:
+                assert "status = 'running'" in statement and "attempts = attempts + 1" in statement
+                assert "lease_expires_at" in statement and "lease_token" in statement
+                self.preview.update(status="running", attempts=self.preview["attempts"] + 1,
+                                    lease_token=params[0], lease_expires_at=params[1])
+        else:
+            raise AssertionError(f"Unexpected SQL: {statement}")
+
+    def fetchone(self) -> dict | None:
+        return self.selected
+
+
+def _preview_db(source: dict | None = None, preview: dict | None = None) -> tuple[DatabaseManager, _PreviewCursor]:
+    template, _, _ = _structured_reduction_source()
+    row = {"fuente_id": 81, "source_revision": "revision-a", "source_url": template["url"],
+           "status": "pending", "attempts": 0, "lease_token": None, "lease_expires_at": None,
+           "authorities_json": None, "config_fingerprint": None}
+    cursor = _PreviewCursor(template if source is None else source, row if preview is None else preview)
+    db = object.__new__(DatabaseManager)
+    db.connection = MagicMock(autocommit=True, closed=False)
+    db.cursor = cursor
+    return db, cursor
+
+
+def test_preview_discovery_is_bounded_ordered_and_independent_of_active_sources() -> None:
+    db, _ = _preview_db()
+    db.cursor = MagicMock()
+    db.cursor.fetchall.return_value = [{"fuente_id": 81}, {"fuente_id": 82}]
+    assert db.discover_preview_candidates(limit=2) == [81, 82]
+    sql, params = db.cursor.execute.call_args.args
+    assert "authority_extraction_previews" in sql and "get_fuentes_activas" not in sql
+    assert "activo" not in sql and "FOR UPDATE" not in sql
+    assert "pending" in sql and "running" in sql and "lease_expires_at" in sql
+    assert "ORDER BY requested_at, id" in sql and "LIMIT %s" in sql
+    assert params[-1] == 2
+    db.cursor.fetchall.return_value = []
+    assert db.discover_preview_candidates() == []
+
+
+def test_preview_claim_inactive_source_locks_source_first_and_is_idempotent() -> None:
+    db, cursor = _preview_db()
+    cursor.source["activo"] = False
+    cursor.source["authority_extraction_confirmed_revision"] = None
+    first = db.claim_preview(81)
+    assert first is not None
+    assert first["source"]["activo"] is False and first["source"]["url"] == cursor.source["url"]
+    assert first["source"]["authority_extraction_config"] is not cursor.source["authority_extraction_config"]
+    assert first["source_revision"] == "revision-a" and first["fuente_id"] == 81
+    assert first["lease_token"] == cursor.preview["lease_token"]
+    assert cursor.preview["attempts"] == 1
+    assert "FROM fuentes" in cursor.calls[0] and "FOR UPDATE" in cursor.calls[0]
+    assert "FROM authority_extraction_previews" in cursor.calls[1] and "FOR UPDATE" in cursor.calls[1]
+    assert db.claim_preview(81) is None
+    assert cursor.preview["attempts"] == 1
+    db.connection.commit.assert_called_once()
+    assert db.connection.autocommit is True
+
+
+def test_preview_expiry_reclaims_with_new_token_and_caps_attempts() -> None:
+    from datetime import timedelta
+    from datetime import datetime, timezone
+    db, cursor = _preview_db()
+    first = db.claim_preview(81)
+    old_token = first["lease_token"]
+    cursor.preview["lease_expires_at"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+    second = db.claim_preview(81)
+    assert second["lease_token"] != old_token and cursor.preview["attempts"] == 2
+    cursor.preview["lease_expires_at"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+    db.claim_preview(81)
+    cursor.preview["lease_expires_at"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+    assert db.claim_preview(81) is None
+    assert cursor.preview["status"] == "error" and cursor.preview["error_code"] == "attempts_exhausted"
+    assert cursor.preview["lease_token"] is None
+    assert db.claim_preview(81) is None
+
+
+@pytest.mark.parametrize("field,value", [
+    ("authority_extraction_revision", "revision-b"),
+    ("url", "https://example.test/new"),
+    ("tipo", "pdf"),
+    ("autoridades_extractor", "divi_blurb"),
+    ("authority_extraction_config", None),
+])
+def test_preview_invalid_identity_stales_without_claim(field: str, value: object) -> None:
+    db, cursor = _preview_db()
+    cursor.source[field] = value
+    cursor.preview.update(lease_token="old", authorities_json=[{"persona": "Ana"}])
+    assert db.claim_preview(81) is None
+    assert cursor.preview["status"] == "stale" and cursor.preview["lease_token"] is None
+    assert cursor.preview["authorities_json"] is None
+    db.connection.commit.assert_called_once()
+
+
+@pytest.mark.parametrize("field,value", [
+    ("source_revision", "revision-old"),
+    ("source_url", "https://example.test/previous"),
+])
+def test_preview_row_identity_mismatch_stales(field: str, value: str) -> None:
+    db, cursor = _preview_db()
+    cursor.preview[field] = value
+    assert db.claim_preview(81) is None
+    assert cursor.preview["status"] == "stale"
+
+
+def test_preview_unexpired_running_does_not_claim_or_mutate_attempts() -> None:
+    from datetime import datetime, timedelta, timezone
+    db, cursor = _preview_db()
+    cursor.preview.update(status="running", attempts=1, lease_token="previous",
+                          lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=3))
+    assert db.claim_preview(81) is None
+    assert cursor.preview["attempts"] == 1 and cursor.preview["lease_token"] == "previous"
+    db.connection.commit.assert_not_called()
+
+
+def test_preview_missing_source_and_pending_attempts_cap() -> None:
+    db, cursor = _preview_db()
+    cursor.source = None
+    assert db.claim_preview(81) is None
+    assert cursor.preview["status"] == "stale"
+    db, cursor = _preview_db()
+    cursor.preview["attempts"] = 3
+    assert db.claim_preview(81) is None
+    assert cursor.preview["status"] == "error"
+
+
+def test_preview_claim_commit_failure_rolls_back_without_autocommit_leak() -> None:
+    db, _ = _preview_db()
+    db.connection.commit.side_effect = RuntimeError("commit failed")
+    with pytest.raises(RuntimeError, match="commit failed"):
+        db.claim_preview(81)
+    db.connection.rollback.assert_called_once()
+    assert db.connection.autocommit is True
+
+
+def test_preview_claim_write_failure_rolls_back_and_restores_autocommit() -> None:
+    db, cursor = _preview_db()
+    cursor.fail_update = True
+    with pytest.raises(RuntimeError, match="preview write failed"):
+        db.claim_preview(81)
+    db.connection.rollback.assert_called_once()
+    db.connection.commit.assert_not_called()
+    assert db.connection.autocommit is True
+
+
+class _CompletionCursor(_PreviewCursor):
+    """Check the executed SQL assignments, not merely an invented result state."""
+
+    def execute(self, sql: str, params: tuple = ()) -> None:
+        statement = " ".join(sql.split())
+        if not statement.startswith("UPDATE authority_extraction_previews") or "status = 'running'" in statement:
+            super().execute(sql, params)
+            return
+        self.calls.append(statement)
+        if self.fail_update:
+            raise RuntimeError("preview write failed")
+        assert "WHERE fuente_id = %s" in statement
+        if "status = 'stale'" in statement:
+            assert "lease_token = NULL" in statement and "lease_expires_at = NULL" in statement
+            assert "authorities_json = NULL" in statement and "config_fingerprint = NULL" in statement
+            self.preview.update(status="stale", lease_token=None, lease_expires_at=None,
+                                authorities_json=None, config_fingerprint=None, error_code=None)
+            return
+        assert "status = %s" in statement
+        assert "authorities_json = %s" in statement and "config_fingerprint = %s" in statement
+        assert "error_code = %s" in statement and "completed_at = NOW()" in statement
+        assert "updated_at = NOW()" in statement
+        assert "lease_token = NULL" in statement and "lease_expires_at = NULL" in statement
+        status, authorities, fingerprint, error_code, fuente_id = params
+        assert fuente_id == self.preview["fuente_id"]
+        self.preview.update(status=status, authorities_json=authorities,
+                            config_fingerprint=fingerprint, error_code=error_code,
+                            lease_token=None, lease_expires_at=None)
+
+
+def _completion_db() -> tuple[DatabaseManager, _CompletionCursor, dict, str]:
+    from datetime import datetime, timedelta, timezone
+    source, html, _ = _structured_reduction_source()
+    cursor = _CompletionCursor(copy.deepcopy(source), {
+        "fuente_id": 81, "source_revision": "revision-a", "source_url": source["url"],
+        "status": "pending", "attempts": 0, "lease_token": None, "lease_expires_at": None,
+        "authorities_json": None, "config_fingerprint": None, "error_code": None,
+    })
+    db = object.__new__(DatabaseManager)
+    db.connection = MagicMock(autocommit=True, closed=False)
+    db.cursor = cursor
+    claim = db.claim_preview(81)
+    assert claim is not None
+    cursor.calls.clear()
+    cursor.preview["lease_expires_at"] = datetime.now(timezone.utc) + timedelta(minutes=3)
+    db.connection.reset_mock()
+    return db, cursor, claim, html
+
+
+class _WorkerCursor(_CompletionCursor):
+    def __init__(self, sources: list[dict]) -> None:
+        template, _, _ = _structured_reduction_source()
+        super().__init__(None, {})
+        self.sources = {source["id"]: source for source in sources}
+        self.previews = {
+            source["id"]: {"fuente_id": source["id"], "source_revision": "revision-a",
+                           "source_url": source["url"], "status": "pending", "attempts": 0,
+                           "lease_token": None, "lease_expires_at": None,
+                           "authorities_json": None, "config_fingerprint": None, "error_code": None}
+            for source in sources
+        }
+        self.active_id = template["id"]
+        self.discovered: list[int] = []
+
+    def execute(self, sql: str, params: tuple = ()) -> None:
+        statement = " ".join(sql.split())
+        if statement.startswith("SELECT fuente_id FROM authority_extraction_previews"):
+            self.calls.append(statement)
+            assert params == (25,)
+            self.discovered = [key for key, row in self.previews.items() if row["status"] == "pending"][:25]
+            return
+        if "FROM fuentes WHERE id = %s" in statement or "WHERE fuente_id = %s FOR UPDATE" in statement:
+            self.active_id = params[0]
+            self.source = self.sources[self.active_id]
+            self.preview = self.previews[self.active_id]
+        super().execute(sql, params)
+
+    def fetchall(self) -> list[dict]:
+        return [{"fuente_id": key} for key in self.discovered]
+
+
+def _worker_monitor(sources: list[dict]) -> tuple[PEPMonitor, DatabaseManager, _WorkerCursor]:
+    db = object.__new__(DatabaseManager)
+    db.connection = MagicMock(autocommit=True, closed=False)
+    cursor = _WorkerCursor(sources)
+    db.cursor = cursor
+    with patch.object(DatabaseManager, "__init__", return_value=None), \
+         patch("pep_monitor.create_http_session", return_value=MagicMock()):
+        monitor = PEPMonitor()
+    monitor.db = db
+    return monitor, db, cursor
+
+
+def test_preview_worker_inactive_only_cycle_persists_ready_without_monitor_writes(caplog: pytest.LogCaptureFixture) -> None:
+    source, html, _ = _structured_reduction_source()
+    source.update(activo=False, authority_extraction_confirmed_revision=None)
+    monitor, db, cursor = _worker_monitor([source])
+    db.get_fuentes_activas = MagicMock(return_value=[])
+    db.log_inicio = MagicMock(return_value=17)
+    db.log_fin = MagicMock()
+    expected = extract_structured_authorities(html, source["authority_extraction_config"])
+    with patch.object(monitor, "_obtener_html_raw", return_value=(html, "html_estatico")) as fetch, \
+         patch.object(monitor, "procesar_fuente") as process:
+        monitor.check_all()
+    fetch.assert_called_once()
+    assert fetch.call_args.args[0]["id"] == source["id"]
+    process.assert_not_called()
+    assert db.get_fuentes_activas.call_count == 1
+    assert cursor.previews[81]["status"] == "ready"
+    assert json.loads(cursor.previews[81]["authorities_json"]) == [item.to_dict() for item in expected.authorities]
+    assert cursor.previews[81]["config_fingerprint"] == expected.config_fingerprint
+    assert cursor.calls[0].startswith("SELECT fuente_id FROM authority_extraction_previews")
+    assert not any(name in " ".join(cursor.calls).lower() for name in
+                   ("snapshots", "cambios", "revisiones_remocion", "ultimo_check", "log_fuente_runs"))
+    db.log_inicio.assert_not_called()
+    db.log_fin.assert_not_called()
+    assert "Verificando 0 fuente(s)" not in caplog.text
+
+
+def test_preview_discovery_failure_keeps_active_monitoring_and_does_not_complete_preview(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    source, _, _ = _structured_reduction_source()
+    source["activo"] = True
+    monitor, db, _ = _worker_monitor([source])
+    db.discover_preview_candidates = MagicMock(side_effect=RuntimeError("secret preview SQL detail"))
+    db.claim_preview = MagicMock()
+    db.complete_preview = MagicMock()
+    db.get_fuentes_activas = MagicMock(return_value=[source])
+    db.get_ultimo_snapshot = MagicMock(return_value={"hash": "unchanged"})
+    db.log_inicio = MagicMock(return_value=17)
+    db.log_fin = MagicMock()
+    with patch.object(monitor, "_process_preview_candidates") as previews, \
+         patch.object(monitor, "procesar_fuente") as process, \
+         patch("pep_monitor.hay_internet", return_value=True):
+        monitor.check_all()
+    db.discover_preview_candidates.assert_called_once_with(limit=25)
+    previews.assert_not_called()
+    db.claim_preview.assert_not_called()
+    db.complete_preview.assert_not_called()
+    db.get_fuentes_activas.assert_called_once_with()
+    process.assert_called_once_with(source)
+    db.log_inicio.assert_called_once_with()
+    db.log_fin.assert_called_once_with(
+        17, estado="completado", items_procesados=1, items_resultado=0,
+        errores=0, mensaje_error=None,
+    )
+    assert "Preview discovery failed" in caplog.text
+    assert "secret preview SQL detail" not in caplog.text
+
+
+def test_preview_worker_empty_cycle_warns_without_monitor_audit(caplog: pytest.LogCaptureFixture) -> None:
+    monitor, db, cursor = _worker_monitor([])
+    db.get_fuentes_activas = MagicMock(return_value=[])
+    db.log_inicio = MagicMock(return_value=17)
+    db.log_fin = MagicMock()
+    with patch.object(monitor, "_obtener_html_raw") as fetch, \
+         patch.object(monitor, "procesar_fuente") as process:
+        monitor.check_all()
+    assert cursor.discovered == []
+    fetch.assert_not_called()
+    process.assert_not_called()
+    db.log_inicio.assert_not_called()
+    db.log_fin.assert_not_called()
+    assert "No hay fuentes registradas" in caplog.text
+    assert "Verificando 0 fuente(s)" not in caplog.text
+
+
+@pytest.mark.parametrize("response,code,fingerprint", [
+    (("<section class='directory'></section>", "html_estatico"), "row_count_out_of_bounds", True),
+    (("<raw secret>", "error_http"), "fetch_error", False),
+    (requests.exceptions.SSLError("secret transport error"), "fetch_error", False),
+])
+def test_preview_worker_failure_vs_incomplete_never_persists_raw_content(response: object, code: str, fingerprint: bool) -> None:
+    source, _, _ = _structured_reduction_source()
+    source["activo"] = False
+    monitor, db, cursor = _worker_monitor([source])
+    db.get_fuentes_activas = MagicMock(return_value=[])
+    db.log_inicio = MagicMock(return_value=1)
+    db.log_fin = MagicMock()
+    with patch.object(monitor, "_obtener_html_raw", side_effect=response if isinstance(response, Exception) else None,
+                      return_value=response if not isinstance(response, Exception) else None):
+        monitor.check_all()
+    row = cursor.previews[81]
+    assert row["status"] == ("incomplete" if fingerprint else "error")
+    assert row["error_code"] == code and row["authorities_json"] is None
+    assert (row["config_fingerprint"] is not None) is fingerprint
+    assert "secret" not in repr(row) and "<raw" not in repr(row)
+
+
+@pytest.mark.parametrize("change", [
+    lambda c: c.sources[81].__setitem__("url", "https://example.test/edited"),
+    lambda c: c.previews[81].__setitem__("lease_token", "new-lease"),
+])
+def test_preview_worker_discards_stale_output_after_fetch(change: object) -> None:
+    source, html, _ = _structured_reduction_source()
+    monitor, db, cursor = _worker_monitor([source])
+    db.get_fuentes_activas = MagicMock(return_value=[])
+    db.log_inicio = MagicMock(return_value=1)
+    db.log_fin = MagicMock()
+    def fetch(_source: dict, *, preview: bool = False) -> tuple[str, str]:
+        assert preview is True
+        change(cursor)
+        return html, "html_estatico"
+    with patch.object(monitor, "_obtener_html_raw", side_effect=fetch):
+        monitor.check_all()
+    assert cursor.previews[81]["status"] != "ready"
+    assert cursor.previews[81]["authorities_json"] is None
+
+
+def test_preview_worker_bounds_candidates_and_isolates_one_job_failure_from_active_monitor() -> None:
+    source, html, _ = _structured_reduction_source()
+    sources = [{**copy.deepcopy(source), "id": index} for index in range(81, 111)]
+    monitor, db, cursor = _worker_monitor(sources)
+    active = {**copy.deepcopy(source), "id": 180, "activo": True}
+    db.get_fuentes_activas = MagicMock(return_value=[active])
+    db.log_inicio = MagicMock(return_value=1)
+    db.log_fin = MagicMock()
+    db.get_ultimo_snapshot = MagicMock(return_value={"hash": "same"})
+    seen: list[int] = []
+    def fetch(claimed: dict, *, preview: bool = False) -> tuple[str, str]:
+        assert preview is True
+        seen.append(claimed["id"])
+        if claimed["id"] == 81:
+            raise RuntimeError("sensitive error")
+        return html, "html_estatico"
+    with patch.object(monitor, "_obtener_html_raw", side_effect=fetch), \
+         patch.object(monitor, "procesar_fuente") as process, \
+         patch("pep_monitor.hay_internet", return_value=True):
+        monitor.check_all()
+    assert seen == list(range(81, 106))
+    assert cursor.previews[81]["status"] == "error"
+    assert cursor.previews[82]["status"] == "ready"
+    assert cursor.previews[106]["status"] == "pending"
+    process.assert_called_once_with(active)
+    db.log_inicio.assert_called_once_with()
+    db.log_fin.assert_called_once_with(
+        1, estado="completado", items_procesados=1, items_resultado=0,
+        errores=0, mensaje_error=None,
+    )
+
+
+def test_preview_fetch_hides_transport_exception_from_logs(caplog: pytest.LogCaptureFixture) -> None:
+    from pep_monitor import OutboundUrlError
+    source, _, _ = _structured_reduction_source()
+    monitor, _, _ = _worker_monitor([source])
+    with patch("pep_monitor._request_public_url", side_effect=OutboundUrlError("secret raw URL")):
+        assert monitor._obtener_html_raw(source, preview=True) == ("", "error_http")
+    assert "secret raw URL" not in caplog.text
+
+
+def test_preview_complete_ready_persists_bounded_parser_payload_and_source_first_locks() -> None:
+    db, cursor, claim, html = _completion_db()
+    parsed = extract_structured_authorities(html, claim["source"]["authority_extraction_config"])
+    assert db.complete_preview(claim, parsed) is True
+    assert "FROM fuentes" in cursor.calls[0] and "FOR UPDATE" in cursor.calls[0]
+    assert "FROM authority_extraction_previews" in cursor.calls[1] and "FOR UPDATE" in cursor.calls[1]
+    assert len(cursor.calls) == 3 and cursor.calls[2].startswith("UPDATE authority_extraction_previews")
+    assert cursor.preview["status"] == "ready"
+    assert json.loads(cursor.preview["authorities_json"]) == [item.to_dict() for item in parsed.authorities]
+    assert cursor.preview["config_fingerprint"] == parsed.config_fingerprint
+    assert cursor.preview["error_code"] is None and cursor.preview["lease_token"] is None
+    db.connection.commit.assert_called_once()
+    assert db.connection.autocommit is True
+    cursor.calls.clear()
+    assert db.complete_preview(claim, parsed) is False  # replay does not refresh completed_at
+    assert not any(sql.startswith("UPDATE") for sql in cursor.calls)
+
+
+@pytest.mark.parametrize("html,status,code", [
+    ("<section class='directory'></section>", "incomplete", "row_count_out_of_bounds"),
+    ("", "incomplete", "container_scope_invalid"),
+])
+def test_preview_complete_incomplete_keeps_valid_fingerprint_without_authorities(html: str, status: str, code: str) -> None:
+    db, cursor, claim, _ = _completion_db()
+    parsed = extract_structured_authorities(html, claim["source"]["authority_extraction_config"])
+    assert db.complete_preview(claim, parsed) is True
+    assert cursor.preview["status"] == status and cursor.preview["error_code"] == code
+    assert cursor.preview["authorities_json"] is None
+    assert cursor.preview["config_fingerprint"] == parsed.config_fingerprint
+
+
+@pytest.mark.parametrize("bad_config,code", [(None, "unconfigured"), ({"version": 7}, "invalid_config")])
+def test_preview_complete_never_promotes_unconfigured_or_invalid_result(bad_config: object, code: str) -> None:
+    db, cursor, claim, _ = _completion_db()
+    parsed = extract_structured_authorities("", bad_config)
+    assert db.complete_preview(claim, parsed) is True
+    assert cursor.preview["status"] == "incomplete" and cursor.preview["error_code"] == code
+    assert cursor.preview["authorities_json"] is None and cursor.preview["config_fingerprint"] is None
+
+
+def test_preview_complete_transport_error_is_fixed_and_contains_no_exception_text() -> None:
+    db, cursor, claim, _ = _completion_db()
+    assert db.complete_preview(claim, {"status": "error", "error_code": "fetch_error"}) is True
+    assert cursor.preview["status"] == "error" and cursor.preview["error_code"] == "fetch_error"
+    assert cursor.preview["authorities_json"] is None
+    assert cursor.preview["config_fingerprint"] is None
+
+
+@pytest.mark.parametrize("change", [
+    lambda c: c.source.__setitem__("url", "https://example.test/new"),
+    lambda c: c.source.__setitem__("authority_extraction_revision", "revision-b"),
+    lambda c: c.source["authority_extraction_config"].__setitem__("row_selector", ".different"),
+    lambda c: c.source.__setitem__("tipo", "pdf"),
+    lambda c: c.source.__setitem__("autoridades_extractor", "divi_blurb"),
+])
+def test_preview_complete_stales_only_its_own_running_claim_on_source_change(change: object) -> None:
+    db, cursor, claim, html = _completion_db()
+    parsed = extract_structured_authorities(html, claim["source"]["authority_extraction_config"])
+    change(cursor)
+    assert db.complete_preview(claim, parsed) is False
+    assert cursor.preview["status"] == "stale" and cursor.preview["authorities_json"] is None
+    assert cursor.preview["lease_token"] is None
+    assert cursor.calls[2].startswith("UPDATE authority_extraction_previews")
+    assert len(cursor.calls) == 3 and db.connection.commit.call_count == 1
+
+
+@pytest.mark.parametrize("change", [
+    lambda c: c.preview.__setitem__("lease_token", "replacement"),
+    lambda c: c.preview.__setitem__("status", "pending"),
+    lambda c: c.preview.__setitem__("source_revision", "revision-b"),
+    lambda c: c.preview.__setitem__("source_url", "https://example.test/new"),
+    lambda c: c.preview.__setitem__("lease_expires_at", None),
+])
+def test_preview_complete_cannot_touch_replacement_claim(change: object) -> None:
+    db, cursor, claim, html = _completion_db()
+    parsed = extract_structured_authorities(html, claim["source"]["authority_extraction_config"])
+    change(cursor)
+    previous = copy.deepcopy(cursor.preview)
+    assert db.complete_preview(claim, parsed) is False
+    assert cursor.preview == previous
+    assert len(cursor.calls) == 2 and all("FOR UPDATE" in sql for sql in cursor.calls)
+    db.connection.commit.assert_not_called()
+    db.connection.rollback.assert_called_once()
+
+
+def test_preview_complete_rejects_mutated_claim_config_without_rewriting_preview() -> None:
+    db, cursor, claim, html = _completion_db()
+    parsed = extract_structured_authorities(html, claim["source"]["authority_extraction_config"])
+    claim["source"]["authority_extraction_config"]["row_selector"] = ".changed"
+    with pytest.raises(ValueError, match="claim"):
+        db.complete_preview(claim, parsed)
+    assert not any(sql.startswith("UPDATE") for sql in cursor.calls)
+    db.connection.commit.assert_not_called()
+
+
+def test_preview_complete_accepts_postgres_naive_timestamp_before_expiry() -> None:
+    db, cursor, claim, html = _completion_db()
+    cursor.preview["lease_expires_at"] = cursor.preview["lease_expires_at"].replace(tzinfo=None)
+    parsed = extract_structured_authorities(html, claim["source"]["authority_extraction_config"])
+    assert db.complete_preview(claim, parsed) is True
+    assert cursor.preview["status"] == "ready"
+
+
+def test_preview_complete_expired_lease_cannot_overwrite_result() -> None:
+    from datetime import datetime, timedelta, timezone
+    db, cursor, claim, html = _completion_db()
+    cursor.preview["lease_expires_at"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+    parsed = extract_structured_authorities(html, claim["source"]["authority_extraction_config"])
+    assert db.complete_preview(claim, parsed) is False
+    assert len(cursor.calls) == 2 and cursor.preview["status"] == "running"
+    db.connection.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("invalid", [
+    {"status": "error", "error_code": "private exception: secret"},
+    {"status": "error", "error_code": "fetch_error", "html": "raw"},
+    {"status": "ready", "authorities": [{"cargo": "Unsafe", "persona": "Fake"}]},
+    "raw html", None,
+])
+def test_preview_complete_rejects_arbitrary_results_without_writes(invalid: object) -> None:
+    db, cursor, claim, _ = _completion_db()
+    with pytest.raises(ValueError):
+        db.complete_preview(claim, invalid)
+    assert not any(sql.startswith("UPDATE") for sql in cursor.calls)
+    db.connection.commit.assert_not_called()
+    assert db.connection.autocommit is True
+
+
+def test_preview_complete_malformed_result_cannot_even_stale_source_changed_row() -> None:
+    db, cursor, claim, _ = _completion_db()
+    cursor.source["url"] = "https://example.test/new"
+    with pytest.raises(ValueError):
+        db.complete_preview(claim, {"status": "error", "error_code": "raw error"})
+    assert cursor.preview["status"] == "running" and cursor.preview["lease_token"] == claim["lease_token"]
+    assert not any(sql.startswith("UPDATE") for sql in cursor.calls)
+    db.connection.commit.assert_not_called()
+
+
+def test_preview_complete_rejects_oversize_parser_payload_and_forged_fingerprint() -> None:
+    from structured_authorities import StructuredAuthoritiesResult
+    for result in (
+        StructuredAuthoritiesResult("ready", (Authority("x" * 301, "Ana"),), "a" * 64, None),
+        StructuredAuthoritiesResult("ready", (Authority("Role", "Ana"),) * 201, "a" * 64, None),
+        StructuredAuthoritiesResult("ready", (Authority("Role", "Ana"),), "z" * 64, None),
+    ):
+        db, cursor, claim, _ = _completion_db()
+        with pytest.raises(ValueError):
+            db.complete_preview(claim, result)
+        assert cursor.calls == [] and db.connection.commit.call_count == 0
+
+
+@pytest.mark.parametrize("failure", ["update", "commit", "rollback"])
+def test_preview_complete_failure_restores_only_after_successful_rollback(failure: str) -> None:
+    db, cursor, claim, html = _completion_db()
+    parsed = extract_structured_authorities(html, claim["source"]["authority_extraction_config"])
+    if failure == "update":
+        cursor.fail_update = True
+    else:
+        db.connection.commit.side_effect = RuntimeError("commit failed")
+    if failure == "rollback":
+        db.connection.rollback.side_effect = RuntimeError("rollback failed")
+    with pytest.raises(RuntimeError, match="preview write failed|commit failed"):
+        db.complete_preview(claim, parsed)
+    db.connection.rollback.assert_called_once()
+    assert db.connection.autocommit is (failure != "rollback")
+    if failure == "update":
+        db.connection.commit.assert_not_called()
