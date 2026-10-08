@@ -150,14 +150,7 @@ class FuenteService
                 ->lockForUpdate()
                 ->first();
 
-            if ($preview === null || $preview->status !== 'ready'
-                || $preview->source_revision !== $fuente->authority_extraction_revision
-                || $preview->source_url !== $fuente->url
-                || $preview->completed_at === null || $preview->error_code !== null
-                || $preview->lease_token !== null || $preview->lease_expires_at !== null
-                || ! is_string($preview->config_fingerprint)
-                || preg_match('/\A[a-f0-9]{64}\z/D', $preview->config_fingerprint) !== 1
-                || ! $this->validPreviewAuthorities($preview->authorities_json)) {
+            if (! $this->previewConfirmable($fuente, $preview)) {
                 throw $this->invalidSourceConfiguration();
             }
 
@@ -165,6 +158,24 @@ class FuenteService
 
             return $fuente->refresh();
         });
+    }
+
+    public function previewConfirmable(Fuente $fuente, ?AuthorityExtractionPreview $preview): bool
+    {
+        try {
+            $this->validatePreviewSource($fuente);
+        } catch (ValidationException) {
+            return false;
+        }
+
+        return $preview !== null && $preview->status === 'ready'
+            && $preview->source_revision === $fuente->authority_extraction_revision
+            && $preview->source_url === $fuente->url
+            && $preview->completed_at !== null && $preview->error_code === null
+            && $preview->lease_token === null && $preview->lease_expires_at === null
+            && is_string($preview->config_fingerprint)
+            && preg_match('/\A[a-f0-9]{64}\z/D', $preview->config_fingerprint) === 1
+            && $this->validPreviewAuthorities($preview->authorities_json);
     }
 
     private function validatePreviewSource(Fuente $fuente): void
