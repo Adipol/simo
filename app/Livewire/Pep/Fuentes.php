@@ -92,7 +92,7 @@ class Fuentes extends Component
             'tipo' => ['required', 'in:html,pdf,js'],
             'activo' => ['boolean'],
             'selector_css' => ['nullable', 'string', 'max:500'],
-            'autoridades_extractor' => ['nullable', 'in:divi_blurb'],
+            'autoridades_extractor' => ['nullable', 'in:divi_blurb,umsa_rectorado_profile'],
             'analizar_imagenes' => ['boolean'],
         ];
     }

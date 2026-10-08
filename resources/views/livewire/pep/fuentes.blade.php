@@ -138,6 +138,7 @@
                     <select wire:model="autoridades_extractor" class="simo-input">
                         <option value="">Sin extracción estructurada</option>
                         <option value="divi_blurb">Divi blurb (cargo y persona)</option>
+                        <option value="umsa_rectorado_profile">UMSA Rectorado (cargo y persona)</option>
                     </select>
                 </div>
                 <div class="grid grid-cols-2 gap-3">
