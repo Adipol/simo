@@ -13,7 +13,10 @@ class Snapshot extends Model
 
     public $timestamps = false;
 
-    protected $fillable = ['fuente_id', 'hash', 'texto', 'autoridades_json', 'metodo', 'fecha'];
+    protected $fillable = [
+        'fuente_id', 'hash', 'texto', 'autoridades_json', 'metodo', 'fecha',
+        'authority_extraction_config_fingerprint', 'authority_extraction_revision',
+    ];
 
     protected $casts = [
         'fecha' => 'datetime',
