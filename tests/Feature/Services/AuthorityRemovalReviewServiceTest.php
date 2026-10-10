@@ -172,6 +172,10 @@ final class AuthorityRemovalReviewServiceTest extends TestCase
 
     public function test_generic_decisions_lock_source_before_review_before_latest_snapshot(): void
     {
+        if (DB::getDriverName() === 'sqlite') {
+            $this->markTestSkipped('SQLite omits FOR UPDATE; PostgreSQL verifies the lock order.');
+        }
+
         foreach (['confirm', 'reject'] as $decision) {
             Queue::fake();
             [$review, , $actor] = $this->genericScenario();
@@ -196,7 +200,7 @@ final class AuthorityRemovalReviewServiceTest extends TestCase
         $snapshotLocks = [];
         DB::listen(static function ($query) use (&$snapshotLocks): void {
             $sql = strtolower($query->sql);
-            if (str_contains($sql, '"snapshots"') && str_contains($sql, 'for update')) {
+            if (str_contains($sql, 'from "snapshots"') && str_contains($sql, 'order by "fecha" desc, "id" desc')) {
                 $snapshotLocks[] = $sql;
             }
         });
@@ -239,6 +243,9 @@ final class AuthorityRemovalReviewServiceTest extends TestCase
 
                 $this->assertCount(1, $snapshotLocks, "{$decision}, refresh=".(int) $refresh);
                 $this->assertMatchesRegularExpression('/order by "fecha" desc, "id" desc/', $snapshotLocks[0], "{$decision}, refresh=".(int) $refresh);
+                if (DB::getDriverName() === 'pgsql') {
+                    $this->assertStringContainsString('for update', $snapshotLocks[0]);
+                }
                 $this->assertSame($decision === 'confirm' ? AuthorityRemovalReviewStatus::Confirmed : AuthorityRemovalReviewStatus::Rejected, $resolved->estado);
                 $this->assertSame($decision === 'confirm' ? $review->candidato_json : $review->linea_base_json, $observed->fresh()->autoridades_json);
                 $this->assertSame($review->snapshot_base_id, $review->fresh()->snapshot_base_id);
