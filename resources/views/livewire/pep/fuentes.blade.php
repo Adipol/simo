@@ -32,8 +32,13 @@
         </div>
     </div>
 
+    @if($previewMessage)
+        <p role="status" class="text-xs text-emerald-700">{{ $previewMessage }}</p>
+    @endif
+    @error('preview') <p role="alert" class="text-xs text-rose-600">{{ $message }}</p> @enderror
+
     {{-- Tabla --}}
-    <div class="simo-card p-0 overflow-hidden">
+    <div class="simo-card p-0 overflow-hidden" @if($pollPreviews) wire:poll.15s @endif>
         <table class="simo-table min-w-full">
             <thead>
                 <tr>
@@ -96,15 +101,38 @@
                             <span class="simo-badge {{ $f->activo ? 'bg-emerald-50 text-emerald-600' : 'bg-zinc-100 text-zinc-500 border-zinc-200' }}">
                                 {{ $f->activo ? 'Activa' : 'Inactiva' }}
                             </span>
+                            @if(isset($previewRows[$f->id]))
+                                <div class="mt-1 text-xs text-gray-600">
+                                    Vista previa: {{ $previewRows[$f->id]['label'] }}
+                                    @if($previewRows[$f->id]['error'])
+                                        <span> ({{ $previewRows[$f->id]['error'] }})</span>
+                                    @endif
+                                </div>
+                                @if($previewRows[$f->id]['roster'])
+                                    <ul class="mt-1 text-xs text-gray-700" aria-label="Autoridades detectadas">
+                                        @foreach($previewRows[$f->id]['roster'] as $index => $authority)
+                                            <li wire:key="preview-{{ $f->id }}-{{ $index }}">{{ $authority['cargo'] }} — {{ $authority['persona'] }}</li>
+                                        @endforeach
+                                    </ul>
+                                @endif
+                            @endif
                         </td>
                         <td>
                             <div class="flex items-center gap-2">
                                 <button wire:click="abrirModal({{ $f->id }})"
                                     class="text-xs text-indigo-600 hover:text-indigo-800 font-medium">Editar</button>
-                                <button wire:click="toggleActivo({{ $f->id }})"
-                                    class="text-xs text-gray-400 hover:text-gray-600">
-                                    {{ $f->activo ? 'Desactivar' : 'Activar' }}
-                                </button>
+                                @if($f->autoridades_extractor === 'structured_css_v1')
+                                    <button wire:click="solicitarPreview({{ $f->id }})" class="text-xs text-indigo-600 hover:text-indigo-800">Solicitar vista previa</button>
+                                    @if($previewRows[$f->id]['showConfirm'])
+                                        <button wire:click="confirmarPreview({{ $f->id }})" class="text-xs text-emerald-700 hover:text-emerald-900">Confirmar vista previa</button>
+                                    @endif
+                                @endif
+                                @if($f->autoridades_extractor !== 'structured_css_v1' || $f->activo || ($f->authority_extraction_revision !== null && $f->authority_extraction_confirmed_revision === $f->authority_extraction_revision))
+                                    <button wire:click="toggleActivo({{ $f->id }})"
+                                        class="text-xs text-gray-400 hover:text-gray-600">
+                                        {{ $f->activo ? 'Desactivar' : 'Activar' }}
+                                    </button>
+                                @endif
                             </div>
                         </td>
                     </tr>
@@ -125,7 +153,7 @@
         <div class="bg-white rounded-2xl shadow-xl w-full max-w-xl max-h-[90vh] overflow-y-auto">
             <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
                 <h2 class="font-semibold text-gray-900">{{ $editandoId ? 'Editar fuente' : 'Nueva fuente' }}</h2>
-                <button wire:click="cerrarModal" class="text-gray-400 hover:text-gray-600 transition">&times;</button>
+                <button wire:click="cerrarModal" aria-label="Cerrar formulario" class="text-gray-400 hover:text-gray-600 transition">&times;</button>
             </div>
             <div class="px-6 py-5 space-y-4">
                 <div>
@@ -135,11 +163,37 @@
                 </div>
                 <div>
                     <label class="block text-xs font-medium text-gray-600 mb-1">Extractor de autoridades</label>
-                    <select wire:model="autoridades_extractor" class="simo-input">
+                    <select wire:model.live="autoridades_extractor" class="simo-input">
                         <option value="">Sin extracción estructurada</option>
                         <option value="divi_blurb">Divi blurb (cargo y persona)</option>
+                        <option value="umsa_rectorado_profile">UMSA Rectorado (cargo y persona)</option>
+                        <option value="structured_css_v1">CSS estructurado (cargo y persona)</option>
                     </select>
                 </div>
+                @if($autoridades_extractor === 'structured_css_v1')
+                    <fieldset class="rounded-lg border border-indigo-100 p-3 space-y-2">
+                        <legend class="text-xs font-semibold text-indigo-800">Configuración CSS de autoridades</legend>
+                        <p class="text-xs text-gray-600">Solo HTML. Guardar no consulta la fuente: solicitá y confirmá la vista previa antes de activarla.</p>
+                        @foreach(['containerSelector' => 'Contenedor', 'rowSelector' => 'Fila', 'personSelector' => 'Persona', 'roleSelector' => 'Cargo'] as $field => $label)
+                            <div wire:key="config-{{ $field }}">
+                                <label for="{{ $field }}" class="block text-xs font-medium text-gray-600">Selector CSS: {{ $label }} *</label>
+                                <input id="{{ $field }}" wire:model="{{ $field }}" type="text" maxlength="500" class="simo-input" />
+                                @error($field) <p role="alert" class="text-xs text-rose-600">{{ $message }}</p> @enderror
+                            </div>
+                        @endforeach
+                        <div class="grid grid-cols-2 gap-3">
+                            @foreach(['minRows' => 'Mínimo de filas', 'maxRows' => 'Máximo de filas'] as $field => $label)
+                                <div wire:key="config-{{ $field }}">
+                                    <label for="{{ $field }}" class="block text-xs font-medium text-gray-600">{{ $label }} *</label>
+                                    <input id="{{ $field }}" wire:model="{{ $field }}" type="number" min="1" max="200" step="1" class="simo-input" />
+                                    @error($field) <p role="alert" class="text-xs text-rose-600">{{ $message }}</p> @enderror
+                                </div>
+                            @endforeach
+                        </div>
+                        @error('authority_extraction_config') <p role="alert" class="text-xs text-rose-600">{{ $message }}</p> @enderror
+                    </fieldset>
+                @endif
+                @error('autoridades_extractor') <p role="alert" class="text-xs text-rose-600">{{ $message }}</p> @enderror
                 <div class="grid grid-cols-2 gap-3">
                     <div>
                         <label class="block text-xs font-medium text-gray-600 mb-1">Nombre</label>
