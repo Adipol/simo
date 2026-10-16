@@ -14,6 +14,7 @@ from typing import Callable
 
 
 _TITLES = re.compile(r"^(?:dr|dra|lic|ing|sr|sra|señor|señora)\.?\s+", re.IGNORECASE)
+_UMSA_TERMINAL_CREDENTIALS = re.compile(r"(?:\s+(?:ph\.?d\.?))+$", re.IGNORECASE)
 
 PRIMARY_FEED = "primary"
 REVIEW_FEED = "review"
@@ -48,6 +49,15 @@ class Authority:
         return {"cargo": self.cargo, "persona": self.persona}
 
 
+@dataclass(frozen=True)
+class _UmsaProfileAuthority(Authority):
+    """Keep UMSA's terminal academic credentials out of profile identity only."""
+
+    @property
+    def normalized_persona(self) -> str:
+        return normalize_for_match(_UMSA_TERMINAL_CREDENTIALS.sub("", self.persona))
+
+
 def extract_divi_blurbs(html: str) -> list[Authority]:
     """Extract valid Divi authority cards, ignoring incomplete decorative blurbs."""
     from bs4 import BeautifulSoup
@@ -73,8 +83,41 @@ def extract_divi_blurbs(html: str) -> list[Authority]:
     return authorities
 
 
+def extract_umsa_rectorado_profile(html: str) -> list[Authority]:
+    """Extract one explicit UMSA Rectorado header, failing closed on ambiguity."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "lxml")
+    sections = []
+    for section in soup.select("section.portlet"):
+        titles = section.select(":scope > .portlet-content > h2.portlet-title-text")
+        if len(titles) == 1 and " ".join(titles[0].get_text(" ", strip=True).split()).casefold() == "rectorado":
+            sections.append(section)
+    if len(sections) != 1:
+        return []
+
+    articles = sections[0].select(".journal-content-article")
+    if len(articles) != 1:
+        return []
+    profiles = articles[0].select(".TablaSpeed .filaPersona")
+    if len(profiles) != 1:
+        return []
+    headers = profiles[0].select(".col-2b .parte2")
+    if len(headers) != 1:
+        return []
+    fields = headers[0].find_all("b")
+    if len(fields) != 2:
+        return []
+
+    person, cargo = (" ".join(field.get_text(" ", strip=True).split()) for field in fields)
+    if not person or not cargo:
+        return []
+    return [_UmsaProfileAuthority(cargo=cargo, persona=person)]
+
+
 _EXTRACTORS: dict[str, Callable[[str], list[Authority]]] = {
     "divi_blurb": extract_divi_blurbs,
+    "umsa_rectorado_profile": extract_umsa_rectorado_profile,
 }
 
 

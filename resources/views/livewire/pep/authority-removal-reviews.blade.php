@@ -41,7 +41,7 @@
                             </ul>
                         </div>
                         <div>
-                            <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Roster observado</h3>
+                            <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Nómina observada</h3>
                             <ul class="space-y-1 text-sm text-zinc-700">
                                 @foreach($review->candidato_json as $authority)
                                     <li>{{ $authority['persona'] }} <span class="text-zinc-400">— {{ $authority['cargo'] }}</span></li>
@@ -57,7 +57,7 @@
 
                     @if($review->estado === \App\Enums\AuthorityRemovalReviewStatus::Pending)
                         <div class="flex justify-end gap-2">
-                            <button wire:click="confirm({{ $review->id }})" wire:confirm="¿Confirmar esta remoción y promover el nuevo roster?" class="simo-btn bg-emerald-50 border border-emerald-200 text-emerald-700">Confirmar</button>
+                            <button wire:click="confirm({{ $review->id }})" wire:confirm="¿Confirmar los cambios de autoridades y aceptar la nómina observada?" class="simo-btn bg-emerald-50 border border-emerald-200 text-emerald-700">Confirmar</button>
                             <button wire:click="reject({{ $review->id }})" wire:confirm="¿Rechazar esta observación?" class="simo-btn bg-rose-50 border border-rose-200 text-rose-700">Rechazar</button>
                         </div>
                     @else
