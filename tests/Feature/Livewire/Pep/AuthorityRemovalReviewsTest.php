@@ -68,6 +68,27 @@ final class AuthorityRemovalReviewsTest extends TestCase
         $this->assertSame(AuthorityRemovalReviewStatus::Confirmed, $review->fresh()->estado);
     }
 
+    public function test_replacement_review_uses_neutral_title_confirmation_and_success_labels(): void
+    {
+        Queue::fake();
+        $admin = $this->admin();
+        $review = $this->review(replacement: true);
+
+        $this->actingAs($admin)->get(route('pep.authority-removal-reviews'))
+            ->assertOk()
+            ->assertSee('Revisión de cambios de autoridades')
+            ->assertDontSee('Revisión de remociones de autoridades');
+
+        Livewire::actingAs($admin)
+            ->test(AuthorityRemovalReviews::class)
+            ->assertSee('¿Confirmar los cambios de autoridades y aceptar la nómina observada?')
+            ->assertDontSee('¿Confirmar esta remoción')
+            ->call('confirm', $review->id)
+            ->assertDispatched('notify', mensaje: 'Cambios de autoridades confirmados y enviados a análisis.', tipo: 'success');
+
+        $this->assertSame(AuthorityRemovalReviewStatus::Confirmed, $review->fresh()->estado);
+    }
+
     public function test_admin_can_reject_without_creating_cambio(): void
     {
         Queue::fake();
@@ -91,14 +112,19 @@ final class AuthorityRemovalReviewsTest extends TestCase
         return $admin;
     }
 
-    private function review(AuthorityRemovalReviewStatus $status = AuthorityRemovalReviewStatus::Pending): AuthorityRemovalReview
+    private function review(AuthorityRemovalReviewStatus $status = AuthorityRemovalReviewStatus::Pending, bool $replacement = false): AuthorityRemovalReview
     {
         $fuente = Fuente::factory()->create();
         $baseline = [
             ['cargo' => 'Director', 'persona' => 'Ana'],
             ['cargo' => 'Auditor', 'persona' => 'Luis'],
         ];
-        $candidate = [['cargo' => 'Director', 'persona' => 'Ana']];
+        $candidate = $replacement
+            ? [$baseline[0], ['cargo' => 'Auditor', 'persona' => 'Carla']]
+            : [$baseline[0]];
+        $events = $replacement
+            ? [['type' => 'reemplazo', 'old' => $baseline[1], 'new' => $candidate[1]]]
+            : [['type' => 'remocion', 'old' => $baseline[1], 'new' => null]];
         $snapshot = Snapshot::create([
             'fuente_id' => $fuente->id,
             'hash' => str_repeat('b', 64),
@@ -114,7 +140,7 @@ final class AuthorityRemovalReviewsTest extends TestCase
             'origen' => 'pep_monitor',
             'linea_base_json' => $baseline,
             'candidato_json' => $candidate,
-            'eventos_propuestos_json' => [['type' => 'remocion', 'old' => $baseline[1], 'new' => null]],
+            'eventos_propuestos_json' => $events,
             'evidencia_json' => ['version' => 1],
             'fingerprint' => AuthorityRemovalReviewService::fingerprint($fuente->id, $baseline, $candidate),
             'estado' => $status,

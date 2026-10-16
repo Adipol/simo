@@ -17,7 +17,7 @@ use Livewire\Attributes\Url;
 use Livewire\Component;
 use Livewire\WithPagination;
 
-#[Layout('layouts.app', ['title' => 'Revisión de remociones de autoridades'])]
+#[Layout('layouts.app', ['title' => 'Revisión de cambios de autoridades'])]
 final class AuthorityRemovalReviews extends Component
 {
     use WithPagination;
@@ -72,7 +72,7 @@ final class AuthorityRemovalReviews extends Component
         $this->authorizeAction();
         $service->confirm($id, auth()->user(), ['channel' => 'livewire']);
         unset($this->reviews);
-        $this->dispatch('notify', mensaje: 'Remoción confirmada y enviada a análisis.', tipo: 'success');
+        $this->dispatch('notify', mensaje: 'Cambios de autoridades confirmados y enviados a análisis.', tipo: 'success');
     }
 
     public function reject(int $id, AuthorityRemovalReviewService $service): void
