@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Tests\Support;
 
 /**
- * Static helper that extracts the unique `estado` string literals emitted by
- * pep_monitor.py for the `log_fuente_runs` table.
+ * Extracts estado literals from PEPMonitor.procesar_fuente(), whose finally
+ * block is the only assignment scope persisted to log_fuente_runs.
  *
  * ─── LIMITATIONS (REQ-A4) ───────────────────────────────────────────────────
  * Literal-only detection: this parser reads ONLY string literals assigned to
@@ -16,26 +16,11 @@ namespace Tests\Support;
  * for all `log_fuente_runs` estados, and this constraint is documented as a
  * known limitation of Contract A.
  *
- * ─── LOG_SCRIPTS ALLOWLIST ──────────────────────────────────────────────────
- * pep_monitor.py also emits `estado` literals for the `log_scripts` table via
- * `self.db.log_fin(...)` calls (lines 1696 "completado", 1705 "error").
- * These must be excluded because they belong to a different table and would
- * produce false drift alarms in Contract A. The allowlist is hardcoded and
- * documented here rather than configurable, because:
- * (a) these values are stable constants in the Python code,
- * (b) making them configurable would couple the test infrastructure to runtime
- *     config, defeating the purpose of a hermetic contract test.
+ * Scoping extraction to this method excludes authority-review SQL statuses and
+ * log_scripts statuses without maintaining an unrelated-value allowlist.
  */
 final class PepMonitorParser
 {
-    /**
-     * Estado values used exclusively by the `log_scripts` table.
-     * Excluded from the returned set to avoid false drift alarms in Contract A.
-     *
-     * @var array<string>
-     */
-    private const LOG_SCRIPTS_ALLOWLIST = ['completado', 'error'];
-
     /**
      * Parse pep_monitor.py and return the unique, sorted list of `estado`
      * string literals assigned for `log_fuente_runs`.
@@ -59,25 +44,24 @@ final class PepMonitorParser
         }
 
         $content = (string) file_get_contents($path);
+        preg_match(
+            '/^    def procesar_fuente\(.*?(?=^    def check_all\()/ms',
+            $content,
+            $methodMatch,
+        );
+        $method = $methodMatch[0] ?? '';
 
         // Matches: estado = "value" or estado = 'value' (with optional spaces)
         // Captures only lowercase letters and underscores (valid estado shape).
-        preg_match_all('/estado\s*=\s*["\']([a-z_]+)["\']/m', $content, $matches);
+        preg_match_all('/estado\s*=\s*["\']([a-z_]+)["\']/m', $method, $matches);
 
         $literals = $matches[1] ?? [];
-
-        // Filter out log_scripts estados to keep only log_fuente_runs values.
-        $filtered = array_filter(
-            $literals,
-            static fn (string $v): bool => ! in_array($v, self::LOG_SCRIPTS_ALLOWLIST, true)
-        );
-
-        $unique = array_unique(array_values($filtered));
+        $unique = array_unique($literals);
 
         if (count($unique) === 0) {
             throw new \RuntimeException(
                 'PepMonitorParser found zero estado literals after filtering. '
-                .'The regex pattern or the log_scripts allowlist may need updating.'
+                .'The method boundary or literal regex may need updating.'
             );
         }
 

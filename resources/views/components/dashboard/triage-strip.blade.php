@@ -9,7 +9,7 @@
     {{--
         URLs deben incluir EXACTAMENTE los mismos filtros que el KPI cuenta:
         - filtroRevisado=0 → bandeja muestra solo pendientes (KPI cuenta revisado=false)
-        - filtroConPersona=si es el default de la bandeja, no necesita explicitarse
+        - feed=primary → los riesgos cuentan el feed principal validado; la bandeja normal abre review
         - filtroLeido=0 → unread (PHP cast: '0' → false; 'no' o cualquier string es truthy)
     --}}
 
@@ -18,7 +18,7 @@
         :count="$triage->pendientes_alto"
         :sparkline="$triage->sparkline_alto"
         color="rose"
-        :href="route('pep.cambios') . '?filtroRiesgo=alto&filtroRevisado=0'"
+        :href="route('pep.cambios') . '?feed=primary&filtroRiesgo=alto&filtroRevisado=0'"
     />
 
     <x-dashboard.triage-card
@@ -26,7 +26,7 @@
         :count="$triage->pendientes_medio"
         :sparkline="$triage->sparkline_medio"
         color="amber"
-        :href="route('pep.cambios') . '?filtroRiesgo=medio&filtroRevisado=0'"
+        :href="route('pep.cambios') . '?feed=primary&filtroRiesgo=medio&filtroRevisado=0'"
     />
 
     <x-dashboard.triage-card
@@ -42,7 +42,7 @@
         :count="$triage->pendientes_bajo"
         :sparkline="$triage->sparkline_bajo"
         color="zinc"
-        :href="route('pep.cambios') . '?filtroRiesgo=bajo&filtroRevisado=0'"
+        :href="route('pep.cambios') . '?feed=primary&filtroRiesgo=bajo&filtroRevisado=0'"
     />
 
 </div>

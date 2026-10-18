@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Integration;
 
+use App\Enums\CambioFeedStatus;
 use App\Livewire\Pep\Cambios as CambiosComponent;
 use App\Livewire\Scraper\Resultados as ResultadosComponent;
 use App\Models\Cambio;
@@ -13,6 +14,8 @@ use App\Models\User;
 use App\Services\Dashboard\DashboardCacheManager;
 use App\Services\Dashboard\DashboardSummaryService;
 use Database\Seeders\RolesPermisosSeeder;
+use DOMDocument;
+use DOMXPath;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Livewire\Livewire;
@@ -56,11 +59,11 @@ class KpiBandejaConsistencyTest extends TestCase
         config(['dashboard.summary_cache_ttl' => 60]);
         config(['dashboard.hero_formula' => [
             'riesgo_alto_weight' => 3,
-            'es_mae_weight'      => 2,
-            'aging_divisor'      => 3,
+            'es_mae_weight' => 2,
+            'aging_divisor' => 3,
         ]]);
 
-        $this->service = new DashboardSummaryService(new DashboardCacheManager());
+        $this->service = new DashboardSummaryService(new DashboardCacheManager);
     }
 
     // =========================================================================
@@ -68,27 +71,90 @@ class KpiBandejaConsistencyTest extends TestCase
     // =========================================================================
 
     /**
-     * Create a Cambio with full control over risk level, revisado, and persona.
+     * Create a Cambio with full control over risk, review state, and feed admission.
      */
     private function makeCambioWithRiesgo(
         string $riesgo,
         bool $revisado,
-        ?string $personaNueva = 'Test Person',
+        bool $admitted = true,
     ): Cambio {
         return Cambio::factory()->create([
-            'fuente_id'            => $this->fuente->id,
-            'revisado'             => $revisado,
-            'gemini_analyzed'      => true,
-            'gemini_analisis_json' => array_filter([
-                'riesgo'       => $riesgo,
-                'persona_nueva' => $personaNueva,
-            ], fn ($v) => $v !== null),
+            'fuente_id' => $this->fuente->id,
+            'revisado' => $revisado,
+            'gemini_analyzed' => true,
+            'gemini_analisis_json' => ['riesgo' => $riesgo, 'persona_nueva' => 'Test Person'],
+            'feed_status' => $admitted ? CambioFeedStatus::Primary : CambioFeedStatus::Review,
+            'autoridades_eventos_json' => $admitted ? [
+                'version' => 1,
+                'events' => [[
+                    'type' => 'designacion',
+                    'old' => null,
+                    'new' => ['cargo' => 'Directora', 'persona' => 'Test Person'],
+                ]],
+            ] : null,
         ]);
+    }
+
+    /**
+     * Read the href emitted by the actual dashboard component, not a test-side URL.
+     *
+     * @return array<string, string>
+     */
+    private function riskCardParams(string $label, string $risk): array
+    {
+        $html = view('components.dashboard.triage-strip', [
+            'triage' => $this->service->getSnapshot()->triage,
+        ])->render();
+        $document = new DOMDocument;
+        $previous = libxml_use_internal_errors(true);
+        try {
+            $document->loadHTML($html);
+        } finally {
+            libxml_clear_errors();
+            libxml_use_internal_errors($previous);
+        }
+        $anchors = (new DOMXPath($document))->query('//a[span]');
+        $matches = [];
+
+        foreach ($anchors as $anchor) {
+            if (trim($anchor->getElementsByTagName('span')->item(0)->textContent) === $label) {
+                $matches[] = $anchor->getAttribute('href');
+            }
+        }
+
+        $this->assertCount(1, $matches, "Expected one rendered {$label} card link");
+        $this->assertSame(parse_url(route('pep.cambios'), PHP_URL_PATH), parse_url($matches[0], PHP_URL_PATH));
+        parse_str((string) parse_url($matches[0], PHP_URL_QUERY), $params);
+        ksort($params);
+        $this->assertSame([
+            'feed' => 'primary',
+            'filtroRevisado' => '0',
+            'filtroRiesgo' => $risk,
+        ], $params, "Rendered {$label} link must select the KPI's primary pending feed");
+
+        return $params;
+    }
+
+    public function test_rendered_risk_cards_link_to_primary_pending_cambios(): void
+    {
+        foreach (['Alto riesgo' => 'alto', 'Riesgo medio' => 'medio', 'Bajo riesgo' => 'bajo'] as $label => $risk) {
+            $this->riskCardParams($label, $risk);
+        }
+    }
+
+    public function test_ordinary_cambios_visit_still_defaults_to_review_feed(): void
+    {
+        $this->makeCambioWithRiesgo('alto', false);
+        $this->makeCambioWithRiesgo('alto', false, false);
+
+        $this->assertSame(1, Livewire::actingAs($this->admin)
+            ->test(CambiosComponent::class)
+            ->viewData('cambios')
+            ->total());
     }
 
     // =========================================================================
     // Test 1: Triage strip "Alto riesgo" KPI matches bandeja
-    // URL: /pep/cambios?filtroRiesgo=alto&filtroRevisado=0
     // =========================================================================
 
     public function test_alto_riesgo_kpi_matches_bandeja_count(): void
@@ -102,19 +168,15 @@ class KpiBandejaConsistencyTest extends TestCase
         $this->makeCambioWithRiesgo('alto', true);
         $this->makeCambioWithRiesgo('alto', true);
 
-        // 1 should NOT count: alto + pendiente pero sin persona
-        $this->makeCambioWithRiesgo('alto', false, null);
+        // 1 should NOT count: alto + pending but routed to review
+        $this->makeCambioWithRiesgo('alto', false, false);
 
         Cache::flush();
 
         $kpiCount = $this->service->getSnapshot()->triage->pendientes_alto;
 
         $bandejaCount = Livewire::actingAs($this->admin)
-            ->withQueryParams([
-                'filtroRiesgo'    => 'alto',
-                'filtroRevisado'  => '0',
-                // filtroConPersona='si' is the default — no need to pass
-            ])
+            ->withQueryParams($this->riskCardParams('Alto riesgo', 'alto'))
             ->test(CambiosComponent::class)
             ->viewData('cambios')
             ->total();
@@ -126,7 +188,6 @@ class KpiBandejaConsistencyTest extends TestCase
 
     // =========================================================================
     // Test 2: Triage strip "Riesgo medio" KPI matches bandeja
-    // URL: /pep/cambios?filtroRiesgo=medio&filtroRevisado=0
     // =========================================================================
 
     public function test_medio_riesgo_kpi_matches_bandeja_count(): void
@@ -144,18 +205,15 @@ class KpiBandejaConsistencyTest extends TestCase
         $this->makeCambioWithRiesgo('alto', false);
         $this->makeCambioWithRiesgo('bajo', false);
 
-        // 1 should NOT count: medio + pendiente pero sin persona
-        $this->makeCambioWithRiesgo('medio', false, null);
+        // 1 should NOT count: medio + pending but routed to review
+        $this->makeCambioWithRiesgo('medio', false, false);
 
         Cache::flush();
 
         $kpiCount = $this->service->getSnapshot()->triage->pendientes_medio;
 
         $bandejaCount = Livewire::actingAs($this->admin)
-            ->withQueryParams([
-                'filtroRiesgo'   => 'medio',
-                'filtroRevisado' => '0',
-            ])
+            ->withQueryParams($this->riskCardParams('Riesgo medio', 'medio'))
             ->test(CambiosComponent::class)
             ->viewData('cambios')
             ->total();
@@ -167,7 +225,6 @@ class KpiBandejaConsistencyTest extends TestCase
 
     // =========================================================================
     // Test 3: Triage strip "Bajo riesgo" KPI matches bandeja
-    // URL: /pep/cambios?filtroRiesgo=bajo&filtroRevisado=0
     // =========================================================================
 
     public function test_bajo_riesgo_kpi_matches_bandeja_count(): void
@@ -179,8 +236,8 @@ class KpiBandejaConsistencyTest extends TestCase
         // 1 should NOT count: bajo pero revisado
         $this->makeCambioWithRiesgo('bajo', true);
 
-        // 1 should NOT count: bajo + pendiente pero sin persona
-        $this->makeCambioWithRiesgo('bajo', false, null);
+        // 1 should NOT count: bajo + pending but routed to review
+        $this->makeCambioWithRiesgo('bajo', false, false);
 
         // These cambios must NOT bleed into bajo count
         $this->makeCambioWithRiesgo('alto', false);
@@ -191,10 +248,7 @@ class KpiBandejaConsistencyTest extends TestCase
         $kpiCount = $this->service->getSnapshot()->triage->pendientes_bajo;
 
         $bandejaCount = Livewire::actingAs($this->admin)
-            ->withQueryParams([
-                'filtroRiesgo'   => 'bajo',
-                'filtroRevisado' => '0',
-            ])
+            ->withQueryParams($this->riskCardParams('Bajo riesgo', 'bajo'))
             ->test(CambiosComponent::class)
             ->viewData('cambios')
             ->total();
@@ -219,49 +273,49 @@ class KpiBandejaConsistencyTest extends TestCase
     {
         // 3 should count: leido=false, descartado=false, no archivado, analyzed=true
         ResultadoScraping::factory()->count(3)->create([
-            'leido'           => false,
-            'descartado'      => false,
-            'archivado_at'    => null,
+            'leido' => false,
+            'descartado' => false,
+            'archivado_at' => null,
             'gemini_analyzed' => true,
-            'secundario_de'   => null,
+            'secundario_de' => null,
         ]);
 
         // 2 should NOT count: leido=false pero descartado=true
         // KPI excludes (descartado filter), bandeja default excludes (filtroDescartado='0')
         ResultadoScraping::factory()->count(2)->create([
-            'leido'           => false,
-            'descartado'      => true,
-            'archivado_at'    => null,
+            'leido' => false,
+            'descartado' => true,
+            'archivado_at' => null,
             'gemini_analyzed' => true,
-            'secundario_de'   => null,
+            'secundario_de' => null,
         ]);
 
         // 1 should NOT count: leido=false pero archivado
         // KPI excludes (noArchivado), bandeja default excludes (filtroArchivado='0')
         ResultadoScraping::factory()->create([
-            'leido'           => false,
-            'descartado'      => false,
-            'archivado_at'    => now()->subHour(),
+            'leido' => false,
+            'descartado' => false,
+            'archivado_at' => now()->subHour(),
             'gemini_analyzed' => true,
-            'secundario_de'   => null,
+            'secundario_de' => null,
         ]);
 
         // 2 should NOT count: ya leidos
         ResultadoScraping::factory()->count(2)->create([
-            'leido'           => true,
-            'descartado'      => false,
-            'archivado_at'    => null,
+            'leido' => true,
+            'descartado' => false,
+            'archivado_at' => null,
             'gemini_analyzed' => true,
-            'secundario_de'   => null,
+            'secundario_de' => null,
         ]);
 
         // 2 should NOT count: unanalyzed (gemini_analyzed=false)
         // KPI must exclude (new filter), bandeja default excludes (filtroGemini='')
         ResultadoScraping::factory()->count(2)->sinAnalizar()->create([
-            'leido'           => false,
-            'descartado'      => false,
-            'archivado_at'    => null,
-            'secundario_de'   => null,
+            'leido' => false,
+            'descartado' => false,
+            'archivado_at' => null,
+            'secundario_de' => null,
         ]);
 
         // 2 should NOT count: secondary articles (secundario_de IS NOT NULL)
@@ -269,18 +323,18 @@ class KpiBandejaConsistencyTest extends TestCase
         // Create a real primary first to satisfy the Postgres FK constraint.
         // This primary IS valid and counts toward the KPI (+1 to expected count).
         $primaryForFk = ResultadoScraping::factory()->create([
-            'leido'           => false,
-            'descartado'      => false,
-            'archivado_at'    => null,
+            'leido' => false,
+            'descartado' => false,
+            'archivado_at' => null,
             'gemini_analyzed' => true,
-            'secundario_de'   => null,
+            'secundario_de' => null,
         ]);
         ResultadoScraping::factory()->count(2)->create([
-            'leido'           => false,
-            'descartado'      => false,
-            'archivado_at'    => null,
+            'leido' => false,
+            'descartado' => false,
+            'archivado_at' => null,
             'gemini_analyzed' => true,
-            'secundario_de'   => $primaryForFk->id,
+            'secundario_de' => $primaryForFk->id,
         ]);
 
         Cache::flush();
@@ -334,12 +388,12 @@ class KpiBandejaConsistencyTest extends TestCase
 
         $kpiCount = $this->service->getSnapshot()->triage->pendientes_alto; // = 5
 
-        // Simulate the bug: forget filtroRevisado=0 → bandeja includes revisados too
+        // Simulate the bug using the actual link, but omit only filtroRevisado=0.
+        // Keep feed=primary so this guard isolates the review filter, not feed admission.
+        $params = $this->riskCardParams('Alto riesgo', 'alto');
+        unset($params['filtroRevisado']);
         $bandejaWithoutFilter = Livewire::actingAs($this->admin)
-            ->withQueryParams([
-                'filtroRiesgo' => 'alto',
-                // MISSING filtroRevisado=0 → shows pending + revisados = 8
-            ])
+            ->withQueryParams($params)
             ->test(CambiosComponent::class)
             ->viewData('cambios')
             ->total();

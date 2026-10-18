@@ -11,6 +11,8 @@ import os
 from unittest.mock import MagicMock, patch, call
 from typing import Optional
 
+import pytest
+
 # Aseguramos que pep_monitor sea importable desde cualquier CWD
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -20,6 +22,14 @@ from pep_monitor import extraer_imagenes_html, comparar_imagenes_cascada
 # ════════════════════════════════════════════════════════════════
 # HELPERS
 # ════════════════════════════════════════════════════════════════
+
+@pytest.fixture(autouse=True)
+def _public_dns():
+    with patch(
+        "socket.getaddrinfo",
+        return_value=[(2, 1, 6, "", ("93.184.216.34", 443))],
+    ):
+        yield
 
 def _make_imagen_snapshot(
     src: str,
@@ -61,6 +71,8 @@ def _make_session_mock(
     get_resp = MagicMock()
     get_resp.status_code = get_status
     get_resp.content = get_content
+    get_resp.headers = {}
+    get_resp.iter_content.return_value = [get_content]
     session.get.return_value = get_resp
 
     return session
@@ -215,8 +227,10 @@ class TestCascadaNivel1:
         session.head.assert_called_once_with(
             "https://site.com/foto.png",
             timeout=15,
-            allow_redirects=True,
+            allow_redirects=False,
             verify=True,
+            headers={},
+            data=None,
         )
 
 

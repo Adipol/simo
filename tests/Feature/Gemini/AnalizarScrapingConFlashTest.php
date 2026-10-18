@@ -19,12 +19,19 @@ class AnalizarScrapingConFlashTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config(['services.dedupe.enabled' => false]);
+    }
+
     private function createRecord(array $overrides = []): ResultadoScraping
     {
         ResultadoScraping::flushEventListeners();
 
         return ResultadoScraping::create(array_merge([
-            'url' => 'https://example.com/article-' . uniqid(),
+            'url' => 'https://example.com/article-'.uniqid(),
             'keyword' => 'corrupcion',
             'pais' => 'BO',
             'categoria' => 'politica',
@@ -201,6 +208,32 @@ class AnalizarScrapingConFlashTest extends TestCase
 
         // No HTTP calls should have been made
         Http::assertNothingSent();
+    }
+
+    public function test_secondary_rows_do_not_trigger_http_or_self_dispatch(): void
+    {
+        config([
+            'services.dedupe.enabled' => true,
+            'services.gemini.enabled' => true,
+        ]);
+
+        $primary = $this->createRecord([
+            'gemini_analyzed' => true,
+            'dedupe_processed_at' => now(),
+        ]);
+        $secondary = $this->createRecord([
+            'secundario_de' => $primary->id,
+            'dedupe_processed_at' => now(),
+        ]);
+
+        Http::fake();
+        Queue::fake();
+
+        (new AnalizarScrapingConFlash)->handle();
+
+        Http::assertNothingSent();
+        Queue::assertNotPushed(AnalizarScrapingConFlash::class);
+        $this->assertFalse($secondary->refresh()->gemini_analyzed);
     }
 
     public function test_disabled_returns_early_without_processing(): void

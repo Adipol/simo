@@ -17,12 +17,19 @@ class AnalizarGeminiCommandTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config(['services.dedupe.enabled' => false]);
+    }
+
     private function createResultadoScraping(array $overrides = []): ResultadoScraping
     {
         ResultadoScraping::flushEventListeners();
 
         return ResultadoScraping::create(array_merge([
-            'url' => 'https://example.com/article-' . uniqid(),
+            'url' => 'https://example.com/article-'.uniqid(),
             'keyword' => 'corrupcion',
             'pais' => 'BO',
             'categoria' => 'politica',
@@ -146,6 +153,29 @@ class AnalizarGeminiCommandTest extends TestCase
             ->expectsOutputToContain('Flash: 3 pendientes')
             ->expectsOutputToContain('Pro: 1 pendientes')
             ->assertExitCode(0);
+    }
+
+    public function test_flash_count_uses_dedupe_eligibility_when_enabled(): void
+    {
+        config([
+            'services.dedupe.enabled' => true,
+            'services.gemini.enabled' => true,
+        ]);
+
+        $primary = $this->createResultadoScraping(['dedupe_processed_at' => now()]);
+        $this->createResultadoScraping();
+        $this->createResultadoScraping([
+            'dedupe_processed_at' => now(),
+            'secundario_de' => $primary->id,
+        ]);
+
+        Queue::fake();
+
+        $this->artisan('simo:analizar-gemini --flash-only')
+            ->expectsOutputToContain('Flash: 1 pendientes')
+            ->assertExitCode(0);
+
+        Queue::assertPushed(AnalizarScrapingConFlash::class, 1);
     }
 
     public function test_no_pending_shows_zero_counts(): void

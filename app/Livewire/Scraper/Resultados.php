@@ -62,6 +62,13 @@ class Resultados extends Component
 
     public string $direccion = 'desc';
 
+    public function mount(): void
+    {
+        if ($this->filtroDescartado === '1') {
+            $this->clearFiltersExcludedFromDiscardedView();
+        }
+    }
+
     // ─── Updating hooks ────────────────────────────────────────────────────────
 
     public function updatingBusqueda(): void
@@ -89,9 +96,15 @@ class Resultados extends Component
         $this->resetPage();
     }
 
-    public function updatingFiltroDescartado(): void
+    public function updatingFiltroDescartado(string $value): void
     {
         $this->resetPage();
+
+        if ($value === '1') {
+            $this->clearFiltersExcludedFromDiscardedView();
+        } elseif ($this->filtroDescartado === '1') {
+            $this->filtroArchivado = '0';
+        }
     }
 
     public function updatingFiltroArchivado(): void
@@ -118,20 +131,46 @@ class Resultados extends Component
 
     public function marcarRelevante(int $id, bool $valor): void
     {
-        ResultadoScraping::where('id', $id)->update(['relevante' => $valor]);
+        ResultadoScraping::where('id', $id)->update(
+            $valor
+                ? ['relevante' => true, 'descartado' => false]
+                : ['relevante' => false]
+        );
     }
 
     public function descartar(int $id): void
     {
         ResultadoScraping::where('id', $id)->update([
             'descartado' => true,
-            'leido' => true, // marcar leido tambien
+            'relevante' => false,
+            'leido' => true,
         ]);
     }
 
     public function restaurar(int $id): void
     {
-        ResultadoScraping::where('id', $id)->update(['descartado' => false]);
+        $resultado = ResultadoScraping::findOrFail($id);
+        $resultado->update(['descartado' => false]);
+
+        $motivosOcultos = [];
+
+        if ($resultado->archivado_at !== null) {
+            $motivosOcultos[] = 'permanece archivado';
+        }
+
+        if (! $resultado->gemini_analyzed) {
+            $motivosOcultos[] = 'está pendiente de análisis';
+        }
+
+        if ($resultado->secundario_de !== null) {
+            $motivosOcultos[] = 'es un resultado secundario';
+        }
+
+        $mensaje = $motivosOcultos === []
+            ? 'Artículo restaurado y disponible en resultados activos.'
+            : 'Artículo restaurado, pero no aparece en resultados activos porque '.implode(', ', $motivosOcultos).'.';
+
+        $this->dispatch('notify', mensaje: $mensaje, tipo: 'success');
     }
 
     public function archivar(int $id): void
@@ -182,6 +221,12 @@ class Resultados extends Component
             ordenar: $ordenar,
             direccion: $direccion,
         );
+    }
+
+    private function clearFiltersExcludedFromDiscardedView(): void
+    {
+        $this->filtroArchivado = '';
+        $this->filtroGemini = '';
     }
 
     // ─── Computed ─────────────────────────────────────────────────────────────

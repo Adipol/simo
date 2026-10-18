@@ -4,16 +4,18 @@ declare(strict_types=1);
 
 namespace App\Providers;
 
-use App\Models\CargoPep;
+use App\Contracts\HostResolver;
 use App\Models\Cambio;
+use App\Models\CargoPep;
 use App\Models\ResultadoScraping;
-use App\Observers\CargoPepObserver;
 use App\Observers\CambioObserver;
+use App\Observers\CargoPepObserver;
 use App\Observers\ResultadoScrapingObserver;
 use App\Services\Contracts\NegativeExamplesProvider;
 use App\Services\DescartadosAnalisisService;
 use App\Services\Gemini\GeminiPromptBuilder;
 use App\Services\Gemini\PepCatalogService;
+use App\Services\Scraper\SystemHostResolver;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -24,6 +26,8 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(PepCatalogService::class);
+
+        $this->app->bind(HostResolver::class, SystemHostResolver::class);
 
         $this->app->singleton(NegativeExamplesProvider::class, DescartadosAnalisisService::class);
 

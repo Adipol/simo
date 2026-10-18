@@ -5,7 +5,7 @@
         <select wire:model.live="filtroFuente" class="simo-select flex-1 max-w-xs">
             <option value="">Todas las fuentes</option>
             @foreach($fuentes as $f)
-                <option value="{{ $f->id }}">{{ $f->nombre ?? $f->organismo ?? 'Fuente #'.$f->id }}</option>
+                <option wire:key="fuente-filter-{{ $f->id }}" value="{{ $f->id }}">{{ $f->nombre ?? $f->organismo ?? 'Fuente #'.$f->id }}</option>
             @endforeach
         </select>
         <select wire:model.live="filtroRevisado" class="simo-select">
@@ -13,10 +13,15 @@
             <option value="0">Sin revisar</option>
             <option value="1">Revisados</option>
         </select>
+        <select wire:model.live="feed" class="simo-select">
+            <option value="primary">Feed principal validado</option>
+            <option value="review">Pendientes de revisión (vista inicial)</option>
+            <option value="all">Todos los cambios registrados</option>
+        </select>
         <select wire:model.live="filtroConPersona" class="simo-select">
+            <option value="">Todas las personas</option>
             <option value="si">Con persona detectada</option>
             <option value="no">Sin persona detectada</option>
-            <option value="">Todos los registros</option>
         </select>
         <select wire:model.live="filtroRiesgo" class="simo-select">
             <option value="">Todos los riesgos</option>
@@ -24,18 +29,36 @@
             <option value="medio">Riesgo medio</option>
             <option value="bajo">Riesgo bajo</option>
         </select>
+        @can('gestionar resultados')
+            <a href="{{ route('pep.cambios.diagnostic-export') }}"
+               class="simo-btn bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 ml-auto"
+               data-testid="cambios-diagnostic-export">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 7H7a2 2 0 01-2-2V6a2 2 0 012-2h5l5 5v9a2 2 0 01-2 2z"/>
+                </svg>
+                Descargar muestra diagnóstica
+            </a>
+        @endcan
     </div>
 
     {{-- Banner contextual --}}
-    @if($filtroConPersona === 'si')
+    @if($feed === 'primary')
         <div class="flex items-center gap-3 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm text-indigo-700">
             <svg class="h-4 w-4 shrink-0 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
             </svg>
-            <span>Mostrando solo cambios con personas detectadas por Gemini.</span>
-            <button wire:click="$set('filtroConPersona', '')" class="ml-auto text-xs font-medium text-indigo-600 hover:text-indigo-800 hover:underline">
-                Ver todos
+            <span>Feed principal: solo eventos de autoridades validados y estructurados.</span>
+            <button wire:click="$set('feed', 'review')" class="ml-auto text-xs font-medium text-indigo-600 hover:text-indigo-800 hover:underline">
+                Ver pendientes de revisión
             </button>
+        </div>
+    @elseif($feed === 'review')
+        <div class="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-700">
+            <span>Vista inicial: cambios amplios o inciertos pendientes de revisión; no forman parte del feed principal.</span>
+        </div>
+    @elseif($feed === 'all')
+        <div class="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-600">
+            <span>Vista de auditoría con todos los cambios registrados, incluida la evidencia histórica.</span>
         </div>
     @endif
 
@@ -64,6 +87,9 @@
                                     {{ count($c->posiblesPepsArray()) }} posibles PEPs
                                 </span>
                             @endif
+                            @if(!empty($c->autoridades_eventos_json['events'] ?? []))
+                                <span class="simo-badge bg-indigo-50 text-indigo-700">{{ count($c->autoridades_eventos_json['events']) }} cambio{{ count($c->autoridades_eventos_json['events']) > 1 ? 's' : '' }} estructurado{{ count($c->autoridades_eventos_json['events']) > 1 ? 's' : '' }}</span>
+                            @endif
                             {{-- MAE Badge if Gemini detected it --}}
                             @if(($c->gemini_analisis_json['es_mae'] ?? false))
                                 <span class="simo-badge bg-red-100 text-red-700 border-red-200">MAE</span>
@@ -76,10 +102,12 @@
                             {{ $verDiffId === $c->id ? 'Ocultar' : 'Ver diff' }}
                         </button>
                         @if(!$c->revisado)
-                            <button wire:click="marcarRevisado({{ $c->id }})"
-                                class="simo-btn-primary">
-                                Marcar revisado
-                            </button>
+                            @can('marcar revisado pep')
+                                <button wire:click="marcarRevisado({{ $c->id }})"
+                                    class="simo-btn-primary">
+                                    Marcar revisado
+                                </button>
+                            @endcan
                         @else
                             <span class="simo-badge bg-emerald-50 text-emerald-600">Revisado</span>
                         @endif
@@ -95,6 +123,21 @@
                                 <div class="flex flex-wrap gap-1.5">
                                     @foreach($this->cambioDetalle->posiblesPepsArray() as $pep)
                                         <span class="simo-badge bg-violet-100 text-violet-800">{{ $pep }}</span>
+                                    @endforeach
+                                </div>
+                            </div>
+                        @endif
+                        @if(!empty($this->cambioDetalle->autoridades_eventos_json['events'] ?? []))
+                            <div class="px-5 py-3 bg-indigo-50/60 border-b border-indigo-100">
+                                <p class="text-xs font-semibold text-indigo-700 mb-2">Cambios estructurados de autoridades</p>
+                                <div class="space-y-2 text-xs">
+                                    @foreach($this->cambioDetalle->autoridades_eventos_json['events'] as $event)
+                                        <div wire:key="authority-event-{{ $this->cambioDetalle->id }}-{{ $loop->index }}" class="rounded bg-white px-3 py-2 border border-indigo-100">
+                                            <span class="font-semibold text-indigo-700">{{ str_replace('_', ' ', $event['type'] ?? 'cambio') }}</span>
+                                            @if($event['old'] ?? null)<span class="text-rose-700"> {{ $event['old']['cargo'] }}: {{ $event['old']['persona'] }}</span>@endif
+                                            @if(($event['old'] ?? null) && ($event['new'] ?? null))<span class="text-gray-400"> → </span>@endif
+                                            @if($event['new'] ?? null)<span class="text-emerald-700">{{ $event['new']['cargo'] }}: {{ $event['new']['persona'] }}</span>@endif
+                                        </div>
                                     @endforeach
                                 </div>
                             </div>
@@ -133,7 +176,7 @@
                                         </p>
                                         <div class="space-y-1.5">
                                             @foreach($analisis['personas_detectadas'] as $persona)
-                                                <div class="flex items-baseline gap-2 text-xs" wire:key="persona-{{ $loop->index }}">
+                                                <div class="flex items-baseline gap-2 text-xs" wire:key="persona-{{ $this->cambioDetalle->id }}-{{ $loop->index }}">
                                                     <span class="font-medium text-gray-800">{{ $persona['nombre'] ?? '—' }}</span>
                                                     @if($persona['cargo'] ?? null)
                                                         <span class="text-gray-400">·</span>
@@ -156,17 +199,17 @@
                                     <tbody>
                                         @foreach($this->cambioDetalle->parsedDiff() as $line)
                                             @if($line['type'] === 'added')
-                                                <tr wire:key="diff-{{ $loop->index }}" class="bg-emerald-50">
+                                                 <tr wire:key="diff-{{ $this->cambioDetalle->id }}-{{ $loop->index }}" class="bg-emerald-50">
                                                     <td class="pl-4 pr-2 text-emerald-500 select-none w-5">+</td>
                                                     <td class="pr-5 py-0.5 text-emerald-800 whitespace-pre-wrap break-all">{{ $line['text'] }}</td>
                                                 </tr>
                                             @elseif($line['type'] === 'removed')
-                                                <tr wire:key="diff-{{ $loop->index }}" class="bg-rose-50">
+                                                 <tr wire:key="diff-{{ $this->cambioDetalle->id }}-{{ $loop->index }}" class="bg-rose-50">
                                                     <td class="pl-4 pr-2 text-rose-400 select-none w-5">-</td>
                                                     <td class="pr-5 py-0.5 text-rose-700 whitespace-pre-wrap break-all line-through opacity-60">{{ $line['text'] }}</td>
                                                 </tr>
                                             @else
-                                                <tr wire:key="diff-{{ $loop->index }}">
+                                                 <tr wire:key="diff-{{ $this->cambioDetalle->id }}-{{ $loop->index }}">
                                                     <td class="pl-4 pr-2 text-gray-200 select-none w-5"> </td>
                                                     <td class="pr-5 py-0.5 text-gray-500 whitespace-pre-wrap break-all">{{ $line['text'] }}</td>
                                                 </tr>
@@ -183,7 +226,7 @@
             </div>
         @empty
             <div class="simo-card py-12 text-center text-sm text-gray-400">
-                Sin cambios registrados.
+                Sin cambios en esta vista.
             </div>
         @endforelse
     </div>

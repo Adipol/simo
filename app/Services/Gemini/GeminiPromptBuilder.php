@@ -339,13 +339,19 @@ NEGATIVES;
     /**
      * Build a prompt for Gemini Pro to analyze a government source change.
      */
-    public function analisisCambio(string $diff, string $fuente, string $organismo): string
+    /**
+     * @param  array{version?:int,events?:array<int,array{type:string,old:?array{cargo:string,persona:string},new:?array{cargo:string,persona:string}}> }|null  $autoridadesEventos
+     */
+    public function analisisCambio(string $diff, string $fuente, string $organismo, ?array $autoridadesEventos = null): string
     {
         $truncatedDiff = $this->truncarDiff($diff);
+        $contextoAutoridades = $this->contextoAutoridades($autoridadesEventos);
 
         return <<<PROMPT
 Sos un experto en gobierno corporativo y análisis de cambios en organismos públicos de Latinoamérica.
 Analizá el siguiente diff de {$organismo} (fuente: {$fuente}) para detectar cambio de autoridades.
+
+{$contextoAutoridades}
 
 📋 DOS RESPONSABILIDADES DISTINTAS:
 
@@ -354,30 +360,33 @@ A) `personas_detectadas`: array con TODAS las personas cuyo nombre aparece escri
 B) `persona_nueva` y `persona_removida` (campos string, no array): SOLO si hay cambio explícito. Reportá ÚNICAMENTE el más relevante de cada lado:
    - Si hay UNA línea con `+` mostrando alguien nuevo → persona_nueva = ese nombre
    - Si hay UNA o varias líneas con `-` mostrando salidas → persona_removida = el nombre del cargo más alto/MAE
-   - Si hay múltiples remociones, en `persona_removida` poné la principal (mayor jerarquía) y el resto se lista en `personas_detectadas`
+    - Si hay múltiples remociones, en `persona_removida` poné la principal (mayor jerarquía) y el resto se lista en `personas_detectadas`
+
+PRECEDENCIA DE HECHOS ESTRUCTURADOS: Si se proveyeron HECHOS ESTRUCTURADOS CONFIABLES, sus nombres, cargos y tipo de evento son evidencia literal. Podés copiar esos campos al resultado aunque el diff no tenga nombres ni líneas +/-. No infieras ni completes campos fuera de esos hechos.
 
 PASO 0 — FILTRO DE NOMBRES:
 Antes de cualquier análisis, revisá las líneas que empiezan con + o -.
 ¿Aparece algún NOMBRE PROPIO DE PERSONA HUMANA **escrito como texto** (nombre y apellido, o título + apellido)?
-- Si NO aparece ningún nombre de persona → respondé inmediatamente:
+- Si NO aparece ningún nombre de persona Y no hay HECHOS ESTRUCTURADOS CONFIABLES → respondé inmediatamente:
   {"persona_removida":null,"persona_nueva":null,"cargo":null,"es_mae":false,"riesgo":"bajo","analisis":"No se detectaron nombres de personas en el diff.","personas_detectadas":[]}
 - Si SÍ aparece al menos un nombre → continuá con los pasos siguientes y llená `personas_detectadas` con TODOS.
 
 REGLA DE NULIDAD: persona_removida y persona_nueva DEBEN ser null salvo que copies textualmente
-un nombre propio de persona humana del diff (no institución, no sigla, no documento, no cargo genérico).
+un nombre propio de persona humana del diff o de los HECHOS ESTRUCTURADOS CONFIABLES (no institución, no sigla, no documento, no cargo genérico).
 NUNCA inventes ni infieras nombres que no estén escritos.
 
 REGLA CRÍTICA: Solo reportá cambios de PERSONAS en cargos públicos.
 Si el diff solo contiene cambios de documentos, resoluciones, decretos, números de expediente,
 fechas de publicación, títulos de eventos o textos administrativos SIN mencionar personas
-que entran o salen de un cargo, respondé con es_mae=false, riesgo="bajo", personas_detectadas=[]
-y explicá en el análisis que no se detectaron cambios de personal.
+que entran o salen de un cargo Y no hay HECHOS ESTRUCTURADOS CONFIABLES, respondé con
+es_mae=false, riesgo="bajo", personas_detectadas=[] y explicá en el análisis que no se
+detectaron cambios de personal.
 
 PASOS:
-1. Determiná si el diff contiene cambios de PERSONAS (nombres propios que entran/salen de cargos)
-2. Si NO hay personas → responder con riesgo bajo, sin personas, personas_detectadas=[]
-3. Si SÍ hay personas:
-   a. Llená `personas_detectadas` con TODOS los nombres escritos en el diff (cada uno con su cargo si está visible)
+1. Determiná si el diff o los HECHOS ESTRUCTURADOS CONFIABLES contienen cambios de PERSONAS (nombres propios que entran/salen de cargos)
+2. Si NO hay personas en el diff Y no hay HECHOS ESTRUCTURADOS CONFIABLES → responder con riesgo bajo, sin personas, personas_detectadas=[]
+3. Si SÍ hay personas en el diff o en los HECHOS ESTRUCTURADOS CONFIABLES:
+   a. Llená `personas_detectadas` con TODOS los nombres escritos en esas fuentes literales (cada uno con su cargo si está visible)
    b. Identificá la persona removida más relevante (líneas que empiezan con -) → `persona_removida`
    c. Identificá la persona nueva más relevante (líneas que empiezan con +) → `persona_nueva`
    d. Determiná si el cargo es MAE (Máxima Autoridad Ejecutiva: ministro, secretario ejecutivo, director general)
@@ -419,23 +428,27 @@ PROMPT;
         string $fuente,
         string $organismo,
         int $cantidadImagenes,
+        ?array $autoridadesEventos = null,
     ): string {
         $truncatedDiff = $this->truncarDiff($diff);
         $imagenLabel = $cantidadImagenes === 1 ? 'imagen' : 'imágenes';
+        $contextoAutoridades = $this->contextoAutoridades($autoridadesEventos);
 
         return <<<PROMPT
 Junto a este diff de texto, te adjunto {$cantidadImagenes} {$imagenLabel} que aparecieron o cambiaron en la página de {$organismo} (fuente: {$fuente}). Estas imágenes pueden contener nóminas de autoridades, organigramas, o resoluciones que el extractor de texto no capturó. Analizá AMBOS: el diff de texto Y el contenido visual de las imágenes.
 
 ⚠️ REGLA CRÍTICA ANTI-ALUCINACIÓN — leé esto ANTES de responder:
 
-1. SOLO podés reportar un nombre si aparece **LITERALMENTE ESCRITO** en el diff O **LITERALMENTE ESCRITO COMO TEXTO DENTRO DE UNA IMAGEN** (ej: tabla con columnas "PUESTO / FUNCIONARIO" donde el funcionario está escrito al lado).
-2. Si las imágenes son **fotos de retrato** (caras de personas) SIN texto identificativo escrito al lado o debajo, NO podés inferir nombres. Devolvé arrays/campos vacíos.
+1. SOLO podés reportar un nombre si aparece **LITERALMENTE ESCRITO** en el diff, **LITERALMENTE ESCRITO COMO TEXTO DENTRO DE UNA IMAGEN** (ej: tabla con columnas "PUESTO / FUNCIONARIO" donde el funcionario está escrito al lado), o en los HECHOS ESTRUCTURADOS CONFIABLES.
+2. Si las imágenes son **fotos de retrato** (caras de personas) SIN texto identificativo escrito al lado o debajo Y no hay HECHOS ESTRUCTURADOS CONFIABLES, NO podés inferir nombres. Devolvé arrays/campos vacíos.
 3. NUNCA fabriques, inventes, ni "completes" nombres a partir de patrones, contexto, o suposiciones. Si no podés copiar el nombre letra por letra de lo que tenés delante, NO lo reportes.
 4. Logos institucionales, banners, decoraciones gráficas → NO contienen información de personas.
 5. Si dudás de si un nombre es real o inferido, omitilo. Es preferible un falso negativo que un falso positivo.
 
 Sos un experto en gobierno corporativo y análisis de cambios en organismos públicos de Latinoamérica.
 Analizá el siguiente diff de {$organismo} (fuente: {$fuente}).
+
+{$contextoAutoridades}
 
 📋 DOS RESPONSABILIDADES DISTINTAS:
 
@@ -444,29 +457,31 @@ A) `personas_detectadas`: array con TODAS las personas cuyo nombre aparece escri
 B) `persona_nueva` y `persona_removida`: SOLO si tenés evidencia explícita de un cambio. Reportar solo cuando:
    - El diff tiene una línea con `+` mostrando alguien que se incorpora → persona_nueva
    - El diff tiene una línea con `-` mostrando alguien que sale → persona_removida
-   - El texto explícito ("designado", "asume", "renuncia", "reemplazado por") confirma el cambio
+    - El texto explícito ("designado", "asume", "renuncia", "reemplazado por") confirma el cambio
+    - Los HECHOS ESTRUCTURADOS CONFIABLES reportan literalmente el evento
    Si solo tenés una imagen sin referencia comparable previa, dejá AMBOS en null. NO infieras cambios desde una sola foto.
 
 PASO 0 — FILTRO INICIAL:
 Antes de cualquier análisis, revisá el diff y el contenido visual de las imágenes.
 ¿Aparece algún NOMBRE PROPIO DE PERSONA HUMANA **escrito como texto** (nombre y apellido, o título + apellido)?
-- Si NO aparece ningún nombre escrito → respondé inmediatamente:
+- Si NO aparece ningún nombre escrito Y no hay HECHOS ESTRUCTURADOS CONFIABLES → respondé inmediatamente:
   {"persona_removida":null,"persona_nueva":null,"cargo":null,"es_mae":false,"riesgo":"bajo","analisis":"No se detectaron nombres escritos de personas en el diff ni en las imágenes.","personas_detectadas":[]}
 - Si SÍ aparece al menos un nombre escrito → continuá con los pasos siguientes y llená `personas_detectadas` con todas las personas que veas escritas.
 
 REGLA DE NULIDAD: persona_removida y persona_nueva DEBEN ser null salvo que copies textualmente
-un nombre propio de persona humana del material adjunto Y tengas evidencia explícita de cambio (no solo presencia).
+un nombre propio de persona humana del material adjunto o de los HECHOS ESTRUCTURADOS CONFIABLES Y tengas evidencia explícita de cambio (no solo presencia).
 
 REGLA CRÍTICA: Solo reportá cambios de PERSONAS en cargos públicos.
 Si el diff solo contiene cambios de documentos, resoluciones, decretos, números de expediente,
 fechas de publicación, títulos de eventos o textos administrativos SIN mencionar personas
-que entran o salen de un cargo, respondé con es_mae=false, riesgo="bajo" y explicá en el
-análisis que no se detectaron cambios de personal.
+que entran o salen de un cargo, las imágenes tampoco tienen nombres escritos Y no hay HECHOS
+ESTRUCTURADOS CONFIABLES, respondé con es_mae=false, riesgo="bajo" y explicá en el análisis
+que no se detectaron cambios de personal.
 
 PASOS:
-1. Determiná si el diff Y las imágenes contienen cambios de PERSONAS (nombres propios que entran/salen de cargos)
-2. Si NO hay personas → responder con riesgo bajo y sin personas
-3. Si SÍ hay personas:
+1. Determiná si el diff, las imágenes o los HECHOS ESTRUCTURADOS CONFIABLES contienen cambios de PERSONAS (nombres propios que entran/salen de cargos)
+2. Si NO hay personas escritas en el diff ni en las imágenes Y no hay HECHOS ESTRUCTURADOS CONFIABLES → responder con riesgo bajo y sin personas
+3. Si SÍ hay personas escritas en el diff, las imágenes o los HECHOS ESTRUCTURADOS CONFIABLES:
    a. Identificá personas removidas (líneas que empiezan con - en el diff, o personas ausentes en las imágenes)
    b. Identificá personas nuevas (líneas que empiezan con + en el diff, o personas nuevas en las imágenes)
    c. Determiná si el cargo es MAE (Máxima Autoridad Ejecutiva: ministro, secretario ejecutivo, director general)
@@ -537,5 +552,25 @@ PROMPT;
         }
 
         return $result;
+    }
+
+    /**
+     * @param  array{version?:int,events?:array<int,array{type:string,old:?array{cargo:string,persona:string},new:?array{cargo:string,persona:string}}> }|null  $autoridadesEventos
+     */
+    private function contextoAutoridades(?array $autoridadesEventos): string
+    {
+        $events = $autoridadesEventos['events'] ?? [];
+
+        if (! is_array($events) || $events === []) {
+            return '';
+        }
+
+        $json = json_encode(['version' => 1, 'events' => $events], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        return "HECHOS ESTRUCTURADOS CONFIABLES:\n"
+            ."El extractor determinístico comparó bloques de cargo/persona de la fuente. "
+            ."Usá estos hechos como evidencia literal adicional aunque el diff los separe o no muestre cambios. "
+            ."No agregues personas, cargos ni eventos fuera de este JSON y del material visible.\n"
+            .($json === false ? '' : $json)."\n";
     }
 }

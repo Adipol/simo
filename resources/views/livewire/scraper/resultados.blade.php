@@ -49,13 +49,15 @@
                 <option value="">Todos</option>
             </select>
 
-            <select wire:model.live="filtroArchivado" class="simo-select">
+            <select wire:model.live="filtroArchivado" class="simo-select disabled:cursor-not-allowed disabled:opacity-60"
+                @disabled($filtroDescartado === '1')>
                 <option value="0">No archivados</option>
                 <option value="1">Archivados</option>
                 <option value="">Todos</option>
             </select>
 
-            <select wire:model.live="filtroGemini" class="simo-select">
+            <select wire:model.live="filtroGemini" class="simo-select disabled:cursor-not-allowed disabled:opacity-60"
+                @disabled($filtroDescartado === '1')>
                 <option value="">Gemini: Todos</option>
                 <option value="pending">Sin analizar</option>
                 <option value="pep">PEP confirmado</option>
@@ -76,7 +78,7 @@
     {{-- Banner descartados --}}
     @if($filtroDescartado === '1')
         <div class="flex items-center justify-between px-4 py-2.5 bg-amber-50 border border-amber-100 rounded-xl text-xs text-amber-700">
-            <span>Mostrando articulos descartados. Usa "Restaurar" para devolverlos.</span>
+            <span>Mostrando todos los artículos descartados, incluidos archivados, sin analizar y duplicados. Usa "Restaurar" para devolverlos.</span>
             <button wire:click="$set('filtroDescartado', '0')" class="font-medium underline hover:no-underline">Volver a activos</button>
         </div>
     @endif

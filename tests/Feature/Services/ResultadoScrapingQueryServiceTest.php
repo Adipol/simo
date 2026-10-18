@@ -105,6 +105,38 @@ class ResultadoScrapingQueryServiceTest extends TestCase
         $this->assertNotContains($unanalyzed->id, $results, 'Unanalyzed article must NOT appear in default results');
     }
 
+    public function test_discarded_filter_returns_all_discarded_variants_and_excludes_active_rows(): void
+    {
+        $discarded = $this->makeArticle(['descartado' => true]);
+        $archivedDiscarded = $this->makeArticle([
+            'descartado' => true,
+            'archivado_at' => now(),
+        ]);
+        $pendingDiscarded = $this->makeArticle([
+            'descartado' => true,
+            'gemini_analyzed' => false,
+        ]);
+        $secondaryDiscarded = $this->makeArticle([
+            'descartado' => true,
+            'secundario_de' => $discarded->id,
+        ]);
+        $active = $this->makeArticle(['descartado' => false]);
+
+        $results = $this->service->buildQuery(
+            filtroDescartado: '1',
+            filtroArchivado: '0',
+            filtroGemini: 'pep',
+        )->pluck('id')->all();
+
+        $this->assertEqualsCanonicalizing([
+            $discarded->id,
+            $archivedDiscarded->id,
+            $pendingDiscarded->id,
+            $secondaryDiscarded->id,
+        ], $results);
+        $this->assertNotContains($active->id, $results);
+    }
+
     // ─── Filter PEP uses resultado_personas ───────────────────────────────────
 
     public function test_pep_filter_returns_articles_with_pep_persona_threshold_passed(): void

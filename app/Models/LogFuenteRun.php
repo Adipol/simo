@@ -52,6 +52,7 @@ final class LogFuenteRun extends Model
         'success',
         'no_change',
         'first_snapshot',
+        'authority_review_pending',
         'no_content',
         'http_error',
         'timeout',
@@ -75,6 +76,7 @@ final class LogFuenteRun extends Model
         'success',
         'no_change',
         'first_snapshot',
+        'authority_review_pending',
     ];
 
     public function fuente(): BelongsTo

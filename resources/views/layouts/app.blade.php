@@ -39,6 +39,16 @@
                 Dashboard
             </a>
 
+            @if(auth()->user()->hasRole('admin') && auth()->user()->can('resolver remociones autoridades'))
+            <a href="{{ route('pep.authority-removal-reviews') }}"
+               class="simo-sidebar-link {{ request()->routeIs('pep.authority-removal-reviews') ? 'simo-sidebar-link-active' : '' }}">
+                <svg class="simo-sidebar-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6M5 4h14a2 2 0 012 2v14H3V6a2 2 0 012-2z"/>
+                </svg>
+                Remociones a revisar
+            </a>
+            @endif
+
             {{-- ── MONITOREO ── --}}
             <div class="simo-sidebar-section">Monitoreo</div>
 

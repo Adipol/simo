@@ -146,13 +146,13 @@ class DashboardHealthDomLeakTest extends TestCase
         $operador = $this->makeOperador();
 
         // Create a high-risk cambio with sensitive JSON
-        Cambio::factory()->create([
-            'revisado'             => false,
-            'gemini_analyzed'      => false,
-            'posibles_peps'        => 'Juan Pérez - Ministro',
+        Cambio::withoutEvents(fn (): Cambio => Cambio::factory()->primaryFeed()->create([
+            'revisado' => false,
+            'gemini_analyzed' => false,
+            'posibles_peps' => 'Juan Pérez - Ministro',
             'gemini_analisis_json' => ['riesgo' => 'alto', 'detalle' => 'secreto'],
-            'fecha'                => now(),
-        ]);
+            'fecha' => now(),
+        ]));
 
         $html = Livewire::actingAs($operador)
             ->test(Dashboard::class)
@@ -174,15 +174,15 @@ class DashboardHealthDomLeakTest extends TestCase
         $operador = $this->makeOperador();
 
         // Cambio with persona_nueva in analysis (conPersona path via gemini)
-        Cambio::factory()->create([
-            'revisado'             => false,
-            'gemini_analyzed'      => true,
+        Cambio::factory()->primaryFeed()->create([
+            'revisado' => false,
+            'gemini_analyzed' => true,
             'gemini_analisis_json' => [
-                'riesgo'        => 'alto',
-                'es_mae'        => false,
+                'riesgo' => 'alto',
+                'es_mae' => false,
                 'persona_nueva' => 'Juan Pérez',
             ],
-            'fecha'                => now(),
+            'fecha' => now(),
         ]);
 
         $html = Livewire::actingAs($operador)

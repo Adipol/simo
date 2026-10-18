@@ -9,7 +9,6 @@ use App\Models\ResultadoScraping;
 use App\Services\Dashboard\DashboardCacheManager;
 use App\Services\Dashboard\DashboardSummaryService;
 use App\Services\Dashboard\DTOs\TriageStripDTO;
-use Database\Seeders\RolesPermisosSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -80,11 +79,11 @@ class SparklineEnforcementTest extends TestCase
     public function test_sparklines_have_7_elements_with_1_day_of_data(): void
     {
         // Create 1 alto-risk cambio today (con persona detectada para pasar conPersona())
-        Cambio::factory()->create([
-            'revisado'             => false,
-            'gemini_analyzed'      => true,
+        Cambio::factory()->primaryFeed()->create([
+            'revisado' => false,
+            'gemini_analyzed' => true,
             'gemini_analisis_json' => ['riesgo' => 'alto', 'persona_nueva' => 'Test Person'],
-            'fecha'                => now(),
+            'fecha' => now(),
         ]);
 
         $triage = $this->getTriageStrip();
@@ -113,11 +112,12 @@ class SparklineEnforcementTest extends TestCase
         for ($i = 13; $i >= 0; $i--) {
             Cambio::factory()
                 ->count(2)
+                ->primaryFeed()
                 ->create([
-                    'revisado'             => false,
-                    'gemini_analyzed'      => true,
+                    'revisado' => false,
+                    'gemini_analyzed' => true,
                     'gemini_analisis_json' => ['riesgo' => 'alto', 'persona_nueva' => 'Test Person'],
-                    'fecha'                => now()->subDays($i),
+                    'fecha' => now()->subDays($i),
                 ]);
         }
 
@@ -138,11 +138,11 @@ class SparklineEnforcementTest extends TestCase
     {
         // Create cambios for last 7 days (con persona detectada)
         for ($i = 6; $i >= 0; $i--) {
-            Cambio::factory()->create([
-                'revisado'             => false,
-                'gemini_analyzed'      => true,
+            Cambio::factory()->primaryFeed()->create([
+                'revisado' => false,
+                'gemini_analyzed' => true,
                 'gemini_analisis_json' => ['riesgo' => 'alto', 'persona_nueva' => 'Test Person'],
-                'fecha'                => now()->subDays($i),
+                'fecha' => now()->subDays($i),
             ]);
         }
 
@@ -165,7 +165,7 @@ class SparklineEnforcementTest extends TestCase
         ResultadoScraping::factory()
             ->count(3)
             ->create([
-                'leido'            => false,
+                'leido' => false,
                 'fecha_encontrado' => now(),
             ]);
 

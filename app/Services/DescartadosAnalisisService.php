@@ -13,6 +13,7 @@ use App\Services\Dashboard\DTOs\KeywordAnalisisDTO;
 use App\Services\Dashboard\DTOs\SitioAnalisisDTO;
 use Carbon\Carbon;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -178,6 +179,10 @@ final class DescartadosAnalisisService implements NegativeExamplesProvider
     public function getNegativeExamples(int $limit = 10): Collection
     {
         return ResultadoScraping::where('descartado', true)
+            ->where(static function (Builder $query): void {
+                $query->where('relevante', false)
+                    ->orWhereNull('relevante');
+            })
             ->where('gemini_confianza', '>=', 70)
             ->orderBy('gemini_confianza', 'desc')
             ->limit($limit)
@@ -232,7 +237,7 @@ final class DescartadosAnalisisService implements NegativeExamplesProvider
             ->selectRaw('
                 COUNT(*) AS total_procesados,
                 SUM(CASE WHEN descartado IS TRUE THEN 1 ELSE 0 END) AS total_descartados,
-                SUM(CASE WHEN relevante IS TRUE THEN 1 ELSE 0 END) AS total_relevantes,
+                SUM(CASE WHEN relevante IS TRUE AND descartado IS NOT TRUE THEN 1 ELSE 0 END) AS total_relevantes,
                 SUM(CASE WHEN archivado_at IS NOT NULL THEN 1 ELSE 0 END) AS total_archivados
             ')
             ->first();
@@ -284,7 +289,7 @@ final class DescartadosAnalisisService implements NegativeExamplesProvider
                 keyword,
                 COUNT(*) AS total,
                 SUM(CASE WHEN descartado IS TRUE THEN 1 ELSE 0 END) AS descartados,
-                SUM(CASE WHEN relevante IS TRUE THEN 1 ELSE 0 END) AS relevantes
+                SUM(CASE WHEN relevante IS TRUE AND descartado IS NOT TRUE THEN 1 ELSE 0 END) AS relevantes
             ')
             ->groupBy('keyword')
             ->havingRaw('COUNT(*) >= ?', [$minSample])

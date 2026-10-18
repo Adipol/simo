@@ -15,12 +15,19 @@ class FlashPipelineIntegrationTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config(['services.dedupe.enabled' => false]);
+    }
+
     private function createRecord(array $overrides = []): ResultadoScraping
     {
         ResultadoScraping::flushEventListeners();
 
         return ResultadoScraping::create(array_merge([
-            'url' => 'https://example.com/article-' . uniqid(),
+            'url' => 'https://example.com/article-'.uniqid(),
             'keyword' => 'corrupcion',
             'pais' => 'BO',
             'categoria' => 'politica',

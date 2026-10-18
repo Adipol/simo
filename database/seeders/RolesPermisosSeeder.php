@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Database\Seeders;
 
 use App\Models\User;
@@ -43,6 +45,7 @@ class RolesPermisosSeeder extends Seeder
 
             // PEP Monitor — gestion (CRUD fuentes)
             'gestionar fuentes',
+            'resolver remociones autoridades',
 
             // Scripts
             'ver estado scripts',

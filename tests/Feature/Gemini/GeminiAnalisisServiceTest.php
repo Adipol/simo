@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Gemini;
 
+use App\Enums\CambioFeedStatus;
 use App\Exceptions\Gemini\GeminiRateLimitException;
 use App\Exceptions\Gemini\GeminiServerException;
 use App\Models\Cambio;
@@ -94,6 +95,90 @@ class GeminiAnalisisServiceTest extends TestCase
         $this->assertTrue($json['es_mae']);
         $this->assertSame('alto', $json['riesgo']);
         $this->assertSame('Cambio de MAE detectado: nuevo Ministro de Economía.', $json['analisis']);
+    }
+
+    public function test_numeric_only_change_without_person_or_position_is_suppressed(): void
+    {
+        config(['services.gemini.api_key' => 'test-key']);
+
+        $cambio = $this->createCambio($this->createFuente(), [
+            'diff_texto' => "-Página 4 de 10\n+Página 5 de 10\n-182\n+183",
+        ]);
+
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response($this->fakeGeminiResponse([
+                'persona_removida' => null,
+                'persona_nueva' => null,
+                'cargo' => null,
+                'es_mae' => false,
+                'riesgo' => 'bajo',
+                'analisis' => 'No se detectaron nombres de personas ni cargos en el cambio.',
+                'personas_detectadas' => [],
+            ]), 200),
+        ]);
+
+        $this->makeService()->analizarLote(collect([$cambio]));
+
+        $this->assertSame(CambioFeedStatus::Suppressed, $cambio->fresh()->feed_status);
+    }
+
+    public function test_ambiguous_position_candidate_remains_in_review(): void
+    {
+        config(['services.gemini.api_key' => 'test-key']);
+
+        $cambio = $this->createCambio($this->createFuente(), [
+            'diff_texto' => '+Director General',
+        ]);
+
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response($this->fakeGeminiResponse([
+                'persona_removida' => null,
+                'persona_nueva' => null,
+                'cargo' => 'Director General',
+                'es_mae' => false,
+                'riesgo' => 'medio',
+                'analisis' => 'Se detectó un cargo, pero no hay evidencia suficiente de una transición.',
+                'personas_detectadas' => [],
+            ]), 200),
+        ]);
+
+        $this->makeService()->analizarLote(collect([$cambio]));
+
+        $this->assertSame(CambioFeedStatus::Review, $cambio->fresh()->feed_status);
+    }
+
+    public function test_valid_canonical_primary_event_remains_primary_after_analysis(): void
+    {
+        config(['services.gemini.api_key' => 'test-key']);
+
+        $cambio = $this->createCambio($this->createFuente(), [
+            'feed_status' => CambioFeedStatus::Primary,
+            'autoridades_eventos_json' => [
+                'version' => 1,
+                'events' => [[
+                    'type' => 'designacion',
+                    'old' => null,
+                    'new' => ['cargo' => 'Directora', 'persona' => 'Ana Pérez'],
+                ]],
+            ],
+        ]);
+
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response($this->fakeGeminiResponse([
+                'persona_removida' => null,
+                'persona_nueva' => null,
+                'cargo' => null,
+                'es_mae' => false,
+                'riesgo' => 'bajo',
+                'analisis' => 'No se detectó evidencia adicional en el diff.',
+                'personas_detectadas' => [],
+            ]), 200),
+        ]);
+
+        $this->makeService()->analizarLote(collect([$cambio]));
+
+        $this->assertSame(CambioFeedStatus::Primary, $cambio->fresh()->feed_status);
+        $this->assertSame([$cambio->id], Cambio::primaryFeed()->pluck('id')->all());
     }
 
     public function test_large_diff_uses_truncar_diff(): void

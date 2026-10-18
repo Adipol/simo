@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Jobs\Gemini;
 
 use App\Models\ResultadoScraping;
-use Carbon\Carbon;
+use App\Services\Gemini\GeminiFlashEligibilityService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -60,8 +60,8 @@ class AnalizarScrapingConFlashPendingQueryTest extends TestCase
     {
         if (DB::getDriverName() !== 'pgsql') {
             $this->markTestSkipped(
-                'pg_indexes is a PostgreSQL system catalog. ' .
-                'Re-run this test on staging/VPS to verify the index was applied. ' .
+                'pg_indexes is a PostgreSQL system catalog. '.
+                'Re-run this test on staging/VPS to verify the index was applied. '.
                 'Verified locally via tinker: SELECT 1 FROM pg_indexes WHERE indexname = \'resultados_scraping_pending_idx\' → row returned.'
             );
         }
@@ -80,46 +80,36 @@ class AnalizarScrapingConFlashPendingQueryTest extends TestCase
     // 1.D.3 — Behavioral: pendingQuery() contract (filter + ordering)
     // -------------------------------------------------------------------------
 
-    public function test_pending_query_returns_only_unanalyzed_rows(): void
+    public function test_eligibility_requires_processed_primary_when_dedupe_enabled(): void
     {
-        // 2 analyzed rows
-        $this->createRecord(['gemini_analyzed' => true]);
-        $this->createRecord(['gemini_analyzed' => true]);
+        config(['services.dedupe.enabled' => true]);
 
-        // 1 unanalyzed row
-        $pending = $this->createRecord(['gemini_analyzed' => false]);
+        $eligible = $this->createRecord(['dedupe_processed_at' => now()]);
+        $this->createRecord();
+        $this->createRecord(['gemini_analyzed' => true, 'dedupe_processed_at' => now()]);
+        $this->createRecord([
+            'dedupe_processed_at' => now(),
+            'secundario_de' => $eligible->id,
+        ]);
 
-        $results = ResultadoScraping::where('gemini_analyzed', false)
-            ->orderBy('fecha_encontrado', 'desc')
-            ->get();
+        $results = app(GeminiFlashEligibilityService::class)->query()->get();
+
+        $this->assertCount(1, $results);
+        $this->assertSame($eligible->id, $results->first()->id);
+    }
+
+    public function test_eligibility_uses_normal_pending_semantics_when_dedupe_disabled(): void
+    {
+        config(['services.dedupe.enabled' => false]);
+
+        $pending = $this->createRecord();
+        $this->createRecord(['gemini_analyzed' => true]);
+        $this->createRecord(['secundario_de' => $pending->id]);
+
+        $results = app(GeminiFlashEligibilityService::class)->query()->get();
 
         $this->assertCount(1, $results);
         $this->assertSame($pending->id, $results->first()->id);
-    }
-
-    public function test_pending_query_orders_by_fecha_encontrado_desc(): void
-    {
-        $oldest = $this->createRecord([
-            'gemini_analyzed' => false,
-            'fecha_encontrado' => Carbon::parse('2026-01-01'),
-        ]);
-        $newest = $this->createRecord([
-            'gemini_analyzed' => false,
-            'fecha_encontrado' => Carbon::parse('2026-03-01'),
-        ]);
-        $middle = $this->createRecord([
-            'gemini_analyzed' => false,
-            'fecha_encontrado' => Carbon::parse('2026-02-01'),
-        ]);
-
-        $results = ResultadoScraping::where('gemini_analyzed', false)
-            ->orderBy('fecha_encontrado', 'desc')
-            ->get();
-
-        $this->assertCount(3, $results);
-        $this->assertSame($newest->id, $results->get(0)->id, 'First row should be newest');
-        $this->assertSame($middle->id, $results->get(1)->id, 'Second row should be middle');
-        $this->assertSame($oldest->id, $results->get(2)->id, 'Third row should be oldest');
     }
 
     // -------------------------------------------------------------------------
@@ -129,11 +119,11 @@ class AnalizarScrapingConFlashPendingQueryTest extends TestCase
     private function createRecord(array $overrides = []): ResultadoScraping
     {
         return ResultadoScraping::create(array_merge([
-            'url'             => 'https://example.com/' . uniqid(),
-            'keyword'         => 'corrupcion',
-            'pais'            => 'BO',
-            'titulo'          => 'Artículo de prueba',
-            'contexto'        => 'Contexto de prueba para el registro.',
+            'url' => 'https://example.com/'.uniqid(),
+            'keyword' => 'corrupcion',
+            'pais' => 'BO',
+            'titulo' => 'Artículo de prueba',
+            'contexto' => 'Contexto de prueba para el registro.',
             'relevance_score' => 70,
             'gemini_analyzed' => false,
         ], $overrides));

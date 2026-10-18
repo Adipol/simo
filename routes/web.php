@@ -2,13 +2,15 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Pep\CambioDiagnosticExportController;
 use App\Http\Controllers\ProfileController;
 use App\Livewire\Admin\PrecisionDashboard;
 use App\Livewire\Configuracion\Paises;
+use App\Livewire\Dashboard;
 use App\Livewire\Gaceta\Eventos as GacetaEventos;
 use App\Livewire\Gaceta\Normas as GacetaNormas;
 use App\Livewire\Gaceta\Personas as GacetaPersonas;
-use App\Livewire\Dashboard;
+use App\Livewire\Pep\AuthorityRemovalReviews;
 use App\Livewire\Pep\Cambios;
 use App\Livewire\Pep\Fuentes;
 use App\Livewire\Scraper\CargosPep;
@@ -51,10 +53,17 @@ Route::middleware(['auth', 'usuario.activo'])->group(function () {
     // PEP Monitor — lectura (todos los roles)
     Route::get('/pep/cambios', Cambios::class)->name('pep.cambios');
 
+    Route::get('/pep/cambios/diagnostico.ndjson', CambioDiagnosticExportController::class)
+        ->middleware('permission:gestionar resultados')
+        ->name('pep.cambios.diagnostic-export');
+
     // PEP Monitor — gestion (admin y supervisor)
     Route::get('/pep/fuentes', Fuentes::class)
         ->middleware('permission:gestionar fuentes')
         ->name('pep.fuentes');
+    Route::get('/pep/revisiones-remocion-autoridades', AuthorityRemovalReviews::class)
+        ->middleware(['role:admin', 'permission:resolver remociones autoridades'])
+        ->name('pep.authority-removal-reviews');
 
     // Scripts — estado (todos los roles)
     Route::get('/scripts/estado', Estado::class)->name('scripts.estado');

@@ -6,8 +6,10 @@ namespace App\Jobs;
 
 use App\Models\ResultadoScraping;
 use App\Services\Gemini\GeminiFiltroService;
+use App\Services\Gemini\GeminiFlashEligibilityService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
@@ -70,14 +72,15 @@ class AnalizarScrapingConFlash implements ShouldQueue
         ]);
     }
 
-    private function pendingQuery(): \Illuminate\Database\Eloquent\Builder
+    /** @return Builder<ResultadoScraping> */
+    private function pendingQuery(): Builder
     {
-        return ResultadoScraping::where('gemini_analyzed', false)
+        return app(GeminiFlashEligibilityService::class)->query()
             ->orderBy('fecha_encontrado', 'desc');
     }
 
     private function hayMasPendientes(): bool
     {
-        return ResultadoScraping::where('gemini_analyzed', false)->exists();
+        return app(GeminiFlashEligibilityService::class)->query()->exists();
     }
 }

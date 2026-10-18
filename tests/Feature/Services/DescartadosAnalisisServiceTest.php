@@ -91,6 +91,16 @@ class DescartadosAnalisisServiceTest extends TestCase
         ], $overrides));
     }
 
+    private function allowLabelOverlapForDefensiveQueryTest(): void
+    {
+        if (DB::getDriverName() === 'pgsql') {
+            DB::statement(
+                'ALTER TABLE resultados_scraping
+                 DROP CONSTRAINT IF EXISTS resultados_scraping_descartado_relevante_exclusive'
+            );
+        }
+    }
+
     // ─── REQ-1: precisionGeneral ──────────────────────────────────────────────
 
     /**
@@ -149,6 +159,29 @@ class DescartadosAnalisisServiceTest extends TestCase
         $this->assertSame(8, $dto->totalProcesados, 'totalProcesados must still report the actual count');
         $this->assertNotEmpty($dto->insufficientReason, 'insufficientReason must explain the gap');
         $this->assertStringContainsString('10', $dto->insufficientReason, 'insufficientReason must reference the minimum threshold');
+    }
+
+    public function test_analytics_treat_discarded_relevant_overlap_as_discarded_only(): void
+    {
+        $this->allowLabelOverlapForDefensiveQueryTest();
+
+        $this->makeResultado(['descartado' => true, 'relevante' => true]);
+        $this->makeResultado(['descartado' => true, 'relevante' => false]);
+        $this->makeResultado(['descartado' => false, 'relevante' => true]);
+
+        $metrics = $this->service->precisionGeneral(minGlobal: 1, skipCache: true);
+
+        $this->assertSame(3, $metrics->totalProcesados);
+        $this->assertSame(2, $metrics->totalDescartados);
+        $this->assertSame(1, $metrics->totalRelevantes);
+        $this->assertEqualsWithDelta(33.3, $metrics->precisionPct, 0.1);
+
+        $keyword = $this->service
+            ->topLemasProblematicos(minSample: 1, skipCache: true)
+            ->sole();
+
+        $this->assertSame(2, $keyword->descartados);
+        $this->assertSame(1, $keyword->relevantes);
     }
 
     // ─── REQ-2: topLemasProblematicos ────────────────────────────────────────
@@ -429,6 +462,27 @@ class DescartadosAnalisisServiceTest extends TestCase
             $this->assertTrue((bool) $row->descartado, 'Every returned row must be descartado=true');
             $this->assertGreaterThanOrEqual(70, $row->gemini_confianza, 'Every row must have gemini_confianza >= 70');
         }
+    }
+
+    public function test_negative_examples_exclude_discarded_rows_still_marked_relevant(): void
+    {
+        $this->allowLabelOverlapForDefensiveQueryTest();
+
+        $validDiscarded = $this->makeResultado([
+            'descartado' => true,
+            'relevante' => false,
+            'gemini_confianza' => 80,
+        ]);
+        $conflicting = $this->makeResultado([
+            'descartado' => true,
+            'relevante' => true,
+            'gemini_confianza' => 99,
+        ]);
+
+        $ids = $this->service->getNegativeExamples(limit: 10)->pluck('id');
+
+        $this->assertTrue($ids->contains($validDiscarded->id));
+        $this->assertFalse($ids->contains($conflicting->id));
     }
 
     // ─── REQ-6: Cache behavior ────────────────────────────────────────────────

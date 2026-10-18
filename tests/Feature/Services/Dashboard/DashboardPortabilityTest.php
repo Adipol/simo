@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Services\Dashboard;
 
+use App\Enums\CambioFeedStatus;
 use App\Models\Cambio;
 use App\Models\Fuente;
 use App\Services\Dashboard\DashboardCacheManager;
@@ -64,6 +65,22 @@ class DashboardPortabilityTest extends TestCase
         ]);
     }
 
+    /** @return array{version:int,events:list<array{type:string,old:null,new:array{cargo:string,persona:string}}>} */
+    private function primaryFeedPayload(string $persona): array
+    {
+        return [
+            'version' => 1,
+            'events' => [[
+                'type' => 'designacion',
+                'old' => null,
+                'new' => [
+                    'cargo' => 'Directora',
+                    'persona' => $persona,
+                ],
+            ]],
+        ];
+    }
+
     // =========================================================================
     // T-A — REQ-7: rows inside 24h window are included under UTC session_tz
     // =========================================================================
@@ -93,11 +110,11 @@ class DashboardPortabilityTest extends TestCase
             Cambio::flushEventListeners();
             $fecha = Carbon::now()->subHours(20);
             Cambio::create([
-                'fuente_id'            => $fuente->id,
-                'fecha'                => $fecha,
-                'diff_texto'           => 'portability test diff '.$i,
-                'gemini_analyzed'      => true,
-                'gemini_analyzed_at'   => $fecha->copy()->addMinutes(5),
+                'fuente_id' => $fuente->id,
+                'fecha' => $fecha,
+                'diff_texto' => 'portability test diff '.$i,
+                'gemini_analyzed' => true,
+                'gemini_analyzed_at' => $fecha->copy()->addMinutes(5),
                 'gemini_analisis_json' => ['riesgo' => 'bajo', 'es_mae' => false, 'analisis' => 'ok'],
             ]);
         }
@@ -199,6 +216,8 @@ class DashboardPortabilityTest extends TestCase
             'fuente_id' => $fuente->id,
             'fecha' => Carbon::now()->subHours(20),
             'diff_texto' => 'cambio A - older',
+            'feed_status' => CambioFeedStatus::Primary,
+            'autoridades_eventos_json' => $this->primaryFeedPayload('Person A'),
             'revisado' => false,
             'gemini_analyzed' => true,
             'gemini_analisis_json' => ['persona_nueva' => 'Person A', 'riesgo' => 'bajo', 'es_mae' => false],
@@ -210,6 +229,8 @@ class DashboardPortabilityTest extends TestCase
             'fuente_id' => $fuente->id,
             'fecha' => Carbon::now()->subHours(2),
             'diff_texto' => 'cambio B - newer',
+            'feed_status' => CambioFeedStatus::Primary,
+            'autoridades_eventos_json' => $this->primaryFeedPayload('Person B'),
             'revisado' => false,
             'gemini_analyzed' => true,
             'gemini_analisis_json' => ['persona_nueva' => 'Person B', 'riesgo' => 'bajo', 'es_mae' => false],

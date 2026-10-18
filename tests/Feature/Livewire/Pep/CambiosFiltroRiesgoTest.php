@@ -83,7 +83,7 @@ class CambiosFiltroRiesgoTest extends TestCase
 
         Livewire::actingAs($this->user)
             ->test(Cambios::class)
-            ->set('filtroConPersona', '')  // ver todos para no interferir
+            ->set('feed', 'all')
             ->set('filtroRiesgo', 'alto')
             ->assertViewHas('cambios', function ($cambios) use ($alto, $medio, $bajo) {
                 $ids = $cambios->pluck('id');
@@ -120,7 +120,7 @@ class CambiosFiltroRiesgoTest extends TestCase
 
         Livewire::actingAs($this->user)
             ->test(Cambios::class)
-            ->set('filtroConPersona', '')
+            ->set('feed', 'all')
             ->set('filtroRiesgo', 'medio')
             ->assertViewHas('cambios', function ($cambios) use ($alto, $medio) {
                 $ids = $cambios->pluck('id');
@@ -154,10 +154,10 @@ class CambiosFiltroRiesgoTest extends TestCase
             ],
         ]);
 
-        // Con filtroConPersona='' y filtroRiesgo='' se muestran todos
+        // The all view keeps feed admission from interfering with risk filtering.
         Livewire::actingAs($this->user)
             ->test(Cambios::class)
-            ->set('filtroConPersona', '')
+            ->set('feed', 'all')
             ->set('filtroRiesgo', '')
             ->assertViewHas('cambios', function ($cambios) use ($alto, $bajo) {
                 $ids = $cambios->pluck('id');
@@ -182,7 +182,9 @@ class CambiosFiltroRiesgoTest extends TestCase
             ]);
         }
 
-        $component = Livewire::actingAs($this->user)->test(Cambios::class);
+        $component = Livewire::actingAs($this->user)
+            ->test(Cambios::class)
+            ->set('feed', 'all');
 
         // Ir a página 2
         $component->call('gotoPage', 2);
