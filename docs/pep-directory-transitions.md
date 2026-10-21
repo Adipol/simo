@@ -52,10 +52,12 @@ Rejected observations return one reason: `capture_<validity>`,
 `uncertain_person_encoding`, `source_mismatch`, or `older_observation`.
 Structural/capture checks precede source, chronological and revision checks.
 A malformed caller-supplied baseline raises `ValueError`: only accepted results
-should be supplied as baselines. Equal observation timestamps are allowed;
-strictly older observations cannot roll back a baseline. This defines no stored
-idempotency mechanism. Constructors themselves do not validate; `compare` is the
-qualification boundary for these typed immutable inputs.
+should be supplied as baselines. Equal absolute UTC instants are allowed;
+strictly older instants cannot roll back a baseline, including across DST folds
+and different UTC offsets. Original timestamp objects are retained in observations
+and events. This defines no stored idempotency mechanism. Constructors themselves
+do not validate; `compare` is the qualification boundary for these typed immutable
+inputs.
 
 Each `Event` contains `source`, `unit`, `role`, `kind`, original `before`/`after`
 positions (either may be `None`), `previous_observed_at`, `detected_at`, original

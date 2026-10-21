@@ -1,6 +1,6 @@
 """Pure, source-local directory comparison. No I/O or stored state."""
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 
 
@@ -141,6 +141,17 @@ def _validate(observation: Observation) -> tuple[str, ...]:
     return ()
 
 
+def _instant(value: datetime) -> timedelta:
+    """Exact UTC ordering key for a validated aware datetime, including fold.
+
+    A duration can extend beyond datetime.min/max when subtracting the offset;
+    converting to a UTC datetime could overflow. Avoid float timestamp rounding.
+    """
+    return (timedelta(days=value.toordinal(), hours=value.hour, minutes=value.minute,
+                      seconds=value.second, microseconds=value.microsecond)
+            - value.utcoffset())
+
+
 def compare(baseline: Observation | None, current: Observation) -> Comparison:
     """Return a qualified next baseline and ordered classifications, never write.
 
@@ -157,7 +168,7 @@ def compare(baseline: Observation | None, current: Observation) -> Comparison:
         return Comparison(Disposition.BASELINE, current)
     if baseline.source != current.source:
         return Comparison(Disposition.REJECTED, baseline, reasons=("source_mismatch",))
-    if current.observed_at < baseline.observed_at:
+    if _instant(current.observed_at) < _instant(baseline.observed_at):
         return Comparison(Disposition.REJECTED, baseline, reasons=("older_observation",))
     if (baseline.revision is None or current.revision is None
             or baseline.revision != current.revision):

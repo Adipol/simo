@@ -1,10 +1,11 @@
 """Offline contract tests: synthetic people/institutions only."""
 import dataclasses
 import importlib.util
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
 import unittest
+from zoneinfo import ZoneInfo
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "pep_directory.py"
 spec = importlib.util.spec_from_file_location("pep_directory", MODULE_PATH)
@@ -230,6 +231,73 @@ class DirectoryContractTest(unittest.TestCase):
         self.assertEqual(rejected.reasons, ("older_observation",))
         self.assertIs(rejected.baseline, after)
         self.assertEqual(rejected.events, ())
+
+    def test_dst_fold_freshness_uses_absolute_instants_and_preserves_inputs(self):
+        zone = ZoneInfo("America/New_York")
+        ana = observation(position(evidence="Ana card"),
+                          observed_at=datetime(2025, 11, 2, 1, 15, tzinfo=zone, fold=1),
+                          evidence="Ana page")
+        beatriz = observation(position("Beatriz Ejemplo", evidence="Beatriz card"),
+                              observed_at=datetime(2025, 11, 2, 1, 45, tzinfo=zone, fold=0),
+                              evidence="Beatriz page")
+        for before, after, accepted in ((ana, beatriz, False), (beatriz, ana, True)):
+            with self.subTest(accepted=accepted):
+                saved_before, saved_after = dataclasses.asdict(before), dataclasses.asdict(after)
+                result = compare(before, after)
+                self.assertEqual(dataclasses.asdict(before), saved_before)
+                self.assertEqual(dataclasses.asdict(after), saved_after)
+                self.assertEqual(result.disposition,
+                                 Disposition.COMPARED if accepted else Disposition.REJECTED)
+                self.assertIs(result.baseline, after if accepted else before)
+                self.assertEqual(result.reasons, () if accepted else ("older_observation",))
+                if not accepted:
+                    self.assertEqual(result.events, ())
+                    continue
+                event, = result.events
+                self.assertEqual(event.kind, Kind.POSSIBLE_REPLACEMENT)
+                self.assertIs(event.before, before.positions[0])
+                self.assertIs(event.after, after.positions[0])
+                self.assertIs(event.previous_observed_at, before.observed_at)
+                self.assertIs(event.detected_at, after.observed_at)
+                self.assertEqual((event.previous_evidence, event.current_evidence),
+                                 (before.evidence, after.evidence))
+                self.assertIsNone(event.effective_date)
+
+    def test_equal_instants_with_different_offsets_are_allowed(self):
+        before = observation(position(), observed_at=T1)
+        stamp = datetime(2025, 1, 1, 1, tzinfo=timezone(timedelta(hours=1)))
+        after = observation(position("Beatriz Ejemplo"), observed_at=stamp)
+        for baseline, current in ((before, after), (after, before)):
+            with self.subTest(current=current.observed_at):
+                result = compare(baseline, current)
+                self.assertEqual(result.disposition, Disposition.COMPARED)
+                self.assertEqual(result.reasons, ())
+                self.assertIs(result.baseline, current)
+                event, = result.events
+                self.assertIs(event.previous_observed_at, baseline.observed_at)
+                self.assertIs(event.detected_at, current.observed_at)
+
+    def test_freshness_at_datetime_bounds_is_exact_without_utc_overflow(self):
+        for bound, hours in ((datetime.min, 1), (datetime.max, -1)):
+            zone = timezone(timedelta(hours=hours))
+            edge = bound.replace(tzinfo=zone)
+            neighbor = edge + timedelta(microseconds=1 if hours > 0 else -1)
+            older, newer = (edge, neighbor) if hours > 0 else (neighbor, edge)
+            before = observation(position(), observed_at=older)
+            after = observation(position("Beatriz Ejemplo"), observed_at=newer)
+            with self.subTest(bound=bound):
+                result = compare(before, after)
+                self.assertEqual(result.disposition, Disposition.COMPARED)
+                self.assertEqual(result.reasons, ())
+                self.assertIs(result.baseline, after)
+                event, = result.events
+                self.assertIs(event.previous_observed_at, older)
+                self.assertIs(event.detected_at, newer)
+                rejected = compare(after, before)
+                self.assertEqual(rejected.disposition, Disposition.REJECTED)
+                self.assertEqual(rejected.reasons, ("older_observation",))
+                self.assertIs(rejected.baseline, after)
+                self.assertEqual(rejected.events, ())
 
     def test_invalid_supplied_baseline_is_not_trusted(self):
         with self.assertRaisesRegex(ValueError, "baseline"):
