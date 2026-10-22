@@ -10,7 +10,10 @@ from dataclasses import replace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from test_pep_directory_codec import observation
+if __package__:
+    from .test_pep_directory_codec import observation
+else:
+    from test_pep_directory_codec import observation
 from pep_directory import Validity, compare
 from pep_directory_codec import encode_observation, encode_event
 from pep_directory_storage import Repository

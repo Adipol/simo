@@ -193,3 +193,14 @@ without installing dependencies. Neither failed launch reached the database.
 This is an exact historical code port with fresh verification, not a newly claimed
 RED/GREEN cycle. The cohesive repository/codec/tests/docs slice exceeds the advisory
 review size so transaction behavior and its proof stay together.
+
+### Test-runner compatibility correction
+
+The first CI run exposed a fixture-import collection error under pytest, reproduced
+locally with exit 2 before database access. Storage tests now select a relative
+fixture import when loaded as a package, retaining the standalone import used by
+unittest discovery. No production or transaction code changed. Focused pytest
+collection now reports eight explicit opt-out skips; the full website suite passes
+175 tests with eight skips and 94 subtests. Unittest directory discovery passes
+52 tests with one suite-level opt-out skip. These skips are not database proof;
+the separately executed eight-test PostgreSQL verification remains distinct.
