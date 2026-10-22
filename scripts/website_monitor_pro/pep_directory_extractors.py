@@ -83,6 +83,8 @@ def _rows(table: Tag, headers: list[str], *, allow_empty: bool = False) -> list[
     rows = body.find_all('tr', recursive=False)
     _require(bool(rows) or allow_empty)
     _require(len(table.select('tr')) == len(rows) + 1)
+    # Every data cell must belong to an extracted row, not an ignored table fragment.
+    _require(len(table.select('td')) == len(rows) * len(headers))
     for row in rows:
         _require(len(row.find_all('td', recursive=False)) == len(headers))
         _require(len(row.select('td')) == len(headers))

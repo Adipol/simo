@@ -291,6 +291,38 @@ class ExtractorTests(unittest.TestCase):
         equivalent = before_body.replace('Ana Ejemplo', 'María Ejemplo').replace('Beatriz Modelo', 'MarÃ­a Ejemplo')
         self.rejected('ibc', equivalent, Validity.AMBIGUOUS)
 
+    def test_orphan_holder_cells_reject_without_false_group_departures(self):
+        for profile in ('dab', 'ibc'):
+            with self.subTest(profile=profile):
+                body = self.body(profile)
+                start = body.index('<tr><td>1')
+                row = body[start:body.index('</tr>', start) + 5]
+                second = row.replace('Ana Ejemplo', 'Beatriz Modelo')
+                complete = body.replace(row, row + second)
+                baseline = self.observation(profile, complete)
+                self.assertEqual(baseline.validity, Validity.VALID)
+                self.assertEqual(len(baseline.positions), 3)
+                intact = self.observation(profile, complete, observed_at=NOW + timedelta(days=1))
+                unchanged = compare(baseline, intact)
+                self.assertEqual(unchanged.disposition, Disposition.COMPARED)
+                self.assertIs(unchanged.baseline, intact)
+                self.assertTrue(all(e.kind == Kind.NO_CHANGE for e in unchanged.events))
+                self.assertTrue(all(not e.outgoing and not e.incoming for e in unchanged.events))
+                orphan = second.removeprefix('<tr>').removesuffix('</tr>')
+                malformed = complete.replace(second, '').replace('</tbody>', '</tbody>' + orphan, 1)
+                current = self.observation(profile, malformed, observed_at=NOW + timedelta(days=1))
+                result = compare(baseline, current)
+                self.assertEqual(current.validity, Validity.INCOMPLETE)
+                self.assertEqual(current.positions, ())
+                self.assertEqual(current.evidence, malformed)
+                self.assertIn('Beatriz Modelo', current.evidence)
+                self.assertEqual(result.disposition, Disposition.REJECTED)
+                self.assertIs(result.baseline, baseline)
+                self.assertEqual(result.events, ())
+                self.assertEqual(result.reasons, ('capture_incomplete',))
+                self.assertEqual(baseline.evidence, complete)
+                self.assertEqual(len(baseline.positions), 3)
+
     def test_unknown_profile_is_a_caller_error(self):
         with self.assertRaises(ValueError):
             extract('other', self.body('dab'), Capture(200, URLS['dab'], NOW, KEYS['dab'], 'utf-8'))

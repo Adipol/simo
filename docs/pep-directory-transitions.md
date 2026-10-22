@@ -241,6 +241,10 @@ incomplete; an empty directory still cannot qualify.
 Capture validation precedes association extraction: status/source, blocked/empty
 body, one HTML/body envelope with explicit final closing tags, pagination signals,
 then unique directory boundaries, expected headers and row/cell relationships.
+For DAB and IBC, every `td` within the selected table must belong to an extracted
+body row. Orphan cells outside those rows reject the entire capture as
+`incomplete`, even if the role inventory still matches; they cannot establish a
+holder's departure. The complete decoded evidence and prior baseline are retained.
 Truncated envelopes, absent selectors, blank required fields, unexpected empty
 tables, unreviewed inventories and missing/extra roles return `incomplete`.
 Contact-only email, HTTP/HTTPS/FTP or www URL, and numeric phone values in person
@@ -266,11 +270,13 @@ These restrictions favor missed proposals over fabricated departures.
 
 ### Offline verification and coverage
 
-Local delivery validation ran the focused suite once: **20 adapter tests passed**
-(exit 0), then the combined suite once: **46 tests passed** (26 core + 20 adapter,
-exit 0). These are synthetic offline tests, not live capture or operational proof.
-This is an exact delivery of existing code/tests, not a new behavior change; no
-new test-first RED/GREEN lifecycle is claimed.
+Initial delivery validation passed 20 adapter tests and 46 combined tests.
+The orphan-cell correction then reproduced failures for both DAB and IBC
+(21 tests, two failing subtests, exit 1) before implementation. After correction,
+**21 adapter tests** and **47 combined tests** (26 core + 21 adapter) passed,
+each with exit 0. The regression preserves intact same-role groups and checks
+rejected observations, exact evidence, prior-baseline identity and absent events.
+These are synthetic offline tests, not live capture or operational proof.
 
 The adapter tests exercise public `extract()` and T1 `compare()`: associations,
 noise/order independence, strict decoding, retained evidence, replacements,
