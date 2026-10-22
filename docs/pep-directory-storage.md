@@ -212,3 +212,13 @@ validated decision DTO, active-user/permission enforcement, version conflicts an
 append-only decision history. The review service owns only audit/projection changes;
 source baselines and observed evidence remain unchanged. Schema constraints alone
 do not authorize review.
+
+
+## Dormant observer connection boundary
+
+A default-off static-response observer can call the Python repository through its
+own explicitly configured connection; it does not reuse the legacy monitor's
+transaction. See [pep-directory-transitions.md](pep-directory-transitions.md).
+No shadow selector or production binding is enabled by this delivery. Deterministic
+observer tests mock persistence and establish no real PostgreSQL integration proof.
+Retained synthetic storage/review fixtures must not be reset for these offline tests.

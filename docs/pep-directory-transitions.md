@@ -297,3 +297,69 @@ PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -m unittest discover -s scripts/website_moni
 Capture acquisition, source qualification, bindings, persistence, monitor/observer
 integration and activation are outside this offline delivery. No live coverage is
 claimed, and no shared legacy CLI differential or broader suite was run.
+
+
+## Dormant static-response observer
+
+The monitor accepts an optional keyword-only injected directory observer. Otherwise,
+only an explicit `PEP_DIRECTORY_SHADOW_CONFIG` selector loads shadow configuration;
+when absent, no shadow module/configuration is loaded and no shadow connection is
+opened. Ordinary monitor construction still creates its legacy DatabaseManager;
+this default-off promise does not disable legacy behavior.
+
+A successful HTTP response is frozen before cleaning: immutable body bytes, source,
+requested/final URL, status, aware observation timestamp and one declared HTTP
+charset. Encoding is not guessed. Only the selected static response is submitted;
+PDF, explicit JavaScript, a selected browser fallback and HTTP errors do not submit.
+There is no additional fetch. Transport ConnectionError propagation remains intact.
+An empty selected static response is observed before the legacy no-content exit.
+
+Configuration requires exact shapes, positive IDs, unique inventories and qualified
+profile URL bindings. Capture metadata must match the binding exactly. The
+qualification fingerprint contributes to revision identity. Each submission uses a
+fresh identity and its own explicitly configured connection with bounded timeouts,
+no retries and closure in finally. Credentials are excluded from provenance.
+Observer failures emit fixed diagnostic codes, not raw exceptions/configuration.
+They must not change legacy snapshots, alerts, statuses or return values.
+
+This seam remains dormant. Configuration examples or unit fixtures do not qualify
+real institutions or authorize connection, capture, monitor activation or deployment.
+Actual adapter-to-PostgreSQL integration is a separate delivery.
+
+### Offline verification boundary
+
+Never collect monitor tests before isolating imports: the legacy module probes
+dotenv and configures logging at import time. Use the dedicated runner with an
+existing compatible Python environment and a parent-exported baseline monitor:
+
+```sh
+python -B scripts/website_monitor_pro/tests/run_pep_directory_shadow_tests.py --base-monitor BASELINE_MONITOR
+```
+
+Export the immediate predecessor's monitor outside tracked test sources; tests do
+not read Git history. Launch with a controlled synthetic environment, clearing
+inherited DB/logging/timeouts, `PYTEST_ADDOPTS` and `PYTEST_PLUGINS`. The runner hides
+.env probes, suppresses dotenv loading, replaces rotating logs, denies external
+HTTP/DB/socket/process operations before collection, disables plugins/conftest/cache
+and confines evidence writes to its ignored test-evidence directory.
+
+Required existing packages are pytest, requests/urllib3, psycopg2 (including extras),
+python-dotenv and BeautifulSoup. No dependency installation or runtime build is
+implied. Browser/PDF behavior is mocked; no live browser or PDF coverage is claimed.
+
+The bounded suite covers immutable pre-cleaning capture, default-off/configured/error
+paths, charset ambiguity, metadata refusal, qualification revisions, connection
+closure and legacy source-run regressions. Its predecessor comparison covers process
+calls, capture tuples, CLI stdout/stderr/exit and check-all ordering under
+absent/enabled/failing synthetic observers. Only shadow diagnostic messages and
+mock-owned identities/time are normalized; legacy effects must remain equivalent.
+CLI run/check-all dispatch is mocked but not dynamically compared; its preservation
+is supported by unchanged dispatch source, not a dispatch assertion.
+The existing chronology, unknown-holder and malformed-table protections remain.
+
+Current isolated candidate verification passed 195 tests and 94 subtests (exit 0),
+using the existing Python environment and the immediate predecessor monitor. This
+includes mocked legacy differentials, not live capture or database integration.
+The exact historical code port uses ordinary verification, not a fabricated new
+RED/GREEN cycle. The cohesive observer/seam/tests/docs slice exceeds the advisory
+review size to preserve its compatibility proof alongside the shared monitor edit.
