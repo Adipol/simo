@@ -363,3 +363,7 @@ includes mocked legacy differentials, not live capture or database integration.
 The exact historical code port uses ordinary verification, not a fabricated new
 RED/GREEN cycle. The cohesive observer/seam/tests/docs slice exceeds the advisory
 review size to preserve its compatibility proof alongside the shared monitor edit.
+
+Differential tests require the isolated runner and an explicitly exported baseline.
+Ordinary collection without that input skips the 85 differential cases; those
+skips are not compatibility proof. The isolated run remains required separately.

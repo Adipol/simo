@@ -311,7 +311,7 @@ def test_loader_rejects_duplicate_json_keys_without_connection():
 def baseline():
     path = os.environ.get('PEP_SHADOW_TEST_BASE')
     if not path:
-        pytest.fail('Use isolated runner with parent-exported baseline')
+        pytest.skip('Differential requires isolated runner with parent-exported baseline')
     module = ModuleType('pep_monitor_baseline')
     module.__file__ = candidate.__file__  # Canonical path context, not the scratch export directory.
     sys.modules[module.__name__] = module
