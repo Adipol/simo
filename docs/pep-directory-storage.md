@@ -2,8 +2,8 @@
 
 Four additive tables and an **unwired PostgreSQL repository** support the wire
 contract in [pep-directory-transitions.md](pep-directory-transitions.md).
-This delivery adds a lossless codec and atomic persistence, but no model, review
-service, UI or monitor integration.
+This chain includes a lossless codec, atomic persistence and dormant read/review
+models plus an authorized review service. No UI or monitor integration is included.
 Original databases, retained authority tables, cambios and Scraper are untouched.
 No data, migration-ledger entries, source activation or permissions are seeded.
 
@@ -204,3 +204,11 @@ collection now reports eight explicit opt-out skips; the full website suite pass
 175 tests with eight skips and 94 subtests. Unittest directory discovery passes
 52 tests with one suite-level opt-out skip. These skips are not database proof;
 the separately executed eight-test PostgreSQL verification remains distinct.
+
+## Authorized review domain
+
+See [pep-directory-review.md](pep-directory-review.md) for the dormant PHP models,
+validated decision DTO, active-user/permission enforcement, version conflicts and
+append-only decision history. The review service owns only audit/projection changes;
+source baselines and observed evidence remain unchanged. Schema constraints alone
+do not authorize review.
