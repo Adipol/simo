@@ -27,10 +27,14 @@ baseline and an `Observation` as current input to `compare(baseline, current)`.
   In particular, an absent role on a partial page must not be declared a valid
   complete capture. Empty position sets are rejected even when declared valid.
 
-Identity is exactly `(source, unit, role)`. No case folding, fuzzy role/person
-matching, alias inference or cross-unit pairing is performed. Duplicate
-`(unit, role)` positions reject the whole observation, even with identical names.
-A present role with `person=None` differs from a missing role.
+Role identity is exactly `(source, unit, role)`. Multiple distinct people may
+occupy that role; membership identity uses the conservative person comparison
+key below. No case folding, fuzzy matching, role alias inference or cross-unit
+pairing is performed. Repeated equivalent people within a role reject the whole
+observation, including reversible-mojibake duplicates or conflicting conditions.
+A single `person=None` is an explicit unknown holder, not a named member. Mixing
+unknown and named holders within one role rejects as ambiguous membership.
+A present unknown role differs from a missing role.
 
 ## Comparison result
 
@@ -49,7 +53,8 @@ result is not a history store and must not be treated as indefinite tenure.
 
 Rejected observations return one reason: `capture_<validity>`,
 `invalid_structure`, `empty_positions`, `duplicate_position`,
-`uncertain_person_encoding`, `source_mismatch`, or `older_observation`.
+`ambiguous_membership`, `uncertain_person_encoding`, `source_mismatch`, or
+`older_observation`.
 Structural/capture checks precede source, chronological and revision checks.
 A malformed caller-supplied baseline raises `ValueError`: only accepted results
 should be supplied as baselines. Equal absolute UTC instants are allowed;
@@ -61,7 +66,10 @@ inputs.
 
 Each `Event` contains `source`, `unit`, `role`, `kind`, original `before`/`after`
 positions (either may be `None`), `previous_observed_at`, `detected_at`, original
-`previous_evidence`/`current_evidence`, and `effective_date=None`.
+`previous_evidence`/`current_evidence`, and `effective_date=None`. Legacy `before`
+and `after` remain the exact original Position for a singleton on that respective
+side; they are `None` for absent or multi-holder groups. **Never infer a missing
+role from those convenience fields; inspect the group fields.**
 Detection time is **not** an appointment or departure date. Classifications are
 proposals/observations, never confirmed legal changes:
 
@@ -74,9 +82,43 @@ proposals/observations, never confirmed legal changes:
 | Ana Ejemplo, titular → Ana Ejemplo, a.i. | `condition_change` |
 | Entire role absent/renamed | `review_required` for the old identity |
 
+### Role-holder groups
+
+Every event additionally exposes immutable tuples (all default to empty for
+backward-compatible construction):
+
+- `before_group`, `after_group`: every original Position in the role, sorted by
+  conservative person comparison key. No raw name, condition or evidence is lost.
+- `outgoing`, `incoming`: named members absent from / newly present in the other
+  group, in the same deterministic order. These are observed directory changes,
+  not proof of legal departures or appointment dates.
+- `condition_changes`: `(old_position, new_position)` pairs **only for the same
+  retained person**, when their condition changes. These pairs never link different
+  people. Membership and condition changes may coexist in one event. An unknown
+  holder remaining unknown can still produce the legacy `condition_change` kind
+  when its condition changes, but `condition_changes` stays empty: no retained
+  person's identity is established by `person=None`.
+
+One outgoing and one incoming member produce `possible_replacement`, even if
+others remain. For example Ana+Beatriz → Beatriz+Carla exposes outgoing Ana,
+incoming Carla and both complete groups. Any other named membership change
+(additions only, removals only, or multiple outgoing/incoming) produces the new
+`membership_change` kind. **There are no replacement pairings** for those groups:
+clients must display outgoing/incoming groups without zipping or sorting into
+pairs. If membership is unchanged, kind is `condition_change` if needed,
+otherwise `no_change`. Initial named observations and explicit unknown-holder
+transitions retain `first_observation` / `possible_departure_successor_unknown`
+classifications; unknown is never included in named outgoing/incoming tuples.
+
+A missing entire role remains `review_required`, with its full before group but
+**empty outgoing/incoming tuples**: role absence does not prove departures. Revision,
+source, chronology and invalid-capture baseline rules remain unchanged. Single-holder
+inputs retain their prior classification and before/after behavior. The event's
+new fields extend its serialized shape; group-aware consumers must read them.
+
 A newly named role is independently a first observation, not paired with the
 missing role. Evidence-only changes/reordering do not change classification.
-`no_change` is explicitly returned for each unchanged position, not a replacement
+`no_change` is explicitly returned for each unchanged role group, not a replacement
 proposal. These classifications are not a fixed list of supported people.
 
 ## Conservative decoding
@@ -113,9 +155,9 @@ Run offline, without importing the legacy monitor:
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/website_monitor_pro/tests -p 'test_pep_directory.py' -v
 ```
 
-T1 covers the pure portions of S3–S5 and S7–S9: structured identity, rejection,
-encoding, classifications, raw evidence/condition retention and latest qualified
-observations without Gemini. S9's actual DAB/IBC/UMSA extraction, capture-quality
+The pure comparison covers structured role/group identity, rejection, encoding,
+classifications, raw evidence/condition retention and latest qualified observations
+without Gemini. S9's actual DAB/IBC/UMSA extraction, capture-quality
 checks and saved pilot replay await adapters. S7 durable holder history awaits
 persistence. S8 runtime shadow isolation awaits monitor integration. No existing
 code path changed, so there is no meaningful shared legacy differential command;
