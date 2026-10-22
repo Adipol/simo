@@ -157,8 +157,143 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/website_monito
 
 The pure comparison covers structured role/group identity, rejection, encoding,
 classifications, raw evidence/condition retention and latest qualified observations
-without Gemini. S9's actual DAB/IBC/UMSA extraction, capture-quality
-checks and saved pilot replay await adapters. S7 durable holder history awaits
+without Gemini. Offline DAB/IBC/UMSA adapters and their capture-quality checks
+are now included below; capture acquisition and saved production replay remain
+future work. S7 durable holder history awaits
 persistence. S8 runtime shadow isolation awaits monitor integration. No existing
 code path changed, so there is no meaningful shared legacy differential command;
 unsafe legacy tests and broader Python/PHP suites await isolated integration.
+
+## Offline pilot adapters (T2)
+
+`scripts/website_monitor_pro/pep_directory_extractors.py` exposes:
+
+```python
+Capture(status, source_url, observed_at, expected_positions, encoding)
+extract(profile, body, capture) -> Observation
+```
+
+`profile` is exactly `dab`, `ibc` or `umsa`; unknown profiles raise `ValueError`.
+`body` is caller-provided `bytes | str`; no network/browser/process, database,
+logging, dotenv, monitor or AI is invoked. BeautifulSoup (`bs4`), already a project dependency, and stdlib are used in
+addition to the local T1 core. T1 alone remains stdlib-only. The core is unchanged.
+
+The caller must provide the exact verified final source URL, HTTP status 200, an aware
+observation timestamp and a **separately reviewed, nonempty frozenset of exact
+(unit, base-role) pairs** as `expected_positions`. It is an explicit completeness
+attestation, not a list inferred from the current capture, database IDs or an
+unverified initial baseline. Neither HTML nor a successful status alone proves
+that the server supplied the whole directory. A missing/extra identity rejects
+this profile until its inventory is reviewed. Do not automatically update that
+inventory to make a rejected capture pass. It must be resolved before activation;
+this unit neither persists nor configures runtime inventories.
+
+The accepted URLs are:
+
+- DAB: `https://www.dab.gob.bo/personal-ejecutivo`
+- IBC: `https://www.ibc.gob.bo/nomina.php`
+- UMSA: `https://www.umsa.bo/web/guest/rectorado`
+
+Outputs use `source=<profile>:directory` and `revision=pilot-html-v2-groups`, independent
+of database IDs. This revision deliberately rebaselines any prior v1 adapter input
+rather than comparing incompatible extraction semantics. URL aliases/redirects
+are not guessed. Always pass results through
+T1 `compare(previous_qualified_baseline, observation)`, including results marked
+valid: T1 still validates timestamps, person encoding and other shared contracts.
+Persist only its qualified next baseline, retaining history separately. Extraction
+validity does not supersede T1 validation. No runtime integration is included.
+
+Bytes are decoded **strictly using caller-specified encoding**, never guessed from
+HTML, retried with Latin-1 or decoded with replacement. Explicit encoding must come
+from capture provenance. Already-decoded text is preserved without re-encoding;
+HTML charset declarations cannot recover forensic bytes from that text. Valid
+accented names are not repaired. T1 alone repairs reversible mojibake comparison
+keys, while retaining original person/evidence values. Decode failures return
+`failed` with empty text evidence; callers needing forensic replay must separately
+retain original bytes, since T1 evidence is text-only.
+
+The full decoded input is retained exactly in `Observation.evidence` (even for
+rejections after decoding). `Position.evidence` is the original selected row/profile
+DOM serialized by BeautifulSoup **before field whitespace cleanup**. Serialization
+can normalize quotes, entities and void-tag syntax; it is not a byte-exact slice.
+Use full observation evidence for exact decoded-source replay.
+
+### Profile boundaries and synthetic fixtures
+
+Only small synthetic HTML fixtures with fictional names/contacts are included.
+These fixtures exercise the contract; they do not establish live coverage or
+independently attest directory completeness.
+
+| Profile | Selection and accepted boundary |
+| --- | --- |
+| DAB | `.view-personal-ejecutivo table.views-table`; headers Nro / Nombre Completo / Cargo / Unidad; named cell classes bind unit, role and person in each row. One table is required. Terminal `a.i.` is retained as condition/evidence, not base-role identity. |
+| IBC | `#contenido .card`; `.card-header` identifies the unit; `.card-body table.table` has headers Ítem / Nombres y Apellidos / Cargo/Unidad. The final cell must contain role + one `br` + the same unit. Item numbers do not identify roles. |
+| UMSA | `#content .journal-content-article .TablaSpeed .filaPersona .col-2b .parte2`; two direct `b` children hold person and office label. Only one Rectorado profile is supported; biography, navigation, portrait and contacts are excluded. |
+
+Distinct holders of the same IBC role are retained as a group. An empty IBC
+section is accepted only with an intact table, expected headers, exactly one
+tbody, no malformed rows/cells/stray content, and an inventory matching every
+expected role. Missing tables/headers/tbody or a missing attested role remain
+incomplete; an empty directory still cannot qualify.
+
+### Fail-closed limits
+
+Capture validation precedes association extraction: status/source, blocked/empty
+body, one HTML/body envelope with explicit final closing tags, pagination signals,
+then unique directory boundaries, expected headers and row/cell relationships.
+For DAB and IBC, every `td` within the selected table must belong to an extracted
+body row. Orphan cells outside those rows reject the entire capture as
+`incomplete`, even if the role inventory still matches; they cannot establish a
+holder's departure. The complete decoded evidence and prior baseline are retained.
+Truncated envelopes, absent selectors, blank required fields, unexpected empty
+tables, unreviewed inventories and missing/extra roles return `incomplete`.
+Contact-only email, HTTP/HTTPS/FTP or www URL, and numeric phone values in person
+cells also return `incomplete`; no name-shape eligibility test excludes accents,
+apostrophes or mononyms. Identical/equivalent occupant duplicates, duplicated
+boundaries or conflicting unit context return `ambiguous`. Rejected observations
+have no positions. T1 `compare()` retains the identical previous baseline and emits
+no events. These checks are conservative pilot heuristics, not universal HTML
+validation or a guarantee against a well-formed server-side partial response.
+
+Blank person cells are **not** treated as explicit vacancies; these layouts lack
+an attested vacancy marker. No departures are inferred from them. Likewise, unit
+renames/new roles require inventory review rather than silent baseline updates.
+Only observed terminal `a.i.` is extracted as a separate condition; no invented
+interino/suplente synonyms are introduced. Only UMSA's two known labels
+`Rector UMSA` and `Rectora UMSA` map to **Rectorado UMSA**; reviewed inventories
+must use that canonical role. The exact label remains in original evidence, so a
+new holder with a gendered label change produces one possible replacement, not a
+new role plus a missing role. No generic gender/title normalization is performed.
+Other university roles are outside this single-profile scope. Extra fields, new
+pagination or ambiguous occupants still require profile review.
+These restrictions favor missed proposals over fabricated departures.
+
+### Offline verification and coverage
+
+Initial delivery validation passed 20 adapter tests and 46 combined tests.
+The orphan-cell correction then reproduced failures for both DAB and IBC
+(21 tests, two failing subtests, exit 1) before implementation. After correction,
+**21 adapter tests** and **47 combined tests** (26 core + 21 adapter) passed,
+each with exit 0. The regression preserves intact same-role groups and checks
+rejected observations, exact evidence, prior-baseline identity and absent events.
+These are synthetic offline tests, not live capture or operational proof.
+
+The adapter tests exercise public `extract()` and T1 `compare()`: associations,
+noise/order independence, strict decoding, retained evidence, replacements,
+conditions, group transitions, duplicate-equivalent identities, empty sections,
+and rejection with baseline preservation. The core suite also protects UTC/DST
+chronology and unknown-holder condition changes without identity pairings.
+No legacy monitor, database, browser or network was invoked.
+
+Reproduce from the repository root using an existing project environment with
+`bs4` (set `PYTHON` to that environment's Python executable; do not install one
+as part of this delivery):
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -m unittest discover -s scripts/website_monitor_pro/tests -p 'test_pep_directory_extractors.py' -v
+PYTHONDONTWRITEBYTECODE=1 "$PYTHON" -m unittest discover -s scripts/website_monitor_pro/tests -p 'test_pep_directory*.py' -v
+```
+
+Capture acquisition, source qualification, bindings, persistence, monitor/observer
+integration and activation are outside this offline delivery. No live coverage is
+claimed, and no shared legacy CLI differential or broader suite was run.
