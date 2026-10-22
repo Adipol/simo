@@ -192,11 +192,141 @@ class DirectoryContractTest(unittest.TestCase):
 
     def test_duplicates_are_rejected_even_with_same_person(self):
         before = observation(position())
-        for second in (position(), position("Beatriz Ejemplo")):
+        for second in (position(), position(condition="interina")):
             result = compare(before, observation(position(), second, observed_at=T2))
             self.assertEqual(result.reasons, ("duplicate_position",))
             self.assertIs(result.baseline, before)
             self.assertEqual(result.events, ())
+
+    def test_group_one_out_one_in_retains_every_holder_without_pairing_survivor(self):
+        ana = position(evidence="Ana original")
+        bea = position("Beatriz Ejemplo", evidence="Beatriz original")
+        carla = position("Carla Ejemplo", condition="a.i.", evidence="Carla original")
+        before = observation(ana, bea, evidence="before page")
+        after = observation(carla, bea, observed_at=T2, evidence="after page")
+        result = compare(before, after)
+        self.assertEqual(result.disposition, Disposition.COMPARED)
+        self.assertIs(result.baseline, after)
+        event, = result.events
+        self.assertEqual(event.kind, Kind.POSSIBLE_REPLACEMENT)
+        self.assertEqual(event.before_group, (ana, bea))
+        self.assertEqual(event.after_group, (bea, carla))
+        self.assertEqual(event.outgoing, (ana,))
+        self.assertEqual(event.incoming, (carla,))
+        self.assertIsNone(event.before)
+        self.assertIsNone(event.after)
+        self.assertEqual(event.condition_changes, ())
+        self.assertEqual((event.previous_evidence, event.current_evidence), ("before page", "after page"))
+        self.assertEqual((event.previous_observed_at, event.detected_at), (T1, T2))
+        self.assertIsNone(event.effective_date)
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            event.outgoing = ()
+
+    def test_group_multiple_changes_are_sets_not_arbitrary_pairs(self):
+        old = (position("Ana Ejemplo"), position("Beatriz Ejemplo"))
+        new = (position("Carla Ejemplo"), position("Diana Ejemplo"))
+        before = observation(*old)
+        after = observation(*new, observed_at=T2)
+        event, = compare(before, after).events
+        self.assertEqual(event.kind, Kind.MEMBERSHIP_CHANGE)
+        self.assertEqual(event.outgoing, old)
+        self.assertEqual(event.incoming, new)
+        self.assertIsNone(event.before)
+        self.assertIsNone(event.after)
+        reordered = compare(dataclasses.replace(before, positions=tuple(reversed(old))),
+                            dataclasses.replace(after, positions=tuple(reversed(new))))
+        self.assertEqual(reordered.events, (event,))
+        self.assertEqual(before.positions, old)
+        self.assertEqual(after.positions, new)
+
+    def test_group_unchanged_mojibake_and_condition_changes_keep_raw_positions(self):
+        old = (position("María Ejemplo"), position("Ana Ejemplo"))
+        new = (position("Ana Ejemplo", condition="a.i."), position("MarÃ­a Ejemplo"))
+        before, after = observation(*old), observation(*new, observed_at=T2)
+        event, = compare(before, after).events
+        self.assertEqual(event.kind, Kind.CONDITION_CHANGE)
+        self.assertEqual(event.condition_changes, ((old[1], new[0]),))
+        self.assertEqual(event.outgoing, ())
+        self.assertEqual(event.incoming, ())
+        self.assertEqual(event.after_group[1].person, "MarÃ­a Ejemplo")
+        unchanged = dataclasses.replace(after, positions=(old[1], new[1]))
+        self.assertEqual(compare(before, unchanged).events[0].kind, Kind.NO_CHANGE)
+
+    def test_unknown_condition_changes_preserve_kind_without_person_identity_pairs(self):
+        for person in (None, "Ana Ejemplo"):
+            for condition in ("titular", "a.i."):
+                with self.subTest(person=person, condition=condition):
+                    old = position(person, condition="titular", evidence="old card")
+                    new = position(person, condition=condition, evidence="new card")
+                    before = observation(old, evidence="old page")
+                    after = observation(new, observed_at=T2, evidence="new page")
+                    saved_before = dataclasses.asdict(before)
+                    saved_after = dataclasses.asdict(after)
+                    result = compare(before, after)
+                    self.assertEqual(result.disposition, Disposition.COMPARED)
+                    self.assertIs(result.baseline, after)
+                    self.assertEqual(result.reasons, ())
+                    event, = result.events
+                    self.assertEqual((event.source, event.unit, event.role),
+                                     (after.source, old.unit, old.role))
+                    self.assertEqual(event.kind, Kind.CONDITION_CHANGE
+                                     if condition != old.condition else Kind.NO_CHANGE)
+                    self.assertIs(event.before, old)
+                    self.assertIs(event.after, new)
+                    self.assertEqual(event.before_group, (old,))
+                    self.assertEqual(event.after_group, (new,))
+                    self.assertEqual(event.outgoing, ())
+                    self.assertEqual(event.incoming, ())
+                    self.assertIs(event.previous_observed_at, before.observed_at)
+                    self.assertIs(event.detected_at, after.observed_at)
+                    self.assertEqual((event.previous_evidence, event.current_evidence),
+                                     ("old page", "new page"))
+                    self.assertIsNone(event.effective_date)
+                    self.assertEqual(dataclasses.asdict(before), saved_before)
+                    self.assertEqual(dataclasses.asdict(after), saved_after)
+                    self.assertEqual(event.condition_changes,
+                                     ((old, new),) if person is not None
+                                     and condition != old.condition else ())
+
+    def test_group_duplicate_equivalent_person_and_unknown_membership_reject(self):
+        before = observation(position())
+        cases = [(observation(position("María Ejemplo"), position("MarÃ­a Ejemplo"), observed_at=T2),
+                  "duplicate_position"),
+                 (observation(position(), position(None), observed_at=T2), "ambiguous_membership")]
+        for after, reason in cases:
+            result = compare(before, after)
+            self.assertEqual(result.disposition, Disposition.REJECTED)
+            self.assertIs(result.baseline, before)
+            self.assertEqual(result.reasons, (reason,))
+            self.assertEqual(result.events, ())
+
+    def test_group_missing_role_does_not_assert_departures_and_revision_still_rebaselines(self):
+        before = observation(position(), position("Beatriz Ejemplo"))
+        after = observation(position("Carla Ejemplo", role="Finanzas"), observed_at=T2)
+        review = next(e for e in compare(before, after).events if e.kind == Kind.REVIEW_REQUIRED)
+        self.assertEqual(len(review.before_group), 2)
+        self.assertEqual(review.after_group, ())
+        self.assertEqual(review.outgoing, ())
+        self.assertEqual(review.incoming, ())
+        rebased = compare(before, dataclasses.replace(after, revision="v2"))
+        self.assertEqual(rebased.disposition, Disposition.REBASELINED)
+        self.assertEqual(rebased.events, ())
+        rejected = compare(before, dataclasses.replace(after, validity=Validity.INCOMPLETE))
+        self.assertIs(rejected.baseline, before)
+        self.assertEqual(rejected.events, ())
+
+    def test_group_additions_removals_and_condition_changes_are_not_zipped(self):
+        ana, bea, carla = position(), position("Beatriz Ejemplo"), position("Carla Ejemplo")
+        for old, new, outgoing, incoming in [((ana, bea), (bea,), (ana,), ()),
+                                              ((ana,), (ana, bea, carla), (), (bea, carla))]:
+            event, = compare(observation(*old), observation(*new, observed_at=T2)).events
+            self.assertEqual(event.kind, Kind.MEMBERSHIP_CHANGE)
+            self.assertEqual(event.outgoing, outgoing)
+            self.assertEqual(event.incoming, incoming)
+        updated_bea = dataclasses.replace(bea, condition="interina")
+        event, = compare(observation(ana, bea), observation(updated_bea, carla, observed_at=T2)).events
+        self.assertEqual(event.kind, Kind.POSSIBLE_REPLACEMENT)
+        self.assertEqual(event.condition_changes, ((bea, updated_bea),))
 
     def test_order_independent_and_no_page_evidence_change_trigger(self):
         positions = (position(), position("Carlos Ejemplo", role="Finanzas"))

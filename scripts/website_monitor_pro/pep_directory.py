@@ -19,6 +19,7 @@ class Kind(str, Enum):
     POSSIBLE_DEPARTURE = "possible_departure_successor_unknown"
     FIRST_OBSERVATION = "first_observation"
     CONDITION_CHANGE = "condition_change"
+    MEMBERSHIP_CHANGE = "membership_change"
     REVIEW_REQUIRED = "review_required"
 
 
@@ -61,6 +62,14 @@ class Event:
     detected_at: datetime
     previous_evidence: str
     current_evidence: str
+
+    # Full raw groups, sorted by comparison identity, never zipped into pairs.
+    # Legacy before/after are populated only for singleton groups on each side.
+    before_group: tuple[Position, ...] = ()
+    after_group: tuple[Position, ...] = ()
+    outgoing: tuple[Position, ...] = ()
+    incoming: tuple[Position, ...] = ()
+    condition_changes: tuple[tuple[Position, Position], ...] = ()
 
     # Detection alone never establishes a departure/appointment date.
     effective_date: None = field(default=None, init=False)
@@ -122,23 +131,33 @@ def _validate(observation: Observation) -> tuple[str, ...]:
         return ("invalid_structure",)
     if not observation.positions:
         return ("empty_positions",)
-    keys = set()
+    members: dict[tuple[str, str], set[str | None]] = {}
     for position in observation.positions:
         if (not isinstance(position, Position) or not _text(position.unit)
                 or not _text(position.role) or not _text(position.evidence)
                 or (position.person is not None and not _text(position.person))
                 or (position.condition is not None and not _text(position.condition))):
             return ("invalid_structure",)
-        key = (position.unit, position.role)
-        if key in keys:
-            return ("duplicate_position",)
-        keys.add(key)
     for position in observation.positions:
         try:
-            _person_key(position.person)
+            person_key = _person_key(position.person)
         except ValueError:
             return ("uncertain_person_encoding",)
+        occupants = members.setdefault((position.unit, position.role), set())
+        if person_key in occupants:
+            return ("duplicate_position",)
+        occupants.add(person_key)
+        if None in occupants and len(occupants) > 1:
+            return ("ambiguous_membership",)
     return ()
+
+
+def _groups(observation: Observation) -> dict[tuple[str, str], tuple[Position, ...]]:
+    groups: dict[tuple[str, str], list[Position]] = {}
+    for position in observation.positions:
+        groups.setdefault((position.unit, position.role), []).append(position)
+    return {key: tuple(sorted(positions, key=lambda p: _person_key(p.person) or ''))
+            for key, positions in groups.items()}
 
 
 def _instant(value: datetime) -> timedelta:
@@ -174,26 +193,40 @@ def compare(baseline: Observation | None, current: Observation) -> Comparison:
             or baseline.revision != current.revision):
         return Comparison(Disposition.REBASELINED, current, reasons=("revision_boundary",))
 
-    before = {(p.unit, p.role): p for p in baseline.positions}
-    after = {(p.unit, p.role): p for p in current.positions}
+    before, after = _groups(baseline), _groups(current)
     events = []
     for unit, role in sorted(before.keys() | after.keys()):
-        old, new = before.get((unit, role)), after.get((unit, role))
-        old_name = _person_key(old.person) if old else None
-        new_name = _person_key(new.person) if new else None
-        if new is None:
+        old_group = before.get((unit, role), ())
+        new_group = after.get((unit, role), ())
+        old = {_person_key(p.person): p for p in old_group}
+        new = {_person_key(p.person): p for p in new_group}
+        # None represents a single explicit unknown holder, never a named member.
+        outgoing = tuple(p for p in old_group if p.person is not None and _person_key(p.person) not in new)
+        incoming = tuple(p for p in new_group if p.person is not None and _person_key(p.person) not in old)
+        condition_changes = tuple((p, new[_person_key(p.person)]) for p in old_group
+                                  if p.person is not None and _person_key(p.person) in new
+                                  and p.condition != new[_person_key(p.person)].condition)
+        if not new_group:
             kind = Kind.REVIEW_REQUIRED
-        elif old is None:
+            outgoing = ()  # A missing role does not establish membership departures.
+        elif not old_group or set(old) == {None} and set(new) != {None}:
             kind = Kind.FIRST_OBSERVATION
-        elif old_name == new_name:
-            kind = Kind.CONDITION_CHANGE if old.condition != new.condition else Kind.NO_CHANGE
-        elif old_name is None:
-            kind = Kind.FIRST_OBSERVATION
-        elif new_name is None:
+        elif set(old) == set(new):
+            # Unknown holders retain the legacy classification, not a person pair.
+            unknown_condition_changed = (set(old) == {None}
+                                         and old[None].condition != new[None].condition)
+            kind = (Kind.CONDITION_CHANGE if condition_changes or unknown_condition_changed
+                    else Kind.NO_CHANGE)
+        elif set(new) == {None}:
             kind = Kind.POSSIBLE_DEPARTURE
-        else:
+        elif len(outgoing) == len(incoming) == 1:
             kind = Kind.POSSIBLE_REPLACEMENT
-        events.append(Event(current.source, unit, role, kind, old, new,
+        else:
+            kind = Kind.MEMBERSHIP_CHANGE
+        events.append(Event(current.source, unit, role, kind,
+                            old_group[0] if len(old_group) == 1 else None,
+                            new_group[0] if len(new_group) == 1 else None,
                             baseline.observed_at, current.observed_at,
-                            baseline.evidence, current.evidence))
+                            baseline.evidence, current.evidence,
+                            old_group, new_group, outgoing, incoming, condition_changes))
     return Comparison(Disposition.COMPARED, current, tuple(events))
