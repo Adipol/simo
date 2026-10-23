@@ -92,3 +92,76 @@ was restored and new concurrency evidence retained. No opt-in produced nine skip
 (exit 0); empty and invalid opt-ins each produced nine setup refusals (exit 2), as
 expected. The historical S13 wording in refusal messages is not authorization.
 These are current candidate checks, not production shared-cache or UI proof.
+
+## Isolated Livewire/HTTP prerequisite
+
+The test-only Livewire harness extends the retained review harness. Its HTTP
+kernel has zero bootstrappers: it never loads project bootstrap, providers,
+routes or dotenv. Explicit Auth, Hash, Cookie, Session, Encryption, View and
+Livewire providers use a synthetic key, array session/cache, read-only existing
+Blade views and temporary compiled views. Normal environment/config/provider
+bootstrap events fail closed. Included-file/provider assertions check isolation;
+this is not an operating-system file-access trace.
+
+Four probes establish only this prerequisite:
+
+- Real `Livewire::test()` rendering and signed snapshot, updates, action execution,
+  required/min validation errors and successful rendered state. For example, `AB`
+  fails the minimum length; `Synthetic Value` saves and appears in the output.
+- Disabled mounting returns 404 before its model query. A `beforeExecuting`
+  sentinel observes zero directory queries, not merely zero completed queries.
+- Separate HTTP kernel requests enable the real auth, active-user and inspection
+  permission aliases: guest 401, missing permission 403, allowed active session
+  200, then persisted deactivation redirects and logs out. SessionGuard reloads
+  the actor rather than trusting an already-loaded active User object.
+- The complete existing layout renders through HTTP with synthetic named routes,
+  actor and slot. Vite is stubbed; no build, browser or client JavaScript runs.
+
+`Livewire::test()` bypasses middleware, so only the separate HTTP requests supply
+middleware evidence. The minimal web group contains session/errors middleware,
+not the complete production middleware or CSRF stack. These probes do not prove
+future directory UI behavior, component authorization, feature gating, formal
+review mutations or operational readiness. No production routes or UI change.
+
+### Current bounded verification
+
+The three PHP files are byte-exact historical exports. No meaningful behavioral
+RED applies to this exact port; the results below are fresh functional checks,
+not a newly invented test-first lifecycle.
+
+Verification used the existing immutable PHP image, read-only candidate/vendor
+mounts and a private read-only execution adapter. The adapter changes exactly one
+inherited `public const TARGET` literal to the authorized synthetic test database;
+the tracked parent harness remains unchanged. Fresh resource checks confirmed the
+owned persistent PostgreSQL target, expected image and sole named data volume,
+network none, no exposed ports and a read-only container root. No installer,
+reset, global migration or application bootstrap ran.
+
+The focused command inside that runtime was:
+
+```sh
+php vendor/bin/phpunit --no-configuration --bootstrap vendor/autoload.php --do-not-cache-result tests/Feature/PepDirectory/LivewireHarnessTest.php
+```
+
+Serial checks, each bounded to 30 seconds, observed:
+
+- Absent `PEP_REVIEW_ENGINE`: exit 0, four visible skips, zero assertions, network
+  none; no positive behavior is inferred from this run.
+- Empty and invalid opt-ins: each exit 2, four setup errors, zero assertions,
+  network none. These are expected refusals before Application/connection setup.
+- One `PEP_REVIEW_ENGINE=pgsql` run: exit 0, **4 tests / 229 assertions** on PHP
+  8.5.6 and PHPUnit 11.5.55. PHPUnit reported **2 deprecations**, unsuppressed;
+  the prescribed command did not print their detailed messages. Stderr was empty.
+  No diagnostic rerun or vendor modification was performed.
+
+Read-only exact-row and schema snapshots before/after matched. All **38 retained
+rows** remained unchanged: 6 fuentes, 6 sources, 22 observations, 4 events, zero
+users and reviews. Exactly six tables remained, users again had only `id,label`,
+and no authorization metadata remained. Test DDL, users and permissions rolled
+back in the parent transaction; no committed fixtures were added. Sequence gaps
+are permitted and sequence values were not reset. Source/adapter hashes and the
+inherited documentation prefix were checked without modifying inherited files.
+
+This is writer verification only; independent verification remains a separate
+review gate. No original/diagnostic database, external HTTP, queue, scraper,
+Gemini, live capture, browser or deployment was accessed.
