@@ -367,3 +367,71 @@ review size to preserve its compatibility proof alongside the shared monitor edi
 Differential tests require the isolated runner and an explicitly exported baseline.
 Ordinary collection without that input skips the 85 differential cases; those
 skips are not compatibility proof. The isolated run remains required separately.
+
+## Opt-in synthetic shadow integration runner
+
+`tests/Integration/PepDirectory/shadow_pipeline.py` prepares a bounded integration
+check using committed synthetic DAB/IBC/UMSA fixtures. It does not activate the
+monitor, fetch live pages, bootstrap the application or invoke an installer.
+The real path is response freezing → extraction → comparison → Observer →
+Repository → PostgreSQL. Legacy cleaning, image/browser behavior, alerts and the
+legacy database are mocked; their live behavior and directory completeness are
+not proven by this check. The earlier CLI dispatch proof limitation still applies.
+
+Execution requires explicit `PEP_SHADOW_INTEGRATION_ENGINE=pgsql`. With the
+selector absent, the runner reports one skipped test before third-party imports,
+setup or connections; an empty or other value is a guard error (exit 2).
+Neither opt-out skips nor ordinary CI collection are positive integration proof.
+Do not import the monitor or collect this script through another test runner.
+
+Before enabling it, independently verify the dedicated owned synthetic target's
+container identity, ownership, isolation and database identity. A matching database
+name alone is not authorization. The runner permits only its exact literal libpq
+connection parameters: loopback port 5432, database `pep_chain_tests`, user
+`postgres`, empty password and bounded connection/statement/lock timeouts. Every
+connection checks `current_database()` and `current_user()` before use. Inherited
+environment settings are cleared, dotenv loading is suppressed, and external
+HTTP/socket/process operations and file writes are denied before monitor import.
+Use an already available isolated runtime containing the pinned dependencies from
+`tests/Fixtures/PepDirectory/python-shadow-runtime/requirements.txt`; no install,
+download, build or additional service is implied.
+
+The target must already contain exactly the six expected tables (`fuentes`,
+`users`, `pep_directory_sources`, `pep_directory_observations`,
+`pep_directory_events`, `pep_directory_reviews`), their exact column inventories
+and stable single-column `id` primary keys. An already populated compatible schema
+is supported additively, with at most 10,000 retained rows per table. Snapshot
+checks compare schema metadata and every pre-existing row by primary key; the
+runner neither resets nor reinstalls the schema. Run serially without concurrent
+writers, against the one independently verified persistent test environment.
+
+Each enabled run uses fresh UUID-based source identities and random positive
+parent IDs. A successful three-test run is expected to add **3 fuentes, 3 sources,
+11 observations and 2 events**, with no users or reviews added. For example, the
+DAB replacement produces one proposal while rejected captures retain its prior
+baseline. IBC retains whole holder groups without arbitrary pairings; UMSA checks
+reversible encoding and excludes JavaScript/undeclared-charset/fallback captures.
+No original or diagnostic data is used. All existing rows and schema must remain
+unchanged. Inserts commit incrementally: failure can leave partial synthetic
+additions. There is **no reset, rollback of the whole run, or cleanup**; retain
+state and inspect failures rather than deleting data or reinstalling.
+
+For a separately authorized run, stdout should contain `BEFORE` metadata,
+`BOUNDARY`, 11 `RECEIPT` records, a three-test `OK` summary, `AFTER` preservation
+metadata and `CONNECTIONS`. Require exit 0, matching schema hashes and retained
+fingerprint, `preexisting_unchanged=true`, exactly the expected additions,
+`all_closed=true` and an empty `forbidden_calls` list. Expected opened connections
+are 12 (one control plus 11 eligible captures). Do not treat an `AFTER` record
+alone as success: partial failures can still preserve earlier rows.
+
+Parent and independent executions each passed three integration tests with exit
+0 and empty stderr on the dedicated synthetic PostgreSQL target. The independent
+run preserved all 19 pre-existing rows and the schema, adding exactly three
+fuentes, three sources, eleven observations and two events. Each run closed all
+12 connections and reported no forbidden calls. The independent opt-out check
+skipped one test with exit 0; empty and unsupported engine values were rejected
+with exit 2. These results establish bounded synthetic integration, not live
+capture, browser execution or operational readiness. Static checks and CI skips
+are not substitutes for this separately executed positive proof.
+No database execution, monitor import, container launch, operational activation
+or deployment is authorized by this documentation.
