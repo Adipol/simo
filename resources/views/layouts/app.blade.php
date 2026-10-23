@@ -58,6 +58,13 @@
                 Cambios PEP
             </a>
 
+            @if(config('pep_directory.ui_enabled', false))
+                @can('ver cambios pep')
+                    <a href="{{ route('pep.directorio') }}" wire:navigate
+                       class="simo-sidebar-link {{ request()->routeIs('pep.directorio') ? 'simo-sidebar-link-active' : '' }}">Directorio PEP</a>
+                @endcan
+            @endif
+
             @can('gestionar resultados')
             <a href="{{ route('gaceta.eventos') }}"
                class="simo-sidebar-link {{ request()->routeIs('gaceta.eventos') ? 'simo-sidebar-link-active' : '' }}">
