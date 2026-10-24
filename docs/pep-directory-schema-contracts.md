@@ -172,7 +172,7 @@ Test-first correction evidence (PHP 8.5.6 / PHPUnit 11.5.55):
   wrapper verified the fixture and both validator hashes unchanged and zero
   residual invocation-created temporary directories, preserving the test exit.
   Exact commands, separate stdout/stderr/exit receipts and the wrapper are retained
-  as ignored local evidence under `storage/app/pep-directory-delivery/t12-portability-fix/`.
+  as ignored local evidence outside the public delivery.
 
 These are historical local portability results, not a current-candidate CI result. Cleanup on normal
 completion is observed; individual setup/process failure paths were not separately

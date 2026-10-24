@@ -13,7 +13,7 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Spatie\Permission\PermissionRegistrar;
 
-/** Dormant internal lifecycle. No transport adapter, approval or runtime eligibility authority. */
+/** Dormant configuration lifecycle. Manual capture grants no approval or detection activation. */
 final class DirectoryPreviewService
 {
     public function __construct(private readonly PreviewCompiler $compiler) {}
@@ -34,6 +34,44 @@ final class DirectoryPreviewService
             $this->receipt($source, $currentActor, 'register', 'Human registration', []);
             return $source->fresh();
         });
+    }
+
+    /** Manual server capture only; no caller transaction may span external work. */
+    public function captureSource(int $sourceId, ProcessCaptureTransport $transport, User $actor, ConfigurationDecisionData $decision): PepDirectoryCapture
+    {
+        $db = (new PepDirectorySource())->getConnection();
+        $this->captureIdle($db);
+        $name = $db->getName();
+        $before = $db->transaction(function () use ($name, $sourceId, $actor, $decision): array {
+            [$fuente, $source] = $this->locked($name, $sourceId, $actor, $decision);
+            return $this->captureBinding($fuente, $source);
+        });
+        $this->captureIdle($db);
+        $page = $transport->capture($before['url']);
+        $this->captureIdle($db);
+        return $db->transaction(function () use ($name, $sourceId, $actor, $decision, $before, $page): PepDirectoryCapture {
+            [$fuente, $source] = $this->locked($name, $sourceId, $actor, $decision);
+            if ($before !== $this->captureBinding($fuente, $source)) {
+                throw new ConfigurationConflictException($decision->expectedVersion, $source->eligibility_version);
+            }
+            return $this->recordCapture($sourceId, $page->capture->withTransport($page->peerIp, $page->tlsVerified), $actor, $decision);
+        });
+    }
+
+    private function captureIdle(\Illuminate\Database\Connection $db): void
+    {
+        if ($db->transactionLevel() !== 0 || $db->getPdo()->inTransaction()) {
+            throw new \App\Exceptions\PepDirectory\CaptureException();
+        }
+    }
+
+    private function captureBinding(Fuente $fuente, PepDirectorySource $source): array
+    {
+        $this->require($fuente->activo && is_string($fuente->url));
+        return ['fuente_id' => $fuente->id, 'url' => $fuente->url, 'tipo' => $fuente->tipo,
+            'identity' => $source->identity, 'version' => $source->eligibility_version,
+            'draft' => $source->draft_config_id, 'preview' => $source->current_preview_id,
+            'approval' => $source->approved_decision_id];
     }
 
     public function recordCapture(int $sourceId, ServerCaptureData $capture, User $actor, ConfigurationDecisionData $decision): PepDirectoryCapture

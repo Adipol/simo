@@ -1,11 +1,21 @@
 <div class="space-y-6">
     <header>
         <h1 class="text-2xl font-bold text-slate-800">Configuración de directorios</h1>
-        <p class="text-sm text-slate-600">Asocie unidad, cargo y persona sobre una captura almacenada. Confirmar no activa la detección.</p>
+        <p class="text-sm text-slate-600">Elija una fuente, obtenga su página y asocie unidad, cargo y persona. Revise la vista previa antes de confirmar. Confirmar no activa la detección.</p>
         <a href="{{ route('pep.directorio') }}" wire:navigate class="simo-btn">Ver eventos del directorio</a>
     </header>
     <section class="rounded-lg border border-slate-200 bg-white p-4 space-y-3" aria-labelledby="sources-heading">
-        <h2 id="sources-heading" class="font-semibold">1. Fuente configurable existente</h2>
+        <h2 id="sources-heading" class="font-semibold">1. Elegir fuente PEP existente</h2>
+        @if($this->canManage)
+            <details><summary>Seleccionar una fuente activa para configurar</summary>
+                <div class="flex flex-wrap gap-2 mt-3">
+                    @forelse($this->availableFuentes as $fuente)
+                        <button type="button" wire:key="available-fuente-{{ $fuente->id }}" wire:click="useFuente({{ $fuente->id }})" wire:loading.attr="disabled" class="simo-btn">{{ $fuente->nombre ?? $fuente->url }}</button>
+                    @empty<p>No hay fuentes activas disponibles.</p>@endforelse
+                </div>
+            </details>
+        @endif
+        <p class="text-sm text-slate-600">Seleccionar registra la configuración si hace falta; no modifica la URL ni activa la detección.</p>
         @forelse($this->sources as $source)
             <button type="button" wire:key="configuration-source-{{ $source->id }}" wire:click="selectSource({{ $source->id }})" class="simo-btn" aria-pressed="{{ $sourceId === $source->id ? 'true' : 'false' }}">{{ $source->fuente?->nombre ?? $source->identity }}</button>
         @empty
@@ -14,7 +24,17 @@
     </section>
     @if($this->selectedSource)
         <section class="rounded-lg border border-slate-200 bg-white p-4 space-y-3" aria-labelledby="capture-heading">
-            <h2 id="capture-heading" class="font-semibold">2. Captura almacenada — versión mostrada {{ $displayedVersion }}</h2>
+            <h2 id="capture-heading" class="font-semibold">2. Obtener página — versión mostrada {{ $displayedVersion }}</h2>
+            <p class="text-sm break-all">URL de la fuente: {{ $this->selectedSource->fuente?->url }}</p>
+            @if(str_starts_with($this->selectedSource->fuente?->url ?? '', 'http://'))
+                <p class="text-amber-800">Esta fuente usa HTTP sin cifrado.</p>
+            @endif
+            @if($this->canManage)
+                <button type="button" wire:click="capturePage" wire:loading.attr="disabled" class="simo-btn" @disabled(! $this->canCapture)>Obtener página ahora</button>
+                <span wire:loading wire:target="capturePage" role="status">Obteniendo página…</span>
+                @unless($this->canCapture)<p>Captura manual no disponible: requiere una fuente activa, habilitación explícita, intérprete configurado y una decisión sin conflicto.</p>@endunless
+            @endif
+            <p class="text-sm text-slate-600">Sin redirecciones ni reintentos automáticos. Puede seguir usando una captura almacenada.</p>
             @forelse($this->captures as $capture)
                 <button type="button" wire:key="configuration-capture-{{ $capture->id }}" wire:click="selectCapture({{ $capture->id }})" class="simo-btn" aria-pressed="{{ $captureId === $capture->id ? 'true' : 'false' }}">Captura #{{ $capture->id }} · {{ $capture->captured_at?->format('c') }}</button>
                 <p class="text-xs break-all">SHA256: {{ $capture->content_sha256 }} · Procedencia almacenada: {{ json_encode($capture->provenance, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) }}</p>
@@ -52,7 +72,9 @@
                         @endif
                     </fieldset>
                 @endforeach
-                <p wire:dirty wire:target="directory,record,section,columns,fields.unit.mode,fields.unit.value,fields.unit.scope,fields.role.mode,fields.role.value,fields.person.mode,fields.person.value,fields.condition.mode,fields.condition.value" class="text-amber-800" role="status">Cambios sin previsualizar: la vista almacenada NO refleja las ediciones.</p>
+                <label class="block text-sm"><input type="checkbox" wire:model="separateAiSuffix"> Separar sufijo a.i. del cargo como condición</label>
+                <p class="text-sm text-slate-600">Solo separa el sufijo terminal a.i.; sin marcador, condición no indicada. No se puede combinar con un mapeo separado de condición: corrija la asociación explícitamente.</p>
+                <p wire:dirty wire:target="directory,record,section,columns,separateAiSuffix,fields.unit.mode,fields.unit.value,fields.unit.scope,fields.role.mode,fields.role.value,fields.person.mode,fields.person.value,fields.condition.mode,fields.condition.value" class="text-amber-800" role="status">Cambios sin previsualizar: la vista almacenada NO refleja las ediciones.</p>
                 @if($dirty)<p class="text-amber-800">Cambios sin previsualizar: la vista almacenada NO refleja las ediciones.</p>@endif
                 <label class="block text-sm">Motivo de la publicación o decisión (obligatorio, máximo 10000 caracteres)<textarea wire:model="reason" maxlength="10000" class="simo-input block w-full"></textarea></label>
                 <button type="submit" class="simo-btn" wire:loading.attr="disabled" @disabled($captureId === null || ! $this->canGenerate)>Generar / corregir vista previa sobre esta captura</button>

@@ -88,6 +88,10 @@ final class DirectoryConfigurationUiTest extends PepDirectoryLivewireTestCase
             }
             $config = ['columns' => $d['columns'] ?? null, 'directory' => $d['directory'], 'fields' => $pairs,
                 'record' => $d['record'], 'section' => $d['section'] ?? null, 'source' => $d['source'], 'url' => $d['url']];
+            if (isset($d['role_condition'])) {
+                $config['role_condition'] = $d['role_condition'];
+                ksort($config);
+            }
             $encode = static fn (array $v): string => json_encode($v, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
             $canonical = $encode(['config' => $config, 'contract' => 'configured-html-v1']);
             $revision = 'configured-html-v1:'.hash('sha256', $canonical);
@@ -119,6 +123,96 @@ final class DirectoryConfigurationUiTest extends PepDirectoryLivewireTestCase
             'captured_at' => '2026-10-18T12:00:00Z', 'encoding' => 'utf-8', 'provenance' => ['adapter' => 'SYNTHETIC UI fixture'],
         ]), $actor, $this->decision(1));
         return [$source->fresh(), $stored];
+    }
+
+    public function test_use_fuente_registers_once_without_capture_or_approval_and_requires_manage_permission(): void
+    {
+        $this->enable();
+        $actor = $this->syntheticUser();
+        $actor->givePermissionTo(Permission::findOrCreate('gestionar fuentes', 'web'));
+        $this->app->instance(PreviewCompiler::class, $this->compiler());
+        $fuente = $this->db->table('fuentes')->insertGetId([
+            'label' => 'Synthetic manual registration', 'url' => 'https://example.invalid/manual',
+            'tipo' => 'directorio', 'activo' => true,
+        ]);
+        $page = Livewire::actingAs($actor)->test(ConfiguracionDirectorio::class)
+            ->call('useFuente', $fuente)->assertHasNoErrors()->assertSet('displayedVersion', 1)
+            ->assertSet('captureId', null)->assertSet('previewId', null);
+        $source = PepDirectorySource::query()->where('fuente_id', $fuente)->sole();
+        $page->assertSet('sourceId', $source->id);
+        self::assertTrue($source->configurable);
+        self::assertNull($source->approved_decision_id);
+        self::assertSame('register', $source->configurationDecisions->sole()->action);
+        $before = $source->getRawOriginal();
+        $page->call('useFuente', $fuente)->assertHasNoErrors()->assertSet('sourceId', $source->id);
+        self::assertSame($before, $source->fresh()->getRawOriginal());
+        self::assertSame(1, PepDirectorySource::query()->where('fuente_id', $fuente)->count());
+        self::assertSame(1, $source->fresh()->configurationDecisions->count());
+        self::assertSame(0, $this->db->table('pep_directory_captures')->count());
+        self::assertSame(0, $this->db->table('pep_directory_previews')->count());
+
+        $actor->revokePermissionTo('gestionar fuentes');
+        Livewire::actingAs($actor)->test(ConfiguracionDirectorio::class)
+            ->call('useFuente', $fuente)->assertForbidden();
+        self::assertSame($before, $source->fresh()->getRawOriginal());
+    }
+
+    public function test_disabled_capture_rejects_action_without_resolving_transport_or_changing_stored_capture(): void
+    {
+        $this->enable();
+        $actor = $this->syntheticUser();
+        $actor->givePermissionTo(Permission::findOrCreate('gestionar fuentes', 'web'));
+        [$source, $capture] = $this->source($actor);
+        $this->app['config']->set('pep_directory.capture_enabled', false);
+        $this->app['config']->set('pep_directory.preview_interpreter', '/synthetic/never-executed');
+        $this->app->instance(PreviewCompiler::class, $this->compiler());
+        $this->app->bind(\App\Services\PepDirectory\ProcessCaptureTransport::class, static function (): never {
+            throw new \LogicException('Disabled capture resolved transport');
+        });
+        $before = $source->fresh()->getRawOriginal();
+        $decisions = $source->fresh()->configurationDecisions->count();
+        $page = Livewire::actingAs($actor)->test(ConfiguracionDirectorio::class)
+            ->call('selectSource', $source->id)->assertSet('captureId', $capture->id)
+            ->assertSet('displayedVersion', 2);
+        $page->call('capturePage')->assertForbidden();
+        self::assertSame($before, $source->fresh()->getRawOriginal());
+        self::assertSame($decisions, $source->fresh()->configurationDecisions->count());
+        self::assertSame([$capture->id], $this->db->table('pep_directory_captures')->pluck('id')->all());
+        // The transaction remains intact: no attempt to bypass captureIdle or perform network capture.
+        self::assertGreaterThan(0, $this->db->transactionLevel());
+    }
+
+    public function test_suffix_option_persists_and_reloads_from_synthetic_stored_preview(): void
+    {
+        $this->enable();
+        $actor = $this->syntheticUser();
+        $actor->givePermissionTo(Permission::findOrCreate('gestionar fuentes', 'web'));
+        [$source, $capture] = $this->source($actor);
+        $this->app['config']->set('pep_directory.preview_interpreter', '/synthetic/never-executed');
+        $this->app->instance(PreviewCompiler::class, $this->compiler());
+        $page = Livewire::actingAs($actor)->test(ConfiguracionDirectorio::class)
+            ->call('selectSource', $source->id)->assertSet('separateAiSuffix', false)
+            ->set('directory', 'table')->set('record', 'tr')->set('columns', '2')
+            ->set('fields.unit.mode', 'constant')->set('fields.unit.value', 'Synthetic unit')
+            ->set('fields.role.mode', 'column')->set('fields.role.value', '0')
+            ->set('fields.person.mode', 'column')->set('fields.person.value', '1')
+            ->set('separateAiSuffix', true)->assertSet('dirty', true)
+            ->set('reason', 'Separación sintética de sufijo')->call('publish')->assertHasNoErrors()
+            ->assertSet('displayedVersion', 3)->assertSet('captureId', $capture->id);
+        self::assertSame('ai_suffix', $source->fresh()->draftConfiguration->declaration['role_condition']);
+        self::assertNull($source->fresh()->approved_decision_id);
+        $page->set('separateAiSuffix', false)->assertSet('dirty', true)
+            ->call('reloadSource')->assertSet('separateAiSuffix', true)->assertSet('dirty', false)
+            ->assertSet('reason', '')->assertSet('displayedVersion', 3);
+        Livewire::actingAs($actor)->test(ConfiguracionDirectorio::class)
+            ->call('selectSource', $source->id)->assertSet('separateAiSuffix', true);
+        $page->set('separateAiSuffix', false)->set('reason', 'Sin separación de sufijo')
+            ->call('publish')->assertHasNoErrors()->assertSet('displayedVersion', 4);
+        self::assertArrayNotHasKey('role_condition', $source->fresh()->draftConfiguration->declaration);
+        $page->set('separateAiSuffix', true)->call('reloadSource')
+            ->assertSet('separateAiSuffix', false)->assertSet('dirty', false);
+        self::assertSame(1, $this->db->table('pep_directory_captures')->count());
+        self::assertNull($source->fresh()->approved_decision_id);
     }
 
     public function test_disabled_initial_and_hydrated_access_never_query_pep_with_absent_configuration_schema(): void

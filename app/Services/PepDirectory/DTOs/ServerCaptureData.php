@@ -36,6 +36,16 @@ final readonly class ServerCaptureData
         return new self($input['raw_body'], ['status' => $input['status'], 'source_url' => $input['final_url'], 'observed_at' => $observed, 'encoding' => $input['encoding']], $input['requested_url'], $input['final_url'], ['adapter' => $input['provenance']['adapter'], 'captured_at_input' => $time]);
     }
 
+    /** Internal producer metadata; never a browser-supplied origin assertion. */
+    public function withTransport(string $peerIp, bool $tlsVerified): self
+    {
+        $scheme = parse_url($this->requestedUrl, PHP_URL_SCHEME);
+        self::check(filter_var($peerIp, FILTER_VALIDATE_IP) !== false && $tlsVerified === ($scheme === 'https')
+            && ($this->provenance['adapter'] ?? null) === 'public-'.$scheme.'-pinned-v1');
+        return new self($this->body, $this->metadata, $this->requestedUrl, $this->finalUrl,
+            $this->provenance + ['transport' => ['peer_ip' => $peerIp, 'tls_verified' => $tlsVerified]]);
+    }
+
     private static function check(bool $condition): void
     {
         if (! $condition) {

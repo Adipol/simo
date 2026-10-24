@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace App\Livewire\Pep;
 
-use App\Exceptions\PepDirectory\{ConfigurationConflictException, PreviewCompilationException};
-use App\Models\{PepDirectoryCapture, PepDirectoryPreview, PepDirectorySource, User};
-use App\Services\PepDirectory\{ConfigurationService, DirectoryPreviewService, PreviewCompiler};
+use App\Exceptions\PepDirectory\{CaptureException, ConfigurationConflictException, PreviewCompilationException};
+use App\Models\{Fuente, PepDirectoryCapture, PepDirectoryPreview, PepDirectorySource, User};
+use App\Services\PepDirectory\{ConfigurationService, DirectoryPreviewService, PreviewCompiler, ProcessCaptureTransport};
 use App\Services\PepDirectory\DTOs\{ConfigurationDecisionData, DirectoryMappingData};
 use Illuminate\Contracts\View\View;
 use Illuminate\Support\Collection;
@@ -36,6 +36,7 @@ final class ConfiguracionDirectorio extends Component
     public string $record = '';
     public string $section = '';
     public string $columns = '';
+    public bool $separateAiSuffix = false;
     public array $fields = [];
     public string $reason = '';
     protected User $actor;
@@ -50,6 +51,55 @@ final class ConfiguracionDirectorio extends Component
         app(PermissionRegistrar::class)->forgetCachedPermissions();
         abort_unless($actor->checkPermissionTo('ver cambios pep'), 403);
         $this->actor = $actor;
+    }
+
+    #[Computed]
+    public function availableFuentes(): Collection
+    {
+        return $this->canManage ? Fuente::query()->where('activo', true)->orderBy('id')->get() : collect();
+    }
+
+    public function useFuente(int $id): void
+    {
+        abort_unless($this->canManage, 403);
+        Fuente::query()->where('activo', true)->findOrFail($id);
+        $source = app(DirectoryPreviewService::class)->register($id, $this->actor);
+        unset($this->sources);
+        $this->selectSource($source->id);
+    }
+
+    #[Computed]
+    public function canCapture(): bool
+    {
+        return $this->canManage && ! $this->conflict && $this->sourceId !== null
+            && config('pep_directory.capture_enabled', false) === true
+            && app()->bound(ProcessCaptureTransport::class) && $this->canGenerate
+            && (bool) $this->selectedSource?->fuente?->activo;
+    }
+
+    public function capturePage(): void
+    {
+        abort_unless($this->canCapture && $this->displayedVersion !== null, 403);
+        $decision = ConfigurationDecisionData::fromArray(['expected_version' => $this->displayedVersion,
+            'reason' => 'Manual capture requested from directory configuration.']);
+        $this->resetValidation();
+        $this->notice = '';
+        try {
+            $capture = app(DirectoryPreviewService::class)->captureSource($this->sourceId,
+                app(ProcessCaptureTransport::class), $this->actor, $decision);
+            $this->captureId = $capture->id;
+            // Keep our receipt version, never silently adopt a later concurrent decision.
+            $this->displayedVersion = $decision->expectedVersion + 1;
+            $this->dirty = true;
+            $this->notice = 'Página obtenida. Revise las asociaciones y genere una vista previa antes de confirmar.';
+            unset($this->selectedSource, $this->captures);
+        } catch (ConfigurationConflictException) {
+            $this->conflict = true;
+            $this->notice = '';
+        } catch (CaptureException) {
+            $this->notice = '';
+            $this->addError('capture', 'No se pudo obtener la página. La captura seleccionada no cambió.');
+        }
     }
 
     #[Computed]
@@ -104,6 +154,7 @@ final class ConfiguracionDirectorio extends Component
         $configuration = $source->draftConfiguration;
         abort_if($configuration !== null && $configuration->source_id !== $id, 404);
         $mapping = $configuration?->declaration ?? [];
+        $this->separateAiSuffix = ($mapping['role_condition'] ?? null) === 'ai_suffix';
         foreach (['directory', 'record', 'section', 'columns'] as $key) {
             $this->{$key} = (string) ($mapping[$key] ?? '');
         }
@@ -135,7 +186,7 @@ final class ConfiguracionDirectorio extends Component
 
     public function updated(string $property): void
     {
-        if (in_array(explode('.', $property)[0], ['directory', 'record', 'section', 'columns', 'fields'], true)) {
+        if (in_array(explode('.', $property)[0], ['directory', 'record', 'section', 'columns', 'fields', 'separateAiSuffix'], true)) {
             $this->dirty = true;
             $this->notice = '';
         }
@@ -165,6 +216,9 @@ final class ConfiguracionDirectorio extends Component
             $mapping['fields'][$name] = $field['mode'] === 'selector'
                 ? ['selector' => $field['value'], 'scope' => $field['scope']]
                 : [$field['mode'] => $field['mode'] === 'column' ? (int) $field['value'] : $field['value']];
+        }
+        if ($this->separateAiSuffix) {
+            $mapping['role_condition'] = 'ai_suffix';
         }
         return DirectoryMappingData::fromArray($mapping);
     }
