@@ -19,7 +19,9 @@ final class PepDirectorySource extends Model
 
     protected function casts(): array
     {
-        return ['version' => 'integer', 'fuente_id' => 'integer', 'baseline_observation_id' => 'integer'];
+        return ['version' => 'integer', 'fuente_id' => 'integer', 'baseline_observation_id' => 'integer',
+            'configurable' => 'boolean', 'eligibility_version' => 'integer', 'draft_config_id' => 'integer',
+            'current_preview_id' => 'integer', 'approved_decision_id' => 'integer'];
     }
 
     public function fuente(): BelongsTo
@@ -40,6 +42,26 @@ final class PepDirectorySource extends Model
     public function events(): HasMany
     {
         return $this->hasMany(PepDirectoryEvent::class, 'source_id')->orderBy('id');
+    }
+
+    public function draftConfiguration(): BelongsTo
+    {
+        return $this->belongsTo(PepDirectoryConfiguration::class, 'draft_config_id');
+    }
+
+    public function currentPreview(): BelongsTo
+    {
+        return $this->belongsTo(PepDirectoryPreview::class, 'current_preview_id');
+    }
+
+    public function approvedDecision(): BelongsTo
+    {
+        return $this->belongsTo(PepDirectoryConfigurationDecision::class, 'approved_decision_id');
+    }
+
+    public function configurationDecisions(): HasMany
+    {
+        return $this->hasMany(PepDirectoryConfigurationDecision::class, 'source_id')->orderBy('sequence');
     }
 
     public function scopeWithHolderHistory(Builder $query): void
