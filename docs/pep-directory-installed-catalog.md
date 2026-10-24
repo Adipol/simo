@@ -115,3 +115,73 @@ failure (exit1), then passed all six methods after the correction (exit0). The d
 six-method regression also passed (exit0). Adapter and fixed SQL are unchanged;
 these remain offline mock tests, not real-driver parity. The initial failed CI is
 retained separately from subsequent verification.
+
+## Namespace ACL and extension-membership evidence
+
+This section extends the preceding delivery records; their verification results remain
+attributed to their original boundaries, not to this change. The fixed SQL projection and
+both collectors now use `pg17-native-collection-v2`. This is a **collection format version**,
+not evidence that qualification V2 is installed, admitted or operationally enabled.
+
+The added `namespaces` section preserves the public schema's semantic identity, owner and
+native ACL array, including the distinction between null and an empty array. The added
+`extension_memberships` section exposes extension name/namespace and each public member's
+native type, schema and identity, including the public namespace itself (whose member schema
+is null). Unknown extensions and member kinds remain evidence, not approved objects. These
+sections do not establish complete cross-schema dependency closure or a security policy.
+Both adapters reject malformed fields and the old collection-format envelope without
+normalizing native ACL entries or inferring admission.
+
+The PHP coverage fixture was included but not executed in the initial offline phase;
+its subsequent bounded execution is recorded below. It changes PUBLIC CREATE privilege or attaches the existing users table to the already
+installed plpgsql extension only inside nested rollback transactions. It independently
+compares native namespace owner/ACL and all raw extension-membership edges, including
+implicit type edges, after rollback. Missing ownership or pre-existing target membership
+must stop execution; no install, detach, alternate target or repair is authorized.
+The inherited migration hash and package-aware Python import are retained unchanged.
+
+Initial verification was offline only: **7 Python unittest methods passed in package mode
+and 7 in direct mode**, once each, exit0, empty stdout and verbose stderr ending in `OK`.
+The new method covers null/empty/native ACL arrays, unknown membership preservation,
+malformed-field rejection and old-format rejection using mock cursors. No PostgreSQL driver,
+PHP runtime, Docker, database, network or application was used. This historical executable
+port is ordinary verification, not a new RED/GREEN cycle. There is no fresh database
+preservation proof, driver-parity proof, permanent qualification installation, sequence-value
+comparison, restart-durability proof or operational authorization. Positive PHP coverage,
+fresh target preconditions and full raw before/after preservation remain pending separately.
+
+A subsequent authorized synthetic-runtime attempt stopped at its first target identity check:
+the exact retained target was stopped, not running. No restart, database query, PHP guard
+or positive test was performed. Thus no new PHP/database proof or fresh before/after
+preservation is established; all such checks remain pending. The identity receipt and
+failed preflight wrapper were retained without retry.
+
+### Authorized continuation — bounded writer verification
+
+After explicit permission to start the same retained container once, its full pinned
+identity, ownership, image, sole persistent volume and isolation were checked before
+that single successful start. Bounded readiness and fresh running-identity checks passed;
+no data installation, reset, substitute target or further restart was used.
+
+With PHP 8.5.6 / PHPUnit 11.5.55, one positive collection invocation passed **4 tests /
+271 assertions**, and one positive coverage invocation passed **2 tests / 59 assertions**,
+both exit0 with empty stderr. Once per class, absent opt-in yielded 4 and 2 skips/exit0;
+empty and invalid opt-ins each yielded 4 and 2 setup errors/exit2 before connection.
+These guard refusals are not positive test proof. No Python suite was rerun.
+
+The coverage preflight established existing postgres ownership of plpgsql and users,
+no target extension membership, and unchanged native public owner/ACL. PUBLIC CREATE was
+initially absent; the fixture exposed its transactional grant in the collected evidence.
+The existing users table's transactional plpgsql attachment exposed two automatic type
+membership edges. Both fixtures confirmed native namespace owner/ACL and all four original
+raw extension-membership edges restored after nested rollback; outer rollbacks left the
+custom function/trigger absent. No detach, extension installation or durable DDL was used.
+
+Full raw read-only snapshots, decoded with Python exact integers, matched the saved prior
+independent baseline for all six tables / 38 rows and existing schema fields, including
+28 internal FK triggers. Fresh native namespace owner/ACL and all database-wide extension
+membership edges also matched exactly before and after each positive class. All six
+executable source files and 769 protected hashes remained unchanged. This is bounded
+writer proof only: independent verification and delivery remain pending. It does not
+establish PHP/Python driver parity, installed qualification V2 admission, sequence-value
+preservation, operational readiness or general restart durability.

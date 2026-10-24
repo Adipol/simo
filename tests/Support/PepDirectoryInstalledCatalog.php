@@ -30,7 +30,7 @@ final class PepDirectoryInstalledCatalog
             throw new RuntimeException('Invalid catalog result.');
         }
         $catalog = json_decode($row->catalog, true, 512, JSON_THROW_ON_ERROR);
-        $sections = ['metadata', 'relations', 'sequences', 'columns', 'constraints', 'indexes', 'triggers', 'routines', 'policies', 'objects'];
+        $sections = ['metadata', 'namespaces', 'extension_memberships', 'relations', 'sequences', 'columns', 'constraints', 'indexes', 'triggers', 'routines', 'policies', 'objects'];
         if (!is_array($catalog) || count($catalog) !== count($sections)) {
             throw new RuntimeException('Invalid catalog envelope.');
         }
@@ -47,7 +47,27 @@ final class PepDirectoryInstalledCatalog
                 }
             }
         }
-        if (($catalog['metadata']['projection'] ?? null) !== 'pg17-native-collection-v1'
+        foreach ($catalog['namespaces'] as $entry) {
+            if (($entry['type'] ?? null) !== 'schema' || !is_string($entry['owner'] ?? null)
+                || !array_key_exists('acl', $entry)
+                || ($entry['acl'] !== null && (!is_array($entry['acl']) || !array_is_list($entry['acl'])
+                    || count(array_filter($entry['acl'], 'is_string')) !== count($entry['acl'])))) {
+                throw new RuntimeException('Invalid catalog namespace entry.');
+            }
+        }
+        foreach ($catalog['extension_memberships'] as $entry) {
+            if (($entry['type'] ?? null) !== 'extension membership'
+                || !array_key_exists('member_schema', $entry)
+                || ($entry['member_schema'] !== null && !is_string($entry['member_schema']))) {
+                throw new RuntimeException('Invalid catalog membership entry.');
+            }
+            foreach (['extension', 'extension_namespace', 'member_type', 'member_identity'] as $key) {
+                if (!is_string($entry[$key] ?? null)) {
+                    throw new RuntimeException('Invalid catalog membership entry.');
+                }
+            }
+        }
+        if (($catalog['metadata']['projection'] ?? null) !== 'pg17-native-collection-v2'
             || ($catalog['metadata']['server_version_num'] ?? null) !== (int) $context->version
             || ($catalog['metadata']['user'] ?? null) !== 'postgres'
             || ($catalog['metadata']['schemas'] ?? null) !== ['public']) {
