@@ -102,3 +102,41 @@ Later required: independent review, separately authorized permanent
 owned-target rollout, real multi-connection blocking/deadlock tests, approval and
 Repository lifecycle integration, trusted bridge/panel, and operational authorization.
 Uncommitted DDL on one connection cannot prove concurrency safety.
+
+## SQLite test-discovery correction
+
+Initial CI `40046036880` failed in SQLite: unrelated `RefreshDatabase` tests
+(such as `ResultadosPendingCountTest`) discover all public migrations, so the
+engine rejection aborted their setup. PostgreSQL and Python CI jobs passed.
+This was global migration discovery, not an attempted qualification approval.
+
+`up()` now returns before DDL only for the conjunction of SQLite, Laravel's
+`runningUnitTests()` (application environment `testing`), and the
+`PHPUNIT_COMPOSER_INSTALL` marker. For example, PHPUnit SQLite setup omits this
+migration; SQLite migration execution without the marker still throws the exact
+unsupported-engine exception. All other non-PostgreSQL contexts still reject.
+The PostgreSQL DDL/trigger body and refusing `down()` are byte-for-byte unchanged.
+
+Laravel may mark this test-only omission as migrated **without installing any
+qualification objects**. It is not V2 attestation, SQLite operational support,
+or a deployment path. Test environment alone does not enable the exception.
+
+Observed PHP 8.5.6 / PHPUnit 11.5.55 verification, each command once:
+
+- RED: 1 test / 5 assertions / 1 failure, exit 1, showing the original rejection
+  instead of the required test-only return; GREEN: 1 test / 5 assertions, exit 0.
+- Compatibility suite: 6 tests / 45 assertions, exit 0. Public `up()` / `down()`
+  probes use replaced database/schema facades and isolated child processes to
+  exercise absent-marker, non-testing, unsupported-driver and refusal cases.
+- Pure schema-contract suite: 5 tests / 428 assertions, exit 0; portable helper,
+  contract fixture and validator pins unchanged.
+- Base/candidate differential: 18 public entry-point contexts, exactly one
+  intentional difference (testing SQLite with marker); 17 unchanged outcomes.
+  PostgreSQL reaches only a mocked first-Schema sentinel: **not integration proof**.
+
+All runtime commands used the existing immutable PHP image, network disabled,
+read-only checkout/vendor and bounded `/tmp` tmpfs; all had empty stderr and a
+30-second outer limit. No DB connection, SQLite engine execution, project
+bootstrap, Artisan, installation, persistent-target mutation or CI rerun occurred.
+The earlier transaction proof above is historical evidence, not newly rerun here;
+full SQLite migration-discovery CI remains to be verified on the corrected candidate.

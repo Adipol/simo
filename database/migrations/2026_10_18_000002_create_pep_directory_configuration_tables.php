@@ -11,6 +11,13 @@ return new class extends Migration
 {
     public function up(): void
     {
+        // Global SQLite test discovery must not install PostgreSQL qualification.
+        if (DB::connection()->getDriverName() === 'sqlite'
+            && app()->runningUnitTests()
+            && defined('PHPUNIT_COMPOSER_INSTALL')) {
+            return;
+        }
+
         if (DB::connection()->getDriverName() !== 'pgsql') {
             throw new RuntimeException('Directory qualification requires PostgreSQL; SQLite approval is unsupported.');
         }
