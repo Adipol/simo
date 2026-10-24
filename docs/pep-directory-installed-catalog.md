@@ -80,3 +80,38 @@ No Python implementation/parity, additional ACL/extension fixture coverage, arbi
 stability, permanent V2 installation, concurrency, production-cache behavior, restart durability,
 sequence-value preservation, rollout or production migration is established here. SQLite was
 not exercised. Exact collector/SQL delivery has no meaningful new behavior-level RED.
+
+## Python cursor adapter — offline protocol proof only
+
+`scripts/website_monitor_pro/tests/pep_directory_installed_catalog.py` provides
+`collect(connection)` using the inherited fixed SQL projection. It imports no DB driver
+and creates no connection, transaction, installation or approval. The caller must first
+establish its authorized target. The adapter expects a tuple-row cursor context manager
+and native integer context version, then a decoded JSON object or JSON string. It preserves
+native values and never commits, rolls back or closes the caller's connection; the cursor
+context exits on success and rejection. Cursor closure relies on that context-manager protocol.
+
+The accompanying `test_pep_directory_installed_catalog.py` passed **6 offline test methods**,
+exit0, in one focused invocation using an existing Python environment directly with `-B`.
+Stdout was empty; stderr contained the verbose unittest results ending in `OK`.
+Mock cursors exercise fixed SQL, typed values, context/envelope/result rejection, missing SQL
+and extra-argument rejection. These are protocol checks only, not actual PostgreSQL driver
+execution, PHP/Python parity, application-runtime proof or permission to connect.
+The exact historical Python port has no meaningful new behavior-level RED; this is ordinary
+functional verification, not a new RED/GREEN cycle.
+
+The PHP collector, shared SQL, existing tests, migration anchors and all other tracked files
+outside this delivery's documentation remain unchanged. No database was accessed for this
+Python verification, so it establishes no fresh database-preservation claim. No runtime image,
+monitor, browser or capture was used. Actual driver parity, additional ACL/extension fixtures,
+installed-schema admission and all previously stated limits remain pending.
+
+### Package discovery compatibility
+
+Initial CI exposed a test-only `ModuleNotFoundError` under package discovery; direct
+execution had passed. The test now selects a relative import in package mode and
+keeps its standalone import otherwise. A local package invocation reproduced the
+failure (exit1), then passed all six methods after the correction (exit0). The direct
+six-method regression also passed (exit0). Adapter and fixed SQL are unchanged;
+these remain offline mock tests, not real-driver parity. The initial failed CI is
+retained separately from subsequent verification.
