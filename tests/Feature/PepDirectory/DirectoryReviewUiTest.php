@@ -267,7 +267,7 @@ final class DirectoryReviewUiTest extends PepDirectoryLivewireTestCase
     {
         $result = [];
         foreach ($this->app['router']->getRoutes() as $route) {
-            if ($route->getName() !== 'pep.directorio') {
+            if (! in_array($route->getName(), ['pep.directorio', 'pep.directorio.configuracion'], true)) {
                 $result[] = [$route->getName(), $route->methods(), $route->uri(), $route->gatherMiddleware()];
             }
         }
@@ -310,8 +310,9 @@ final class DirectoryReviewUiTest extends PepDirectoryLivewireTestCase
         $this->get('/pep/directorio')->assertOk()->assertSee('Directorio PEP');
         $enabled = view('layouts.app', ['slot' => $slot])->render();
         self::assertContains('/pep/directorio', $this->publicLinks($enabled));
+        self::assertContains('/pep/directorio/configuracion', $this->publicLinks($enabled));
         self::assertSame($this->publicLinks($old), array_values(array_filter($this->publicLinks($enabled),
-            static fn (string $link): bool => $link !== '/pep/directorio')));
+            static fn (string $link): bool => ! in_array($link, ['/pep/directorio', '/pep/directorio/configuracion'], true))));
         $denied = $this->syntheticUser(allowed: false);
         $this->authenticateSession($denied);
         $this->getJson('/pep/directorio')->assertForbidden();
@@ -331,8 +332,21 @@ final class DirectoryReviewUiTest extends PepDirectoryLivewireTestCase
         $cambio->id = 900001;
         $cambio->setRelation('fuente', $fuente);
         $page = new \Illuminate\Pagination\LengthAwarePaginator([$cambio], 2, 1, 1, ['path' => '/pep/cambios']);
-        $html = view('livewire.pep.cambios', ['fuentes' => collect([$fuente]), 'cambios' => $page,
-            'filtroConPersona' => 'si', 'verDiffId' => null])->render();
+        // Bare Blade rendering does not boot Livewire's pagination component hook.
+        $oldView = \Illuminate\Pagination\Paginator::$defaultView;
+        $oldSimpleView = \Illuminate\Pagination\Paginator::$defaultSimpleView;
+        $theme = config('livewire.pagination_theme', 'tailwind');
+        try {
+            \Illuminate\Pagination\Paginator::defaultView('livewire::'.$theme);
+            \Illuminate\Pagination\Paginator::defaultSimpleView('livewire::simple-'.$theme);
+            $html = view('livewire.pep.cambios', ['fuentes' => collect([$fuente]), 'cambios' => $page,
+                'filtroConPersona' => 'si', 'verDiffId' => null])->render();
+        } finally {
+            \Illuminate\Pagination\Paginator::defaultView($oldView);
+            \Illuminate\Pagination\Paginator::defaultSimpleView($oldSimpleView);
+        }
+        self::assertSame($oldView, \Illuminate\Pagination\Paginator::$defaultView);
+        self::assertSame($oldSimpleView, \Illuminate\Pagination\Paginator::$defaultSimpleView);
         self::assertStringContainsString('wire:model.live="filtroFuente"', $html);
         self::assertStringContainsString('wire:model.live="filtroRevisado"', $html);
         self::assertStringContainsString('wire:model.live="filtroRiesgo"', $html);

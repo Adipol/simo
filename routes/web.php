@@ -56,6 +56,10 @@ Route::middleware(['auth', 'usuario.activo'])->group(function () {
         ->middleware('permission:ver cambios pep')
         ->name('pep.directorio');
 
+    Route::get('/pep/directorio/configuracion', \App\Livewire\Pep\ConfiguracionDirectorio::class)
+        ->middleware('permission:ver cambios pep')
+        ->name('pep.directorio.configuracion');
+
     // PEP Monitor — gestion (admin y supervisor)
     Route::get('/pep/fuentes', Fuentes::class)
         ->middleware('permission:gestionar fuentes')
