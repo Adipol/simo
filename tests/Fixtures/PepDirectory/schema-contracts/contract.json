@@ -85,7 +85,7 @@
       "fuentes": {
         "columns": {
           "id": ["bigint", false, "nextval('fuentes_id_seq'::regclass)"], "label": ["varchar(255)", false, null],
-          "url": ["text", false, null], "tipo": ["varchar(32)", false, null], "activo": ["boolean", false, "true"]
+          "url": ["text", true, null], "tipo": ["varchar(32)", true, null], "activo": ["boolean", false, "true"]
         },
         "constraints": {"fuentes_pkey": "PRIMARY KEY (id)"}, "indexes": {"fuentes_pkey": "UNIQUE btree (id)"}
       },
@@ -169,7 +169,7 @@
       "pep_directory_configurations": {
         "columns": {
           "id": ["bigint", false, "nextval('pep_directory_configurations_id_seq'::regclass)"], "source_id": ["bigint", false, null],
-          "declaration": ["json", false, null], "canonical_bytes": ["bytea", false, null], "revision": ["char(64)", false, null],
+          "declaration": ["json", false, null], "canonical_bytes": ["bytea", false, null], "revision": ["varchar(255)", false, null],
           "binding_url": ["text", false, null], "directory_url": ["text", false, null], "creator_identity": ["varchar(255)", false, null],
           "creator_snapshot": ["json", false, null], "created_at": ["timestamptz(6)", false, "CURRENT_TIMESTAMP"]
         },

@@ -10,7 +10,7 @@ use JsonException;
 final class PepDirectorySchemaContract
 {
     // Complete approved structure, not merely decodable JSON or table counts.
-    private const CONTRACT_SHA256 = '281e3f3d99b9037929907fc4590ff69e94fa1b92d06ce7ea00c6379bf8071037';
+    private const CONTRACT_SHA256 = '48d59444f9d9a045ad1293558a8bbd12f3d111c10fd79945b3e41806b4d901a7';
 
     /** JSON values only; the union deliberately excludes executable objects. */
     public static function validate(array|string|int|float|bool|null $snapshot): string
