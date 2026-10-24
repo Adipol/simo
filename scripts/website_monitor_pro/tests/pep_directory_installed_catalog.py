@@ -6,7 +6,7 @@ from typing import ContextManager, Protocol
 _SQL = Path(__file__).resolve().parents[3] / 'tests/Fixtures/PepDirectory/schema-contracts/installed-pg17.sql'
 _CONTEXT = ("SELECT pg_catalog.current_setting('server_version_num')::integer, "
             "current_user, pg_catalog.current_schemas(false)::text")
-_SECTIONS = ('metadata', 'relations', 'sequences', 'columns', 'constraints', 'indexes',
+_SECTIONS = ('metadata', 'namespaces', 'extension_memberships', 'relations', 'sequences', 'columns', 'constraints', 'indexes',
              'triggers', 'routines', 'policies', 'objects')
 
 
@@ -52,8 +52,20 @@ def collect(connection: Connection) -> dict:
                   or any(type(entry) is not dict or type(entry.get('identity')) is not str
                          for entry in entries)):
                 raise ValueError('Invalid catalog section: ' + section)
+        for entry in catalog['namespaces']:
+            if (entry.get('type') != 'schema' or type(entry.get('owner')) is not str
+                    or 'acl' not in entry
+                    or (entry['acl'] is not None and (type(entry['acl']) is not list
+                        or any(type(acl) is not str for acl in entry['acl'])))):
+                raise ValueError('Invalid catalog namespace entry.')
+        for entry in catalog['extension_memberships']:
+            if (entry.get('type') != 'extension membership' or 'member_schema' not in entry
+                    or (entry['member_schema'] is not None and type(entry['member_schema']) is not str)
+                    or any(type(entry.get(key)) is not str for key in
+                           ('extension', 'extension_namespace', 'member_type', 'member_identity'))):
+                raise ValueError('Invalid catalog membership entry.')
         metadata = catalog['metadata']
-        if (metadata.get('projection') != 'pg17-native-collection-v1'
+        if (metadata.get('projection') != 'pg17-native-collection-v2'
                 or type(metadata.get('server_version_num')) is not int
                 or metadata['server_version_num'] != context[0]
                 or metadata.get('user') != 'postgres' or metadata.get('schemas') != ['public']):

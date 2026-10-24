@@ -28,12 +28,34 @@ WITH relations AS (
     JOIN pg_catalog.pg_namespace n ON n.oid = d.refobjid
     CROSS JOIN LATERAL pg_catalog.pg_identify_object(d.classid, d.objid, d.objsubid) i
     WHERE d.refclassid = 'pg_catalog.pg_namespace'::pg_catalog.regclass AND n.nspname = 'public'
+), extension_memberships AS (
+    SELECT i.*, e.extname AS extension, en.nspname AS extension_namespace
+    FROM pg_catalog.pg_depend d
+    JOIN pg_catalog.pg_extension e ON d.refclassid = 'pg_catalog.pg_extension'::pg_catalog.regclass
+        AND e.oid = d.refobjid AND d.deptype = 'e'
+    JOIN pg_catalog.pg_namespace en ON en.oid = e.extnamespace
+    CROSS JOIN LATERAL pg_catalog.pg_identify_object(d.classid, d.objid, d.objsubid) i
+    WHERE i.schema = 'public'
+        -- pg_identify_object returns NULL schema for the namespace itself.
+        OR (d.classid = 'pg_catalog.pg_namespace'::pg_catalog.regclass
+            AND d.objid = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = 'public'))
 )
 SELECT pg_catalog.jsonb_build_object(
-    'metadata', pg_catalog.jsonb_build_object('projection', 'pg17-native-collection-v1',
+    'metadata', pg_catalog.jsonb_build_object('projection', 'pg17-native-collection-v2',
         'server_version_num', pg_catalog.current_setting('server_version_num')::integer,
         'database', pg_catalog.current_database(), 'user', current_user,
         'schemas', pg_catalog.current_schemas(false)),
+    'namespaces', COALESCE((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+        'identity', pg_catalog.quote_ident(n.nspname), 'type', 'schema',
+        'owner', pg_catalog.pg_get_userbyid(n.nspowner), 'acl', n.nspacl
+    ) ORDER BY n.nspname COLLATE "C") FROM pg_catalog.pg_namespace n WHERE n.nspname = 'public'), '[]'::jsonb),
+    'extension_memberships', COALESCE((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+        'identity', 'extension ' || pg_catalog.quote_ident(m.extension) || ' -> ' || m.type || ' ' || m.identity,
+        'type', 'extension membership', 'extension', pg_catalog.quote_ident(m.extension),
+        'extension_namespace', pg_catalog.quote_ident(m.extension_namespace),
+        'member_type', m.type, 'member_schema', m.schema, 'member_identity', m.identity
+    ) ORDER BY m.extension COLLATE "C", m.type COLLATE "C", m.identity COLLATE "C")
+    FROM extension_memberships m), '[]'::jsonb),
     'relations', COALESCE((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
         'identity', r.identity, 'name', r.relname, 'kind', r.relkind,
         'owner', pg_catalog.pg_get_userbyid(r.relowner), 'persistence', r.relpersistence,

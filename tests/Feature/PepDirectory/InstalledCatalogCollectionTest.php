@@ -143,6 +143,55 @@ final class InstalledCatalogCollectionTest extends PepDirectoryReviewTestCase
         }
     }
 
+    public function test_v2_envelope_preserves_native_acl_and_unrecognized_membership(): void
+    {
+        $valid = PepDirectoryInstalledCatalog::collect($this->db);
+        $valid['extension_memberships'] = [
+            ['identity' => 'extension unknown_ext -> schema public', 'type' => 'extension membership',
+                'extension' => 'unknown_ext', 'extension_namespace' => 'public', 'member_type' => 'schema',
+                'member_schema' => null, 'member_identity' => 'public'],
+        ];
+        $consume = function (array $catalog): array {
+            $connection = $this->createMock(\Illuminate\Database\Connection::class);
+            $connection->method('getDriverName')->willReturn('pgsql');
+            $connection->expects(self::exactly(2))->method('selectOne')->willReturnOnConsecutiveCalls(
+                (object) ['version' => $catalog['metadata']['server_version_num'], 'actor' => 'postgres', 'schemas' => '{public}'],
+                (object) ['catalog' => json_encode($catalog, JSON_THROW_ON_ERROR)]);
+
+            return PepDirectoryInstalledCatalog::collect($connection);
+        };
+        foreach ([null, [], ['=UC/postgres', 'postgres=UC/postgres']] as $acl) {
+            $valid['namespaces'][0]['acl'] = $acl;
+            self::assertSame($valid, $consume($valid));
+        }
+        $cases = [];
+        foreach ([['namespaces', 'owner', null], ['namespaces', 'type', 'table'],
+            ['namespaces', 'acl', '=U/postgres'], ['namespaces', 'acl', [1]],
+            ['extension_memberships', 'type', 'schema'], ['extension_memberships', 'extension', 7],
+            ['extension_memberships', 'extension_namespace', null], ['extension_memberships', 'member_type', null],
+            ['extension_memberships', 'member_schema', []], ['extension_memberships', 'member_identity', false]] as [$section, $key, $invalid]) {
+            $case = $valid;
+            $case[$section][0][$key] = $invalid;
+            $cases[] = $case;
+        }
+        foreach ([['namespaces', 'acl'], ['extension_memberships', 'member_schema']] as [$section, $key]) {
+            $case = $valid;
+            unset($case[$section][0][$key]);
+            $cases[] = $case;
+        }
+        $old = $valid;
+        $old['metadata']['projection'] = 'pg17-native-collection-v1';
+        $cases[] = $old;
+        foreach ($cases as $case) {
+            try {
+                $consume($case);
+                self::fail('Malformed v2 evidence was accepted.');
+            } catch (\RuntimeException $error) {
+                self::assertMatchesRegularExpression('/Invalid catalog|Unsupported catalog/', $error->getMessage());
+            }
+        }
+    }
+
     protected function tearDown(): void
     {
         parent::tearDown(); // Original rows, column inventory and six tables reattested after outer rollback.

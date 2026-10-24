@@ -15,11 +15,21 @@ SQL = Path(__file__).resolve().parents[3] / 'tests/Fixtures/PepDirectory/schema-
 
 def snapshot():
     value = {name: [] for name in ('relations', 'sequences', 'columns', 'constraints',
-                                  'indexes', 'triggers', 'routines', 'policies', 'objects')}
-    value['metadata'] = {'projection': 'pg17-native-collection-v1',
+                                  'indexes', 'triggers', 'routines', 'policies', 'objects',
+                                  'namespaces', 'extension_memberships')}
+    value['metadata'] = {'projection': 'pg17-native-collection-v2',
                          'server_version_num': 170009, 'user': 'postgres', 'schemas': ['public']}
     value['relations'] = [{'identity': 'public.synthetic', 'flag': True, 'missing': None,
                            'ordered': [2, 1], 'definition': "CHECK ((version >= '0'::bigint))"}]
+    value['namespaces'] = [{'identity': 'public', 'type': 'schema', 'owner': 'pg_database_owner',
+                            'acl': ['pg_database_owner=UC/pg_database_owner', '=U/pg_database_owner']}]
+    value['extension_memberships'] = [
+        {'identity': 'extension unknown_ext -> schema public', 'type': 'extension membership',
+         'extension': 'unknown_ext', 'extension_namespace': 'public', 'member_type': 'schema',
+         'member_schema': None, 'member_identity': 'public'},
+        {'identity': 'extension unknown_ext -> table public.synthetic', 'type': 'extension membership',
+         'extension': 'unknown_ext', 'extension_namespace': 'public', 'member_type': 'table',
+         'member_schema': 'public', 'member_identity': 'public.synthetic'}]
     return value
 
 
@@ -103,6 +113,38 @@ class InstalledCatalogProtocolTest(unittest.TestCase):
                 conn.cursor.return_value.__exit__.assert_called_once()
                 conn.commit.assert_not_called()
                 conn.rollback.assert_not_called()
+
+    def test_v2_sections_reject_malformed_types_but_preserve_null_acl_and_unknown_members(self):
+        for acl in (None, [], ['=UC/postgres', 'postgres=UC/postgres']):
+            value = snapshot()
+            value['namespaces'][0]['acl'] = acl
+            conn, _ = connection(value)
+            self.assertEqual(value, collect(conn))
+        cases = []
+        for section, key, invalid in (
+                ('namespaces', 'owner', None), ('namespaces', 'type', 'table'),
+                ('namespaces', 'acl', '=U/postgres'), ('namespaces', 'acl', [1]),
+                ('extension_memberships', 'type', 'schema'),
+                ('extension_memberships', 'extension', 7),
+                ('extension_memberships', 'extension_namespace', None),
+                ('extension_memberships', 'member_type', None),
+                ('extension_memberships', 'member_schema', []),
+                ('extension_memberships', 'member_identity', False)):
+            value = snapshot()
+            value[section][0][key] = invalid
+            cases.append(value)
+        for section, key in (('namespaces', 'acl'), ('extension_memberships', 'member_schema')):
+            value = snapshot()
+            del value[section][0][key]
+            cases.append(value)
+        old = snapshot()
+        old['metadata']['projection'] = 'pg17-native-collection-v1'
+        cases.append(old)
+        for value in cases:
+            with self.subTest(value=value):
+                conn, _ = connection(value)
+                with self.assertRaises(ValueError):
+                    collect(conn)
 
     def test_invalid_result_rows_are_rejected_and_cursor_is_closed(self):
         for row in (None, (), [], (snapshot(), 'extra')):
