@@ -51,6 +51,24 @@ class SchemaContractTest(unittest.TestCase):
         self.assertEqual(validate(original['v1']), 'v1')
         self.assertEqual(validate(original['v2_design']), 'unattested_v2')
 
+    def test_actual_directory_revision_fits_prospective_storage(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from pep_directory_configurable import DirectoryConfig
+        config = DirectoryConfig.from_dict({
+            'source': 'synthetic:directory', 'url': 'https://example.invalid/directory',
+            'directory': '#directory', 'record': 'tbody > tr', 'columns': 3,
+            'fields': {'unit': {'constant': 'North'}, 'role': {'column': 0},
+                       'person': {'column': 1}, 'condition': {'column': 2}}})
+        self.assertTrue(config.revision.startswith('configured-html-v1:'))
+        columns = json.loads(CONTRACT.read_text())['v2_design']['tables']
+        self.assertEqual(columns['pep_directory_configurations']['columns']['revision'],
+                         ['varchar(255)', False, None])
+        self.assertGreater(len(config.revision), 64)
+        self.assertLessEqual(len(config.revision), 255)
+        for name in ('url', 'tipo'):
+            self.assertTrue(columns['fuentes']['columns'][name][1])
+
     def test_public_api(self):
         self.validator()
 

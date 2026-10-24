@@ -110,6 +110,15 @@ final class SchemaContractTest extends TestCase
         self::assertSame('unattested_v2', PepDirectorySchemaContract::validate($original['v2_design']));
     }
 
+    public function test_prospective_compatibility_corrections(): void
+    {
+        $tables = $this->contract()['v2_design']['tables'];
+        self::assertSame(['varchar(255)', false, null], $tables['pep_directory_configurations']['columns']['revision']);
+        self::assertSame(['text', true, null], $tables['fuentes']['columns']['url']);
+        self::assertSame(['varchar(32)', true, null], $tables['fuentes']['columns']['tipo']);
+        self::assertSame(['boolean', false, 'true'], $tables['fuentes']['columns']['activo']);
+    }
+
     public function test_public_api(): void
     {
         $this->api();

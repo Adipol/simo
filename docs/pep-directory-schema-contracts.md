@@ -32,7 +32,7 @@ null, missing, scalar, empty or truncated expected sections cannot validate equa
 malformed input. The identity pin covers nested completeness without duplicating
 the inventory. Any contract edit (including formatting) requires review and updating
 both private pins. The approved fixture SHA-256 is
-`281e3f3d99b9037929907fc4590ff69e94fa1b92d06ce7ea00c6379bf8071037`.
+`48d59444f9d9a045ad1293558a8bbd12f3d111c10fd79945b3e41806b4d901a7`.
 This pin does **not** attest an installed database or supply the missing V2
 trigger/function body identities.
 
@@ -72,8 +72,11 @@ storage and shadow integration six-table fixtures. `fuentes` and `users` contain
 only `id` and `label`. This task did not observe or attest a running database.
 
 V2 preserves every V1 column, constraint and index, then declares ten tables.
-Its fixture-only `fuentes.url` (text), `tipo` (varchar(32)), and `activo` (boolean,
-true by default) are explicit additions needed by the proposed trigger. These
+Its fixture-only nullable `fuentes.url` (text), nullable `tipo` (varchar(32)), and
+`activo` (boolean, true by default) permit retained id/label rows without invented
+binding backfill. Configuration revision is varchar(255), retaining the complete
+Python `configured-html-v1:<sha>` identity. Both private pins were updated together;
+V1 and validator logic are unchanged. These
 are **not** assertions about production Fuente columns or an authorization overlay.
 
 Configurations hold immutable declaration, Python-canonical bytes/revision,
@@ -90,9 +93,10 @@ A partial unique index permits one configurable registration per live Fuente.
 ## Next steps: guards before DDL
 
 1. Independently review these explicit inventories against the approved owned fixture.
-2. Implement the additive migration and narrow registered-source-only invalidation
-   trigger. Lock live Fuente before shadow source. Invalidate on URL/type changes,
-   active true-to-false, and hard deletion; never affect unregistered legacy sources.
+2. Review the additive migration and registered-source invalidation trigger in
+   [configuration storage](pep-directory-configuration-storage.md). Its current
+   transactional database proof passed with retained rows and schema objects
+   preserved; permanent installation and multi-connection safety are not proved.
 3. Attest exact trigger/function definitions after migration implementation; replace
    null identities under a reviewed contract change before allowing V2 success.
 4. Only then adapt existing guards, prove their fail-closed behavior **before DDL**,
@@ -115,7 +119,7 @@ No full-monitor or HTTP differential, database introspection, V2 installation,
 or activation is claimed. Exact historical code delivery has no meaningful new
 pre-implementation RED; focused verification is ordinary execution evidence.
 
-Fresh focused results for this candidate:
+Historical initial contract verification (before the portability correction):
 
 - Python: 4 test methods passed, no failures/errors/skips (0.025 seconds).
 - PHP 8.5.6 / PHPUnit 11.5.55: 4 test methods, 224 assertions passed
@@ -130,14 +134,14 @@ Fresh focused results for this candidate:
 
 ## CI portability correction
 
-The later CI run `40044223557` failed in both PHP jobs at the first malformed
+The initial contract CI run failed in both PHP jobs at the first malformed
 contract case (`null_sections`): the expected `[0, 'contract_unavailable', '']`
 was replaced by child exit 255 and a missing copied-validator error under the
 helper's hardcoded temporary fixture location. Python CI passed. The exact
 parent filesystem errno in CI was not established; the missing copied file is
 observed evidence, not proof of a specific CI permission error.
 
-Only `SchemaContractTest::probeContract` changed: it now creates a unique directory
+That correction changed only `SchemaContractTest::probeContract`: it now creates a unique directory
 under `sys_get_temp_dir()`, preserves the validator's relative `Support` / `Fixtures`
 layout, checks every directory/copy/write operation, and closes process resources
 and removes only invocation-owned files/directories in `finally`. No compatibility
@@ -167,8 +171,39 @@ Test-first correction evidence (PHP 8.5.6 / PHPUnit 11.5.55):
   Exact commands, separate stdout/stderr/exit receipts and the wrapper are retained
   as ignored local evidence under `storage/app/pep-directory-delivery/t12-portability-fix/`.
 
-These are local portability results, not a corrected CI result. Cleanup on normal
+These are historical local portability results, not a current-candidate CI result. Cleanup on normal
 completion is observed; individual setup/process failure paths were not separately
 fault-injected. No database, installation, download, Composer, Artisan, persistent
 test environment, deployment or operational activation was involved. Publication
 and independent assessment remain separate parent-owned steps.
+
+
+## Qualification compatibility verification
+
+The portable `probeContract` helper above is retained byte-for-byte. Only a new
+prospective PHP compatibility method was added. Python additionally constructs a
+real `DirectoryConfig` and checks its full revision fits varchar(255); fixture
+URL/type nullability is checked in both languages. Only `v1` remains success and
+V2 remains `unattested_v2`; neither validator's matching logic changed.
+
+Current focused runs, each once with a 30-second bound:
+
+- PHP 8.5.6 / PHPUnit 11.5.55: 5 methods, 428 assertions, exit 0,
+  empty stderr (0.408 seconds).
+- Existing Python venv: 5 methods, no failures/errors/skips, exit 0
+  (0.139 seconds); unittest diagnostics are on stderr as usual.
+- PHP used the existing immutable image, no network, read-only checkout/vendor,
+  no capabilities, no-new-privileges, 128 PIDs, 512 MiB memory and 32 MiB `/tmp`
+  tmpfs. Python used the existing venv directly with bytecode writes disabled.
+- Post-run checks matched historical exports and confirmed the PHP test differs
+  from its predecessor only by the prospective compatibility method.
+
+The initial PostgreSQL preflight stopped because the authorized target was not
+running. After explicit start authorization, one start and one readiness check
+succeeded. Fresh full rows and prior metadata matched the earlier review-UI snapshot.
+The single feature test passed (1 test / 530 assertions, exit 0); a separate post-test
+snapshot proved exact row/schema-object preservation after transaction rollback.
+The capture wrapper nevertheless exited 1 on an incorrect PHPUnit summary-string
+expectation; no test was rerun. See [configuration storage](pep-directory-configuration-storage.md)
+for refusal results and scope. No permanent V2 installation or concurrency safety
+is proved, and V2 remains `unattested_v2`. Pure suites above were not rerun.
