@@ -5,7 +5,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from pep_directory_installed_catalog import collect
+if __package__:
+    from .pep_directory_installed_catalog import collect
+else:
+    from pep_directory_installed_catalog import collect
 
 SQL = Path(__file__).resolve().parents[3] / 'tests/Fixtures/PepDirectory/schema-contracts/installed-pg17.sql'
 

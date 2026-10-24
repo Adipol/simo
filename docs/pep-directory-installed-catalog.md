@@ -105,3 +105,13 @@ outside this delivery's documentation remain unchanged. No database was accessed
 Python verification, so it establishes no fresh database-preservation claim. No runtime image,
 monitor, browser or capture was used. Actual driver parity, additional ACL/extension fixtures,
 installed-schema admission and all previously stated limits remain pending.
+
+### Package discovery compatibility
+
+Initial CI exposed a test-only `ModuleNotFoundError` under package discovery; direct
+execution had passed. The test now selects a relative import in package mode and
+keeps its standalone import otherwise. A local package invocation reproduced the
+failure (exit1), then passed all six methods after the correction (exit0). The direct
+six-method regression also passed (exit0). Adapter and fixed SQL are unchanged;
+these remain offline mock tests, not real-driver parity. The initial failed CI is
+retained separately from subsequent verification.
