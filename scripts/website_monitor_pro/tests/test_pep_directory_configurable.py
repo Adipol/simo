@@ -64,6 +64,44 @@ class ConfigurableTests(unittest.TestCase):
         self.assertEqual(result.events, ())
         return current
 
+    def test_opt_in_role_condition_preserves_identity_and_evidence(self):
+        data = mapping()
+        del data['fields']['condition']
+        opted = dict(data, role_condition='ai_suffix')
+        self.assertNotEqual(self.config(data).revision, self.config(opted).revision)
+        self.assertNotIn('role_condition', self.config(data).canonical_identity())
+        plain = self.extract(page([('Legal', 'Ada a.i. Example', ''), ROWS[1]]), opted)
+        marked = self.extract(page([('Legal A.I.', 'Ada a.i. Example', ''), ROWS[1]]), opted)
+        p = marked.positions[0]
+        self.assertEqual((p.unit, p.role, p.person, p.condition),
+                         ('North', 'Legal', 'Ada a.i. Example', 'A.I.'))
+        self.assertIn('<td>Legal A.I.</td>', p.evidence)
+        self.assertIsNone(plain.positions[0].condition)
+        for before, after in [(plain, marked), (marked, plain)]:
+            self.assertEqual({e.kind for e in compare(before, after).events},
+                             {Kind.NO_CHANGE, Kind.CONDITION_CHANGE})
+        omitted = self.extract(page([('Legal a.i.', 'Ada Example', ''), ROWS[1]]), data,
+                               self.capture(expected_positions=frozenset()))
+        self.assertEqual((omitted.positions[0].role, omitted.positions[0].condition), ('Legal a.i.', None))
+        for role in ['Legal a.i. Deputy', 'Legal AI', 'Legal a.i', 'Legal (a.i.)', 'a.i.']:
+            result = self.extract(page([(role, 'Ada Example', '')]), opted,
+                                  self.capture(expected_positions=frozenset()))
+            self.assertEqual((result.positions[0].role, result.positions[0].condition), (role, None))
+        duplicate = self.extract(page([('Legal', 'Ada Example', ''), ('Legal a.i.', 'Ada Example', '')]), opted)
+        self.assertEqual(duplicate.positions, ())
+        self.assertEqual(duplicate.validity, Validity.AMBIGUOUS)
+
+    def test_role_condition_rejects_conflicts_and_invalid_options(self):
+        data = mapping()
+        with self.assertRaises(ValueError):
+            self.config(dict(data, role_condition='ai_suffix'))
+        del data['fields']['condition']
+        for option in [None, True, 1, [], {}, '', 'AI_SUFFIX', 'other']:
+            with self.subTest(option=option), self.assertRaises(ValueError):
+                self.config(dict(data, role_condition=option))
+        with self.assertRaises(ValueError):
+            self.config(dict(data, role_condition='ai_suffix', unknown=True))
+
     def test_full_observation_and_evidence(self):
         body = page(ROWS)
         result = self.extract(body)
@@ -235,6 +273,50 @@ class ConfigurableTests(unittest.TestCase):
             self.assertEqual({e.kind for e in compare(before, after).events}, {Kind.NO_CHANGE})
             self.assertEqual(after.positions[0].person, current)
 
+    def test_irrelevant_duplicate_attributes_preserve_original_input(self):
+        baseline = self.extract()
+        for outside in ['<button class="btn" class="icon-color">Menu</button>',
+                        '<footer id="one" id="two">Footer</footer>']:
+            with self.subTest(outside=outside):
+                body = page(ROWS).replace('<body>', '<body>' + outside)
+                original = body.encode()
+                result = self.extract(original)
+                self.assertEqual(result.validity, Validity.VALID)
+                self.assertEqual(result.positions, baseline.positions)
+                self.assertEqual(result.evidence.encode(), original)
+
+    def test_relevant_duplicate_attributes_fail_closed(self):
+        body = page(ROWS)
+        cases = [
+            body.replace('id="directory"', 'id="directory" id="other"'),
+            body.replace('<tr>', '<tr class="a" class="b">', 1),
+            body.replace('<td>', '<td id="a" id="b">', 1),
+            body.replace('<body>', '<body class="a" class="b">'),
+            # Last-value parsing hides a second possible directory.
+            body.replace('</body>', '<table id="directory" id="other"></table></body>'),
+            body.replace('</body>', '<div id="directory" id="other"></div></body>'),
+            # Duplicates must not hide global completeness/blocking guards either.
+            body.replace('</body>', '<nav class="pagination" class="menu"></nav></body>'),
+            body.replace('</body>', '<div id="captcha" id="other"></div></body>'),
+            body.replace('</body>', '<a rel="next" rel="prev">More</a></body>'),
+            body.replace('</body>', '<a rel="NEXT" rel="prev">More</a></body>'),
+        ]
+        for altered in cases:
+            with self.subTest(body=altered):
+                result = self.rejected(altered)
+                self.assertEqual(result.evidence, altered)
+        data = mapping()
+        data['directory'] = '.chosen > table.views-table'
+        selected = body.replace('<table id="directory">',
+                                '<div class="chosen"><table class="views-table">').replace(
+                                    '</table>', '</table></div>')
+        self.assertEqual(self.extract(selected, data).validity, Validity.VALID)
+        # An ancestor alternative can expose an otherwise hidden candidate.
+        alternate = '<div class="chosen" class="other"><table class="views-table"></table></div>'
+        self.rejected(selected.replace('</body>', alternate + '</body>'), data=data)
+        alternate = '<table class="views-table" class="other"></table>'
+        self.rejected(selected.replace('</body>', alternate + '</body>'), data=data)
+
     def test_metadata_decode_unreviewed_inventory_and_resource_bounds(self):
         body = page(ROWS)
         for changes in [{'status': 403}, {'status': True}, {'source_url': 'https://other.example/'},
@@ -252,6 +334,7 @@ class ConfigurableTests(unittest.TestCase):
         self.rejected(body + ' ' * 1_048_576)
         self.rejected('<html><body>' + '<div>' * 65 + '</div>' * 65 + '</body></html>')
         self.rejected(page([ROWS[0]] * 1001))
+        self.rejected(body.replace('</body>', '<br>' * 20_000 + '</body>'))
 
 
 if __name__ == '__main__':

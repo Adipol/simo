@@ -124,3 +124,9 @@ are functional verification results, not a newly observed failing-test cycle.
 No Python runtime, application bootstrap, DB, migration, dependency installation
 or operational activation was exercised. Same-runtime PHP-to-Python proof remains
 a separate future delivery. Hash preservation is not database-state proof.
+
+## Consolidated decoder and runtime update
+
+The decoder validates large JSON without treating a PCRE failure as successful validation, and rejects escaped duplicate member names. The optional `role_condition_mode` declaration supports explicit `ai_suffix` separation; omission retains the original canonical identity.
+
+The historical verification sections above describe the earlier bridge-only slice. The consolidated candidate additionally passed synthetic real PHP-to-Python preview: 2 tests/20 assertions on the existing combined image. This does not establish capture origin, installed-schema qualification or application readiness. PHP unit checks across decoder, mapping, manual guards, capture transport and schema contract passed 34 tests/824 assertions.

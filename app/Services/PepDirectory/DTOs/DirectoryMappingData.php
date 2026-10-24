@@ -13,7 +13,7 @@ final readonly class DirectoryMappingData
 
     public static function fromArray(array $input): self
     {
-        self::check(array_diff(['directory', 'record', 'fields'], array_keys($input)) === [] && array_diff(array_keys($input), ['directory', 'record', 'fields', 'section', 'columns']) === []);
+        self::check(array_diff(['directory', 'record', 'fields'], array_keys($input)) === [] && array_diff(array_keys($input), ['directory', 'record', 'fields', 'section', 'columns', 'role_condition']) === []);
         foreach (['directory', 'record', 'section'] as $key) {
             if (array_key_exists($key, $input)) {
                 self::text($input[$key]);
@@ -21,6 +21,7 @@ final readonly class DirectoryMappingData
         }
         self::check(! array_key_exists('columns', $input) || (is_int($input['columns']) && $input['columns'] >= 1 && $input['columns'] <= 32));
         self::check(is_array($input['fields']) && array_diff(['unit', 'role', 'person'], array_keys($input['fields'])) === [] && array_diff(array_keys($input['fields']), ['unit', 'role', 'person', 'condition']) === []);
+        self::check(! array_key_exists('role_condition', $input) || ($input['role_condition'] === 'ai_suffix' && ! array_key_exists('condition', $input['fields'])));
         foreach ($input['fields'] as $name => $field) {
             self::check(is_array($field));
             if (array_key_exists('constant', $field)) {

@@ -174,3 +174,11 @@ authority, serialized with source submission eligibility. Persistence, preview U
 source binding, activation, live capture qualification and operational readiness
 remain unimplemented here. A successful parse or rebaseline is never permission
 to persist or activate.
+
+## Consolidated extraction options
+
+`role_condition_mode` is an additional optional key. Its supported explicit value `ai_suffix` separates an a.i. suffix from the role into condition; omission leaves the legacy canonical identity and extraction behavior unchanged. It does not infer titularity. Conflicting explicit conditions are rejected.
+
+Duplicate attributes relevant to supported selectors or table structure remain ambiguous and fail closed; irrelevant attributes do not invalidate an otherwise valid directory. Original bytes remain evidence.
+
+The earlier exact-port results above are historical to that slice. Consolidated offline checks passed 86 tests/203 subtests with 19 database opt-out skips; those skips do not establish configured ingestion.

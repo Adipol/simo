@@ -83,7 +83,7 @@ final readonly class CompiledPreviewData
     private static function normalizedDeclaration(stdClass $d): stdClass
     {
         $keys = array_keys(get_object_vars($d));
-        self::check(array_diff(['source', 'url', 'directory', 'record', 'fields'], $keys) === [] && array_diff($keys, ['source', 'url', 'directory', 'record', 'fields', 'section', 'columns']) === []);
+        self::check(array_diff(['source', 'url', 'directory', 'record', 'fields'], $keys) === [] && array_diff($keys, ['source', 'url', 'directory', 'record', 'fields', 'section', 'columns', 'role_condition']) === []);
         foreach (['source', 'url', 'directory', 'record'] as $key) {
             self::check(is_string($d->$key) && trim($d->$key) !== '');
         }
@@ -92,6 +92,7 @@ final readonly class CompiledPreviewData
         self::check($d->fields instanceof stdClass);
         $fields = get_object_vars($d->fields);
         self::check(array_diff(['unit', 'role', 'person'], array_keys($fields)) === [] && array_diff(array_keys($fields), ['unit', 'role', 'person', 'condition']) === []);
+        self::check(! property_exists($d, 'role_condition') || ($d->role_condition === 'ai_suffix' && ! array_key_exists('condition', $fields)));
         ksort($fields);
         $normalized = [];
         foreach ($fields as $name => $field) {
@@ -112,7 +113,11 @@ final readonly class CompiledPreviewData
             }
             $normalized[] = [$name, (object) array_replace(['scope' => 'record', 'selector' => null, 'column' => null, 'constant' => null], $values)];
         }
-        return (object) ['source' => $d->source, 'url' => $d->url, 'directory' => $d->directory, 'record' => $d->record, 'fields' => $normalized, 'section' => $d->section ?? null, 'columns' => $d->columns ?? null];
+        $mapping = ['source' => $d->source, 'url' => $d->url, 'directory' => $d->directory, 'record' => $d->record, 'fields' => $normalized, 'section' => $d->section ?? null, 'columns' => $d->columns ?? null];
+        if (property_exists($d, 'role_condition')) {
+            $mapping['role_condition'] = $d->role_condition;
+        }
+        return (object) $mapping;
     }
 
     private static function instant(\stdClass|string|int|bool|array|null $value): string
@@ -136,7 +141,9 @@ final readonly class CompiledPreviewData
     private static function producerJson(string $bytes): stdClass
     {
         $value = self::json($bytes);
-        preg_match_all('/"(?:[^"\\\\]|\\\\.)*"|[{}\\[\\]:,]|-?[0-9]+|true|false|null/s', $bytes, $matches);
+        // Consume plain runs atomically and never backtrack across string contents.
+        $count = preg_match_all('/"(?:[^"\\\\]++|\\\\.)*+"|[{}\\[\\]:,]|-?[0-9]+|true|false|null/s', $bytes, $matches);
+        self::check($count !== false && preg_last_error() === PREG_NO_ERROR);
         self::check(implode('', $matches[0]) === $bytes);
         foreach ($matches[0] as $token) {
             if (str_starts_with($token, '"')) {
@@ -178,7 +185,8 @@ final readonly class CompiledPreviewData
         $value = json_decode($bytes, false, 32, JSON_THROW_ON_ERROR);
         self::check($value instanceof stdClass);
         // json_decode validates grammar/trailing data; this scan detects even escaped duplicate keys.
-        preg_match_all('/"(?:[^"\\\\]|\\\\.)*"|[{}\\[\\],]/s', $bytes, $tokens);
+        $count = preg_match_all('/"(?:[^"\\\\]++|\\\\.)*+"|[{}\\[\\],]/s', $bytes, $tokens);
+        self::check($count !== false && preg_last_error() === PREG_NO_ERROR);
         $stack = [];
         foreach ($tokens[0] as $token) {
             $last = count($stack) - 1;

@@ -75,6 +75,77 @@ final class ProcessPreviewCompilerTest extends TestCase
         }
     }
 
+    public function test_large_outer_capture_string_decodes_through_public_api(): void
+    {
+        $r = $this->request();
+        $body = str_repeat('synthetic body ', 6000);
+        $a = json_decode($this->artifact(), true, 32, JSON_THROW_ON_ERROR);
+        $a['capture']['body_base64'] = base64_encode($body);
+        $a['capture']['content_sha256'] = hash('sha256', $body);
+        self::assertSame('incomplete', CompiledPreviewData::fromOutput(json_encode($a, JSON_THROW_ON_ERROR), $r['declaration'], $body, $r['metadata'])->validity);
+    }
+
+    public function test_outer_scanner_rejects_escaped_duplicates_after_large_capture(): void
+    {
+        $r = $this->request();
+        $body = str_repeat('synthetic body ', 6000);
+        $a = json_decode($this->artifact(), true, 32, JSON_THROW_ON_ERROR);
+        $a['capture']['body_base64'] = base64_encode($body);
+        $a['capture']['content_sha256'] = hash('sha256', $body);
+        $output = json_encode($a, JSON_THROW_ON_ERROR);
+        $this->rejected(fn () => CompiledPreviewData::fromOutput(substr($output, 0, -1).',"format_vers\\u0069on":1}', $r['declaration'], $body, $r['metadata']));
+        $output = str_replace('"encoding":"utf-8"', '"encoding":"utf-8","encod\\u0069ng":"utf-8"', $output);
+        self::assertStringContainsString('encod\\u0069ng', $output);
+        $this->rejected(fn () => CompiledPreviewData::fromOutput($output, $r['declaration'], $body, $r['metadata']));
+    }
+
+    private function evidenceArtifact(string $evidence): array
+    {
+        $a = json_decode($this->artifact(), true, 32, JSON_THROW_ON_ERROR);
+        $a['preview']['wire']['evidence'] = $evidence;
+        return $a;
+    }
+
+    private function withResult(array $a, ?string $result = null): string
+    {
+        $result ??= json_encode($a['preview']['wire'], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+        $a['preview']['result_base64'] = base64_encode($result);
+        $a['preview']['result_sha256'] = hash('sha256', $result);
+        return json_encode($a, JSON_THROW_ON_ERROR);
+    }
+
+    public function test_large_producer_evidence_decodes_through_public_api(): void
+    {
+        // Include repeated escapes as well as long plain runs, without private/live fixtures.
+        $evidence = str_repeat('synthetic evidence ', 4000).' '.str_repeat("\"\\\nñ", 4000)."\x7f";
+        $a = $this->evidenceArtifact($evidence);
+        // Match Python ensure_ascii's DEL spelling (PHP otherwise leaves it literal).
+        $result = str_replace("\x7f", '\\u007f', json_encode($a['preview']['wire'], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
+        $data = $this->decode($this->withResult($a, $result));
+        self::assertSame($evidence, $data->wire['evidence']);
+        self::assertSame($result, $data->resultBytes);
+        self::assertSame(hash('sha256', $result), $data->resultSha256);
+    }
+
+    public function test_long_evidence_does_not_hide_late_escaped_duplicates_or_lexical_changes(): void
+    {
+        $a = $this->evidenceArtifact(str_repeat('evidence ', 8000));
+        $output = $this->withResult($a);
+        $result = json_encode($a['preview']['wire'], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+        foreach ([
+            substr($result, 0, -1).',"eviden\\u0063e":"duplicate"}',
+            substr($result, 0, -1).',"extra":[{"key":1,"k\\u0065y":2}]}',
+            str_replace('evidence ', '\\u0065vidence ', $result),
+            $result.' ',
+        ] as $badResult) {
+            $this->rejected(fn () => $this->decode($this->withResult($a, $badResult)));
+        }
+        // Outer grammar allows whitespace/escaped keys, but not duplicates after a long value.
+        $this->rejected(fn () => $this->decode(substr($output, 0, -1).',"previ\\u0065w":{}}'));
+        $this->rejected(fn () => $this->decode(substr($output, 0, -1).',"extra":{"key":1,"k\\u0065y":2}}'));
+        $this->rejected(fn () => $this->decode($output.'{}'));
+    }
+
     public function test_decoder_rejects_malformed_duplicate_trailing_and_oversized_json(): void
     {
         foreach (['', '{}', $this->artifact().'{}', str_replace('"format_version":1', '"format_version":1,"format_vers\\u0069on":1', $this->artifact()), str_repeat(' ', ProcessPreviewCompiler::MAX_OUTPUT + 1), str_replace('"format_version":1', '"format_version":NaN', $this->artifact())] as $output) {
@@ -169,6 +240,33 @@ final class ProcessPreviewCompilerTest extends TestCase
         $a['preview']['result_base64'] = base64_encode($result);
         $a['preview']['result_sha256'] = hash('sha256', $result);
         $this->rejected(fn () => CompiledPreviewData::fromOutput(json_encode($a), $r['declaration'], base64_decode($r['body_base64']), $r['metadata']));
+    }
+
+    public function test_role_condition_declaration_and_identity_must_agree_and_be_valid(): void
+    {
+        foreach (['ai_suffix', null, true, 1, [], 'other', 'conflict'] as $option) {
+            $r = $this->request();
+            $r['declaration']['role_condition'] = $option === 'conflict' ? 'ai_suffix' : $option;
+            if ($option === 'conflict') {
+                $r['declaration']['fields']['condition'] = ['column' => 0];
+            }
+            $a = json_decode($this->artifact(), true);
+            $a['configuration']['declaration'] = $r['declaration'];
+            $identity = json_decode(base64_decode($a['configuration']['canonical_base64']), true);
+            $identity['config']['role_condition'] = $r['declaration']['role_condition'];
+            ksort($identity['config']);
+            $canonical = json_encode($identity, JSON_UNESCAPED_SLASHES);
+            $a['configuration']['canonical_base64'] = base64_encode($canonical);
+            $a['configuration']['revision'] = $a['preview']['wire']['revision'] = 'configured-html-v1:'.hash('sha256', $canonical);
+            $output = $this->withResult($a);
+            $decode = fn () => CompiledPreviewData::fromOutput($output, $r['declaration'], base64_decode($r['body_base64']), $r['metadata']);
+            if ($option === 'ai_suffix') {
+                self::assertSame('incomplete', $decode()->validity);
+                $this->rejected(fn () => $this->decode($output));
+            } else {
+                $this->rejected($decode);
+            }
+        }
     }
 
     public function test_timestamp_normalization_accepts_same_instant_with_offset(): void

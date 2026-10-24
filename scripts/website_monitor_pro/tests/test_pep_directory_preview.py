@@ -64,6 +64,17 @@ class PreviewTests(unittest.TestCase):
         # Frozen C1 synthetic bytes/hash; no PHP canonical recreation.
         self.assertEqual(artifact['preview']['result_sha256'], 'd50dc93cbce699b02d99a6dd6938c761f4eb06659fcf6d34e1612535729195e8')
 
+    def test_opt_in_artifact_and_omitted_frozen_identity(self):
+        envelope = request()
+        old = preview.compile_preview(envelope)
+        envelope['declaration']['role_condition'] = 'ai_suffix'
+        opted = preview.compile_preview(envelope)
+        self.assertNotEqual(old['configuration']['revision'], opted['configuration']['revision'])
+        self.assertIsNone(self.integrity(opted, envelope)['positions'][0]['condition'])
+        frozen = json.loads((ROOT.parents[1] / 'tests/Fixtures/PepDirectory/preview-compiler/request.json').read_text())
+        artifact = json.loads((ROOT.parents[1] / 'tests/Fixtures/PepDirectory/preview-compiler/artifact.json').read_text())
+        self.assertEqual(preview.compile_preview(frozen), artifact)
+
     def test_cli_exact_success_and_help(self):
         envelope = request()
         child = self.cli(envelope)

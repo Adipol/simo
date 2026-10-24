@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 from bs4 import BeautifulSoup, Tag
 
 from pep_directory import Observation, Position, Validity, compare
-from pep_directory_extractors import Capture
+from pep_directory_extractors import Capture, _role
 
 _CONTRACT = 'configured-html-v1'
 _MAX_BODY = 1_048_576
@@ -56,15 +56,16 @@ class DirectoryConfig:
     fields: tuple[tuple[str, _Field], ...]
     section: str | None = None
     columns: int | None = None
+    role_condition: str | None = None
 
     def __init__(self) -> None:
         raise ValueError('use DirectoryConfig.from_dict')
 
     @classmethod
     def from_dict(cls, data: object) -> 'DirectoryConfig':
-        _check(type(data) is dict and 5 <= len(data) <= 7
+        _check(type(data) is dict and 5 <= len(data) <= 8
                and {'source', 'url', 'directory', 'record', 'fields'} <= data.keys())
-        _check(data.keys() <= {'source', 'url', 'directory', 'record', 'fields', 'section', 'columns'})
+        _check(data.keys() <= {'source', 'url', 'directory', 'record', 'fields', 'section', 'columns', 'role_condition'})
         _check(_string(data['source']) and _string(data['url'], 2048))
         try:
             url = urlsplit(data['url'])
@@ -81,6 +82,9 @@ class DirectoryConfig:
         fields = data['fields']
         _check(type(fields) is dict and 3 <= len(fields) <= 4 and {'unit', 'role', 'person'} <= fields.keys()
                and fields.keys() <= {'unit', 'role', 'person', 'condition'})
+        _check('role_condition' not in data or
+               type(data['role_condition']) is str and data['role_condition'] == 'ai_suffix'
+               and 'condition' not in fields)
         parsed = []
         used = set()
         for name, value in sorted(fields.items()):
@@ -105,13 +109,16 @@ class DirectoryConfig:
         config = object.__new__(cls)
         for name, value in (('source', data['source']), ('url', data['url']),
                             ('directory', directory), ('record', record), ('fields', tuple(parsed)),
-                            ('section', section), ('columns', columns)):
+                            ('section', section), ('columns', columns), ('role_condition', data.get('role_condition'))):
             object.__setattr__(config, name, value)
         return config
 
     def canonical_identity(self) -> str:
         """Canonical JSON identity, including the implementation contract version."""
-        return json.dumps({'contract': _CONTRACT, 'config': asdict(self)},
+        mapping = asdict(self)
+        if self.role_condition is None:
+            del mapping['role_condition']  # Preserve every pre-option identity byte/revision.
+        return json.dumps({'contract': _CONTRACT, 'config': mapping},
                           sort_keys=True, ensure_ascii=True, separators=(',', ':'))
 
     @property
@@ -135,10 +142,15 @@ class _Budget(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.stack: list[str] = []
         self.nodes = 0
+        self.starts: list[tuple[str, list[tuple[str, str | None]]]] = []
+        self.duplicates: list[int] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.nodes += 1
-        _require(self.nodes <= 20_000 and len({name for name, _ in attrs}) == len(attrs))
+        _require(self.nodes <= 20_000)
+        if len({name for name, _ in attrs}) != len(attrs):
+            self.duplicates.append(len(self.starts))
+        self.starts.append((tag, attrs))
         if tag not in {'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
                        'link', 'meta', 'param', 'source', 'track', 'wbr'}:
             self.stack.append(tag)
@@ -153,6 +165,50 @@ class _Budget(HTMLParser):
             # HTML's optional closing-tag recovery is deliberately not inferred.
             _require(self.stack[-1] == tag)
             self.stack.pop()
+
+
+def _irrelevant_duplicates(budget: _Budget, soup: BeautifulSoup, config: DirectoryConfig) -> None:
+    """Prove irrelevance using an overapproximation, never a chosen attribute value.
+
+    Every terminal-compound candidate is protected, ignoring ancestor constraints.
+    Unioning all class/id alternatives can only ADD candidates. Protect their entire
+    subtrees and ancestor paths: changing an outside attribute then cannot expose a
+    hidden directory, change selector ancestry, or change any extracted subtree.
+    There is no enumeration of attribute combinations or alternate DOM parses.
+    """
+    if not budget.duplicates:
+        return
+    tags = soup.find_all(True)
+    # Both parsers use html.parser; refuse if recovery prevented exact node alignment.
+    _require(len(tags) == len(budget.starts)
+             and all(node.name == start[0] for node, start in zip(tags, budget.starts)))
+    terminal = re.findall(r'>|[^\s>]+', config.directory)[-1]
+    tag_name = re.match(r'^[a-zA-Z][a-zA-Z0-9_-]*', terminal)
+    qualifiers = re.findall(r'([.#])([a-zA-Z_][a-zA-Z0-9_-]*)', terminal)
+    candidates = set()
+    for node, (name, attrs) in zip(tags, budget.starts):
+        if tag_name and name != tag_name[0].lower():
+            continue
+        ids = {value for key, value in attrs if key == 'id'}
+        classes = {part for key, value in attrs if key == 'class' for part in (value or '').split()}
+        if all(value in (ids if prefix == '#' else classes) for prefix, value in qualifiers):
+            candidates.add(id(node))
+    protected = set(candidates)
+    for node in tags:
+        if id(node) in candidates:
+            protected.update(id(parent) for parent in node.parents)
+    for index in budget.duplicates:
+        node = tags[index]
+        _require(id(node) not in protected
+                 and not any(id(parent) in candidates for parent in node.parents))
+        # Global blocking/completeness selectors are independent of the directory.
+        # Check every original alternative so last-value parsing cannot hide them.
+        for name, value in budget.starts[index][1]:
+            value = value or ''
+            _require(not (name == 'id' and ('captcha' in value or value == 'challenge-form')
+                          or name == 'class' and bool(set(value.split()) &
+                                                     {'cf-challenge', 'pagination', 'pager'})
+                          or name == 'rel' and 'next' in value.lower().split()))
 
 
 def _select(root: BeautifulSoup | Tag, selector: str, limit: int) -> list[Tag]:
@@ -227,8 +283,9 @@ def _positions(config: DirectoryConfig, directory: Tag) -> tuple[Position, ...]:
             evidence = ''.join(str(node) for node in context) + str(record)
             evidence_size += len(evidence)
             _require(len(evidence) <= 8192 and evidence_size <= 4_194_304)
-            positions.append(Position(values['unit'], values['role'], person,
-                                      values.get('condition'), evidence))
+            role, condition = (_role(values['role']) if config.role_condition == 'ai_suffix'
+                               else (values['role'], values.get('condition')))
+            positions.append(Position(values['unit'], role, person, condition, evidence))
     _require(assigned == record_ids, Validity.AMBIGUOUS)
     return tuple(positions)
 
@@ -264,6 +321,7 @@ def extract_configured(config: DirectoryConfig, body: bytes | str, capture: Capt
         budget.close()
         _require(not budget.stack)
         soup = BeautifulSoup(evidence, 'html.parser')
+        _irrelevant_duplicates(budget, soup, config)
         title = soup.title.get_text(' ', strip=True).lower() if soup.title else ''
         visible = soup.get_text(' ', strip=True).lower()
         _require(not (any(m in title for m in ('just a moment', 'access denied', 'captcha'))
