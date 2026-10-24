@@ -44,8 +44,16 @@ abstract class PepDirectoryReviewTestCase extends TestCase
         echo 'BEFORE '.json_encode(['counts' => array_map('count', $this->originalRows),
             'users_columns' => $this->originalColumns['users'], 'fingerprint' => hash('sha256', json_encode($this->originalRows, JSON_THROW_ON_ERROR))], JSON_THROW_ON_ERROR).PHP_EOL;
         $this->db->beginTransaction();
-        $this->authorization = require '/work/tests/Fixtures/PepDirectory/migrations/2026_10_18_000002_review_test_authorization.php';
-        $this->authorization->up();
+        if ($this->usesAuthorizationOverlay()) {
+            $this->authorization = require '/work/tests/Fixtures/PepDirectory/migrations/2026_10_18_000002_review_test_authorization.php';
+            $this->authorization->up();
+        }
+    }
+
+    /** Internal fixture choice; target, inventory and rollback guards always apply. */
+    protected function usesAuthorizationOverlay(): bool
+    {
+        return true;
     }
 
     public static function requireOptIn(): void

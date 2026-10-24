@@ -97,13 +97,16 @@ A partial unique index permits one configurable registration per live Fuente.
    [configuration storage](pep-directory-configuration-storage.md). Its current
    transactional database proof passed with retained rows and schema objects
    preserved; permanent installation and multi-connection safety are not proved.
-3. Attest exact trigger/function definitions after migration implementation; replace
-   null identities under a reviewed contract change before allowing V2 success.
+3. Add a separate installed-PG17 contract using one native catalog projection and
+   exact, independently reviewed expectations for closed whole-inventory profiles.
+   Keep these pure validators and `unattested_v2` unchanged. Native definitions must
+   retain modifiers and routine overload identities without a SQL normalizer.
 4. Only then adapt existing guards, prove their fail-closed behavior **before DDL**,
    and separately authorize rollout on the owned target. No blind migration replay.
 5. Add approval/repository gating and permission enforcement separately.
 
-Existing guards remain unchanged. No production/auth-overlay support, PostgreSQL
+Existing opt-in, target, identity, six-table inventory and rollback guards remain
+unchanged. No production/auth-overlay support, PostgreSQL
 installation proof, lifecycle/permission proof, live source binding, activation,
 network access, database access, or DDL is provided by these pure tests.
 
@@ -207,3 +210,59 @@ The capture wrapper nevertheless exited 1 on an incorrect PHPUnit summary-string
 expectation; no test was rerun. See [configuration storage](pep-directory-configuration-storage.md)
 for refusal results and scope. No permanent V2 installation or concurrency safety
 is proved, and V2 remains `unattested_v2`. Pure suites above were not rerun.
+
+## Plain catalog harness prerequisite
+
+`PepDirectoryReviewTestCase::usesAuthorizationOverlay()` is a protected fixture
+hook, defaulting to `true`. Existing review/configuration tests still install their
+transactional authorization fixture. A catalog-only subclass may return `false`
+to inspect the original six tables inside the same outer transaction, without
+installing or removing permissions tables or changing `users` columns.
+
+This is not an environment flag, authorization decision or schema-profile bypass.
+It does not skip opt-in, connection pinning, actual target identity, inventory,
+row/column preservation or rollback checks. A plain subclass must not use the
+existing committed-authorization workflow. `PlainCatalogHarnessTest` exercises
+this path; `DirectoryPreviewServiceTest` checks the unchanged default behavior.
+
+This hook does not implement installed-catalog attestation or V2 support. The
+future common catalog check must also cover direct `createApplication()` consumers,
+not just `setUp()`. Do not use the old empty-schema harness or commit-based
+concurrency tests as proof of temporary V2. Persistent rollout remains separately
+authorized.
+
+### Bounded verification
+
+Current PHP 8.5.6 / PHPUnit 11.5.55 runs, each once with a 30-second bound:
+
+- Absent opt-in: 1 skipped, 0 assertions, exit 0. Empty and invalid opt-ins:
+  1 setup error, 0 assertions, exit 2 each, before application/database setup.
+- Plain catalog: 1 test / 23 assertions, exit 0, empty stderr.
+- Unchanged default-overlay regression: 14 tests / 546 assertions, exit 0,
+  empty stderr; all 14 function/trigger rollback absence checks passed.
+
+Positive runs were serial against the same owned isolated persistent synthetic
+PostgreSQL target, with fresh running/identity/isolation checks immediately before
+launch. Complete read-only snapshots after each positive matched both the retained
+before capture and the predecessor's raw after capture: all rows, columns,
+constraints, indexes, relations, routines, triggers, extensions and schemas.
+Six tables / 38 rows remain, with `users` and `fuentes` limited to `[id,label]`;
+no authorization or qualification overlay remains installed.
+
+An initial preflight comparison failed because an intermediate JSON receipt had
+rounded bigint IDs through JavaScript numbers. Offline exact-integer decoding
+confirmed the predecessor's raw before/after and current raw before were equal;
+original scripts and failure reports were retained, but standalone failed-wrapper
+stdout/stderr/exit receipts were not located by the independent verifier. Failure
+exit codes are therefore attributed to the worker reports. Acceptance used the raw receipts,
+without repeating the before capture or weakening full-state checks.
+
+The existing immutable PHP runtime used a read-only checkout/vendor/private target
+adapter, no pulls, bounded temporary storage and the isolated target's network
+namespace; refusal runs had no network. No reset, reinstall, durable migration,
+Artisan or general application bootstrap was used. Exact historical porting has no
+meaningful new pre-implementation RED; these are ordinary verification results,
+not invented RED/GREEN evidence. Sequence values were neither compared nor reset.
+Concurrency, production-cache behavior, restart durability, permanent V2 support
+and installed-catalog attestation remain unproved. Earlier pure suites were not
+rerun; collector and Python prerequisites remain separate deliveries.
