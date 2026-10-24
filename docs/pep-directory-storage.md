@@ -222,3 +222,9 @@ transaction. See [pep-directory-transitions.md](pep-directory-transitions.md).
 No shadow selector or production binding is enabled by this delivery. Deterministic
 observer tests mock persistence and establish no real PostgreSQL integration proof.
 Retained synthetic storage/review fixtures must not be reset for these offline tests.
+
+## Consolidated configured admission
+
+Legacy `submit()` rejects new observations for persisted configurable sources and their Fuente aliases. Caller approval claims do not authorize writes. Exact historical retries retain the original receipt; changed requests conflict. `submit_configured()` accepts persisted configuration/capture/approval references and an expected version, not browser-supplied observations. It is not connected to the automatic monitor.
+
+Nine DB-free protocol tests verify refusal/retry/rollback call paths. Scripted cursors do not prove PostgreSQL concurrency or durable rollback. The 19 real-V2 opt-in cases are skipped in this delivery: their ten-table target is incompatible with the retained six-table test environment. Never use the diagnostic database or convert that environment to make them pass. Earlier storage results above belong to their respective deliveries, not fresh configured-ingestion acceptance.

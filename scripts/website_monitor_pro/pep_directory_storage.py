@@ -76,11 +76,18 @@ class Repository:
         request = json.loads(_json(request))
         try:
             with self.connection.cursor() as cursor:
+                binding, historical = self._legacy_admission(cursor, observation.source, fuente_id, request)
                 cursor.execute('INSERT INTO pep_directory_sources (identity, fuente_id) VALUES (%s,%s) '
                                'ON CONFLICT (identity) DO NOTHING', (observation.source, fuente_id))
-                cursor.execute('SELECT id, baseline_observation_id, version FROM pep_directory_sources '
+                cursor.execute("SELECT id, baseline_observation_id, version, fuente_id, "
+                               "to_jsonb(s)->>'configurable' FROM pep_directory_sources s "
                                'WHERE identity=%s FOR UPDATE', (observation.source,))
-                source_id, baseline_id, version = cursor.fetchone()
+                source_id, baseline_id, version, actual_binding, configurable = cursor.fetchone()
+                if actual_binding != binding:
+                    raise ValueError('source binding changed')
+                # A concurrent registration may have won the unique identity insert.
+                if configurable == 'true' and not historical:
+                    raise ValueError('configured source requires approved submission')
                 cursor.execute('SELECT id FROM pep_directory_observations WHERE source_id=%s AND submission_id=%s',
                                (source_id, submission_id))
                 existing = cursor.fetchone()
@@ -125,6 +132,51 @@ class Repository:
             self.connection.rollback()
             raise
 
+    def submit_configured(self, source, *, submission_id, configuration_id, capture_id,
+                          approval_decision_id, expected_version):
+        """Ingest a stored capture using its persisted configuration/approval authority."""
+        # Keep the legacy import path independent of configurable parser dependencies.
+        from pep_directory_configured_storage import submit
+        return submit(self, source, submission_id=submission_id, configuration_id=configuration_id,
+                      capture_id=capture_id, approval_decision_id=approval_decision_id, expected_version=expected_version)
+
+    def _legacy_admission(self, cursor, source, fuente_id, request):
+        """Serialize known bindings with registration; caller flags never authorize work.
+
+        JSON projection keeps the retained six-table/V1 schema usable. Never take
+        another Fuente lock after locking a source; a changed discovery is refused.
+        """
+        cursor.execute('SELECT fuente_id FROM pep_directory_sources WHERE identity=%s', (source,))
+        discovered = cursor.fetchone()
+        binding = discovered[0] if discovered else fuente_id
+        bindings = sorted({value for value in (binding, fuente_id) if value is not None})
+        if bindings:
+            cursor.execute('SELECT id FROM fuentes WHERE id=ANY(%s) ORDER BY id FOR UPDATE', (bindings,))
+            cursor.fetchall()
+        cursor.execute("SELECT id,fuente_id,to_jsonb(s)->>'configurable' FROM pep_directory_sources s "
+                       'WHERE identity=%s FOR UPDATE', (source,))
+        current = cursor.fetchone()
+        if current and current[1] != binding:
+            raise ValueError('source binding changed')
+        blocked = current is not None and current[2] == 'true'
+        if bindings:
+            cursor.execute("SELECT 1 FROM pep_directory_sources s WHERE fuente_id=ANY(%s) "
+                           "AND to_jsonb(s)->>'configurable'='true' LIMIT 1", (bindings,))
+            registered_binding = cursor.fetchone() is not None
+            blocked = blocked or registered_binding
+        if not blocked:
+            return binding, False
+        if current:
+            cursor.execute('SELECT provenance FROM pep_directory_observations WHERE source_id=%s AND submission_id=%s',
+                           (current[0], request['submission_id']))
+            existing = cursor.fetchone()
+            if existing:
+                if _json(_loaded(existing[0])['request']) != _json(request):
+                    raise ValueError('submission conflict')
+                # Historical receipt only: no eligibility restoration or baseline update.
+                return binding, True
+        raise ValueError('configured source requires approved submission')
+
     def _receipt(self, cursor, observation_id):
         cursor.execute('SELECT source_id,submission_id,capture_identity,content_sha256,provenance,payload,'
                        'observed_at,disposition,reasons,received_at FROM pep_directory_observations WHERE id=%s',
@@ -135,11 +187,19 @@ class Repository:
         cursor.execute('SELECT id,event_index,payload FROM pep_directory_events WHERE current_observation_id=%s '
                        'ORDER BY event_index', (observation_id,))
         events = [dict(event_id=e[0], event_index=e[1], payload=_loaded(e[2])) for e in cursor.fetchall()]
-        return dict(observation_id=observation_id, source_id=row[0], submission_id=row[1], capture_identity=row[2],
+        result = dict(observation_id=observation_id, source_id=row[0], submission_id=row[1], capture_identity=row[2],
                     content_sha256=row[3], provenance=envelope['request']['provenance'], observation=_loaded(row[5]),
                     observed_at=row[6], disposition=row[7], reasons=_loaded(row[8]), received_at=row[9].isoformat(),
                     version=metadata['version'], baseline_observation_id=(observation_id if metadata['accepted']
                     else metadata['previous_baseline_id']), previous_baseline_id=metadata['previous_baseline_id'], events=events)
+        if 'lineage' in metadata:
+            cursor.execute('SELECT configuration_id,capture_id,approval_decision_id FROM pep_directory_observations WHERE id=%s',
+                           (observation_id,))
+            lineage = dict(zip(('configuration_id', 'capture_id', 'approval_decision_id'), cursor.fetchone()))
+            if _json(lineage) != _json(metadata['lineage']):
+                raise ValueError('configured receipt lineage mismatch')
+            result.update(lineage)
+        return result
 
     def history(self, source):
         """Original immutable receipts ordered by append ID, including rejected captures."""
