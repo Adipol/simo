@@ -25,22 +25,58 @@ final class SchemaContractTest extends TestCase
     /** Isolated copied validator; the checkout manifest is never written. */
     private function probeContract(array|string|int|float|bool|null $manifest, array|string|int|float|bool|null $snapshot): array
     {
-        $root = '/work/storage/app/pep-schema-contract-check/'.bin2hex(random_bytes(8));
-        mkdir($root.'/Support', 0700, true);
-        mkdir($root.'/Fixtures/PepDirectory/schema-contracts', 0700, true);
-        copy(dirname(__DIR__, 2).'/Support/PepDirectorySchemaContract.php', $root.'/Support/PepDirectorySchemaContract.php');
-        file_put_contents($root.'/Fixtures/PepDirectory/schema-contracts/contract.json', json_encode($manifest, JSON_THROW_ON_ERROR));
-        $code = 'require '.var_export($root.'/Support/PepDirectorySchemaContract.php', true).';'
-            .'$snapshot = json_decode('.var_export(json_encode($snapshot, JSON_THROW_ON_ERROR), true).', true, 512, JSON_THROW_ON_ERROR);'
-            .'echo Tests\\Support\\PepDirectorySchemaContract::validate($snapshot);';
-        $process = proc_open([PHP_BINARY, '-r', $code], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
-        self::assertIsResource($process);
-        $stdout = stream_get_contents($pipes[1]);
-        $stderr = stream_get_contents($pipes[2]);
-        fclose($pipes[1]);
-        fclose($pipes[2]);
+        $root = sys_get_temp_dir().'/pep-schema-contract-check-'.bin2hex(random_bytes(16));
+        $directories = [];
+        $files = [];
+        $process = null;
+        $pipes = [];
+        try {
+            foreach (['', '/Support', '/Fixtures', '/Fixtures/PepDirectory', '/Fixtures/PepDirectory/schema-contracts'] as $suffix) {
+                $directory = $root.$suffix;
+                self::assertTrue(mkdir($directory, 0700), 'create isolated probe directory');
+                $directories[] = $directory;
+            }
+            $validator = $root.'/Support/PepDirectorySchemaContract.php';
+            $files[] = $validator;
+            self::assertTrue(copy(dirname(__DIR__, 2).'/Support/PepDirectorySchemaContract.php', $validator));
+            $contract = $root.'/Fixtures/PepDirectory/schema-contracts/contract.json';
+            $files[] = $contract;
+            $json = json_encode($manifest, JSON_THROW_ON_ERROR);
+            self::assertSame(strlen($json), file_put_contents($contract, $json));
+            $code = 'require '.var_export($validator, true).';'
+                .'$snapshot = json_decode('.var_export(json_encode($snapshot, JSON_THROW_ON_ERROR), true).', true, 512, JSON_THROW_ON_ERROR);'
+                .'echo Tests\\Support\\PepDirectorySchemaContract::validate($snapshot);';
+            $process = proc_open([PHP_BINARY, '-r', $code], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+            self::assertIsResource($process);
+            $stdout = stream_get_contents($pipes[1]);
+            $stderr = stream_get_contents($pipes[2]);
+            foreach ($pipes as $pipe) {
+                fclose($pipe);
+            }
+            $exit = proc_close($process);
+            $process = null;
 
-        return [proc_close($process), $stdout, $stderr];
+            return [$exit, $stdout, $stderr];
+        } finally {
+            foreach ($pipes as $pipe) {
+                if (is_resource($pipe)) {
+                    fclose($pipe);
+                }
+            }
+            if (is_resource($process)) {
+                proc_close($process);
+            }
+            $cleaned = true;
+            foreach (array_reverse($files) as $file) {
+                if (file_exists($file)) {
+                    $cleaned = unlink($file) && $cleaned;
+                }
+            }
+            foreach (array_reverse($directories) as $directory) {
+                $cleaned = rmdir($directory) && $cleaned;
+            }
+            self::assertTrue($cleaned, 'remove only this invocation\'s probe files and directories');
+        }
     }
 
     public function test_malformed_fixed_contract_is_unavailable(): void

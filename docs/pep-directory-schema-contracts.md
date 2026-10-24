@@ -127,3 +127,48 @@ Fresh focused results for this candidate:
   exports after execution; the fixture and both validator pins were unchanged.
 - All predecessor tracked files remained unchanged. No database or persistent
   test target was accessed; these results do not provide database lifecycle proof.
+
+## CI portability correction
+
+The later CI run `40044223557` failed in both PHP jobs at the first malformed
+contract case (`null_sections`): the expected `[0, 'contract_unavailable', '']`
+was replaced by child exit 255 and a missing copied-validator error under the
+helper's hardcoded temporary fixture location. Python CI passed. The exact
+parent filesystem errno in CI was not established; the missing copied file is
+observed evidence, not proof of a specific CI permission error.
+
+Only `SchemaContractTest::probeContract` changed: it now creates a unique directory
+under `sys_get_temp_dir()`, preserves the validator's relative `Support` / `Fixtures`
+layout, checks every directory/copy/write operation, and closes process resources
+and removes only invocation-owned files/directories in `finally`. No compatibility
+copy is made at the old location. Validators, fixture pins, test expectations,
+Python and workflows are unchanged.
+
+Test-first correction evidence (PHP 8.5.6 / PHPUnit 11.5.55):
+
+- Before RED, the nearest existing ancestor of the hardcoded fixture area was
+  `/`, reported non-writable inside the read-only runtime; temporary storage was
+  `/tmp`. The original helper was still unchanged.
+- RED: the focused malformed-contract command ran once, failing at `null_sections`
+  with the same child exit 255 / missing-validator signature: 1 test, 2 assertions,
+  1 failure, 4 warnings; PHPUnit/container exit 1 (0.036 seconds).
+- GREEN: the identical focused command ran once after the helper fix: 1 test,
+  254 assertions, exit 0 (0.372 seconds).
+- Triangulation: the whole file ran once with only the filter removed: 4 tests,
+  424 assertions, exit 0 (0.411 seconds). Both passing runs had empty stderr.
+- Each run used the existing immutable image
+  `sha256:71cf917d466a4fe99a1c21c47555654c651488233148ffd0bc4ab9587af2779e`,
+  read-only checkout/vendor, no network, no capabilities, no-new-privileges,
+  128 PIDs, 512 MiB memory, and only a 32 MiB mode-1777 `/tmp` tmpfs. Each had a
+  30-second outer bound; there was no writable mount at the hardcoded location.
+- In the same ephemeral runtime immediately after each passing command, a bounded
+  wrapper verified the fixture and both validator hashes unchanged and zero
+  residual invocation-created temporary directories, preserving the test exit.
+  Exact commands, separate stdout/stderr/exit receipts and the wrapper are retained
+  as ignored local evidence under `storage/app/pep-directory-delivery/t12-portability-fix/`.
+
+These are local portability results, not a corrected CI result. Cleanup on normal
+completion is observed; individual setup/process failure paths were not separately
+fault-injected. No database, installation, download, Composer, Artisan, persistent
+test environment, deployment or operational activation was involved. Publication
+and independent assessment remain separate parent-owned steps.
