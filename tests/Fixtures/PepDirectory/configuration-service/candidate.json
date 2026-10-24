@@ -1,0 +1,11 @@
+{
+  "declaration": {"source":"synthetic-c1","url":"https://example.invalid/directory","directory":"table","record":"tr","columns":2,"fields":{"unit":{"constant":"Synthetic unit"},"role":{"column":0},"person":{"column":1}}},
+  "canonical": "{\"config\":{\"columns\":2,\"directory\":\"table\",\"fields\":[[\"person\",{\"column\":1,\"constant\":null,\"scope\":\"record\",\"selector\":null}],[\"role\",{\"column\":0,\"constant\":null,\"scope\":\"record\",\"selector\":null}],[\"unit\",{\"column\":null,\"constant\":\"Synthetic unit\",\"scope\":\"record\",\"selector\":null}]],\"record\":\"tr\",\"section\":null,\"source\":\"synthetic-c1\",\"url\":\"https://example.invalid/directory\"},\"contract\":\"configured-html-v1\"}",
+  "revision":"configured-html-v1:ab787410a9df3660580344461d8671aba22448336ca30bbce12397c9885bd7a3",
+  "body":"<html><body><table><tr><td>Director</td><td>Synthetic Alpha</td></tr></table></body></html>",
+  "content_sha256":"bfffa215e5c1d7ec2aa87107aea889a35688b55674ff4ffca051704d5a87ed0b",
+  "metadata":{"status":200,"source_url":"https://example.invalid/directory","observed_at":"2026-10-18T12:00:00+00:00","expected_positions":[],"encoding":"utf-8"},
+  "wire":{"source":"synthetic-c1","revision":"configured-html-v1:ab787410a9df3660580344461d8671aba22448336ca30bbce12397c9885bd7a3","observed_at":"2026-10-18T12:00:00+00:00","validity":"incomplete","positions":[{"unit":"Synthetic unit","role":"Director","person":"Synthetic Alpha","condition":null,"evidence":"<tr><td>Director</td><td>Synthetic Alpha</td></tr>"}],"evidence":"<html><body><table><tr><td>Director</td><td>Synthetic Alpha</td></tr></table></body></html>"},
+  "result":"{\"source\":\"synthetic-c1\",\"revision\":\"configured-html-v1:ab787410a9df3660580344461d8671aba22448336ca30bbce12397c9885bd7a3\",\"observed_at\":\"2026-10-18T12:00:00+00:00\",\"validity\":\"incomplete\",\"positions\":[{\"unit\":\"Synthetic unit\",\"role\":\"Director\",\"person\":\"Synthetic Alpha\",\"condition\":null,\"evidence\":\"<tr><td>Director</td><td>Synthetic Alpha</td></tr>\"}],\"evidence\":\"<html><body><table><tr><td>Director</td><td>Synthetic Alpha</td></tr></table></body></html>\"}",
+  "result_sha256":"d50dc93cbce699b02d99a6dd6938c761f4eb06659fcf6d34e1612535729195e8"
+}
