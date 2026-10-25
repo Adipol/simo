@@ -51,6 +51,15 @@ Route::middleware(['auth', 'usuario.activo'])->group(function () {
     // PEP Monitor — lectura (todos los roles)
     Route::get('/pep/cambios', Cambios::class)->name('pep.cambios');
 
+    // Dormant sibling; component rechecks flag and persisted authorization on every request.
+    Route::get('/pep/directorio', \App\Livewire\Pep\Directorio::class)
+        ->middleware('permission:ver cambios pep')
+        ->name('pep.directorio');
+
+    Route::get('/pep/directorio/configuracion', \App\Livewire\Pep\ConfiguracionDirectorio::class)
+        ->middleware('permission:ver cambios pep')
+        ->name('pep.directorio.configuracion');
+
     // PEP Monitor — gestion (admin y supervisor)
     Route::get('/pep/fuentes', Fuentes::class)
         ->middleware('permission:gestionar fuentes')

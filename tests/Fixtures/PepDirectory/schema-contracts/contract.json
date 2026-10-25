@@ -1,0 +1,243 @@
+{
+  "format": "pep-owned-fixture-metadata-1",
+  "v1": {
+    "version": "v1", "schema": "public", "owner": "postgres",
+    "tables": {
+      "fuentes": {
+        "columns": {"id": ["bigint", false, "nextval('fuentes_id_seq'::regclass)"], "label": ["varchar(255)", false, null]},
+        "constraints": {"fuentes_pkey": "PRIMARY KEY (id)"},
+        "indexes": {"fuentes_pkey": "UNIQUE btree (id)"}
+      },
+      "users": {
+        "columns": {"id": ["bigint", false, "nextval('users_id_seq'::regclass)"], "label": ["varchar(255)", false, null]},
+        "constraints": {"users_pkey": "PRIMARY KEY (id)"},
+        "indexes": {"users_pkey": "UNIQUE btree (id)"}
+      },
+      "pep_directory_sources": {
+        "columns": {
+          "id": ["bigint", false, "nextval('pep_directory_sources_id_seq'::regclass)"],
+          "identity": ["varchar(255)", false, null], "fuente_id": ["bigint", true, null],
+          "baseline_observation_id": ["bigint", true, null], "version": ["bigint", false, "0"]
+        },
+        "constraints": {
+          "pep_directory_sources_pkey": "PRIMARY KEY (id)",
+          "pep_directory_sources_identity_unique": "UNIQUE (identity)",
+          "pep_directory_sources_fuente_id_foreign": "FOREIGN KEY (fuente_id) REFERENCES fuentes (id) ON UPDATE NO ACTION ON DELETE SET NULL",
+          "pep_source_baseline_fk": "FOREIGN KEY (id, baseline_observation_id) REFERENCES pep_directory_observations (source_id, id) ON UPDATE NO ACTION ON DELETE RESTRICT"
+        },
+        "indexes": {"pep_directory_sources_pkey": "UNIQUE btree (id)", "pep_directory_sources_identity_unique": "UNIQUE btree (identity)", "pep_directory_sources_fuente_id_index": "btree (fuente_id)"}
+      },
+      "pep_directory_observations": {
+        "columns": {
+          "id": ["bigint", false, "nextval('pep_directory_observations_id_seq'::regclass)"], "source_id": ["bigint", false, null],
+          "submission_id": ["varchar(128)", false, null], "capture_identity": ["varchar(255)", false, null],
+          "content_sha256": ["char(64)", false, null], "provenance": ["json", false, null], "payload": ["json", false, null],
+          "observed_at": ["varchar(64)", false, null], "disposition": ["varchar(255)", false, null],
+          "reasons": ["json", false, null], "received_at": ["timestamptz(6)", false, "CURRENT_TIMESTAMP"]
+        },
+        "constraints": {
+          "pep_directory_observations_pkey": "PRIMARY KEY (id)",
+          "pep_directory_observations_source_id_foreign": "FOREIGN KEY (source_id) REFERENCES pep_directory_sources (id) ON UPDATE NO ACTION ON DELETE RESTRICT",
+          "pep_directory_observations_disposition_check": "CHECK (disposition IN ('baseline', 'rebaselined', 'compared', 'rejected'))",
+          "pep_obs_submission_unique": "UNIQUE (source_id, submission_id)", "pep_obs_source_id_unique": "UNIQUE (source_id, id)"
+        },
+        "indexes": {"pep_directory_observations_pkey": "UNIQUE btree (id)", "pep_obs_submission_unique": "UNIQUE btree (source_id, submission_id)", "pep_obs_source_id_unique": "UNIQUE btree (source_id, id)"}
+      },
+      "pep_directory_events": {
+        "columns": {
+          "id": ["bigint", false, "nextval('pep_directory_events_id_seq'::regclass)"], "source_id": ["bigint", false, null],
+          "previous_observation_id": ["bigint", true, null], "current_observation_id": ["bigint", false, null],
+          "event_index": ["integer", false, null], "payload": ["json", false, null],
+          "review_state": ["varchar(255)", false, "'pending'::character varying"], "review_version": ["bigint", false, "0"]
+        },
+        "constraints": {
+          "pep_directory_events_pkey": "PRIMARY KEY (id)",
+          "pep_directory_events_review_state_check": "CHECK (review_state IN ('pending', 'confirmed', 'discarded'))",
+          "pep_event_identity_unique": "UNIQUE (current_observation_id, event_index)",
+          "pep_event_previous_fk": "FOREIGN KEY (source_id, previous_observation_id) REFERENCES pep_directory_observations (source_id, id) ON UPDATE NO ACTION ON DELETE RESTRICT",
+          "pep_event_current_fk": "FOREIGN KEY (source_id, current_observation_id) REFERENCES pep_directory_observations (source_id, id) ON UPDATE NO ACTION ON DELETE RESTRICT"
+        },
+        "indexes": {"pep_directory_events_pkey": "UNIQUE btree (id)", "pep_event_identity_unique": "UNIQUE btree (current_observation_id, event_index)", "pep_event_source_review_idx": "btree (source_id, review_state)"}
+      },
+      "pep_directory_reviews": {
+        "columns": {
+          "id": ["bigint", false, "nextval('pep_directory_reviews_id_seq'::regclass)"], "event_id": ["bigint", false, null],
+          "version": ["bigint", false, null], "user_id": ["bigint", true, null], "actor_identity": ["varchar(255)", false, null],
+          "actor_snapshot": ["json", false, null], "decided_at": ["timestamptz(6)", false, "CURRENT_TIMESTAMP"],
+          "reason": ["text", false, null], "prior_state": ["varchar(255)", false, null], "new_state": ["varchar(255)", false, null]
+        },
+        "constraints": {
+          "pep_directory_reviews_pkey": "PRIMARY KEY (id)",
+          "pep_directory_reviews_event_id_foreign": "FOREIGN KEY (event_id) REFERENCES pep_directory_events (id) ON UPDATE NO ACTION ON DELETE RESTRICT",
+          "pep_directory_reviews_user_id_foreign": "FOREIGN KEY (user_id) REFERENCES users (id) ON UPDATE NO ACTION ON DELETE SET NULL",
+          "pep_directory_reviews_prior_state_check": "CHECK (prior_state IN ('pending', 'confirmed', 'discarded'))",
+          "pep_directory_reviews_new_state_check": "CHECK (new_state IN ('pending', 'confirmed', 'discarded'))",
+          "pep_review_version_unique": "UNIQUE (event_id, version)"
+        },
+        "indexes": {"pep_directory_reviews_pkey": "UNIQUE btree (id)", "pep_directory_reviews_user_id_index": "btree (user_id)", "pep_review_version_unique": "UNIQUE btree (event_id, version)"}
+      }
+    },
+    "triggers": {}, "functions": {}
+  },
+  "v2_design": {
+    "version": "v2", "schema": "public", "owner": "postgres",
+    "tables": {
+      "fuentes": {
+        "columns": {
+          "id": ["bigint", false, "nextval('fuentes_id_seq'::regclass)"], "label": ["varchar(255)", false, null],
+          "url": ["text", true, null], "tipo": ["varchar(32)", true, null], "activo": ["boolean", false, "true"]
+        },
+        "constraints": {"fuentes_pkey": "PRIMARY KEY (id)"}, "indexes": {"fuentes_pkey": "UNIQUE btree (id)"}
+      },
+      "users": {
+        "columns": {"id": ["bigint", false, "nextval('users_id_seq'::regclass)"], "label": ["varchar(255)", false, null]},
+        "constraints": {"users_pkey": "PRIMARY KEY (id)"}, "indexes": {"users_pkey": "UNIQUE btree (id)"}
+      },
+      "pep_directory_sources": {
+        "columns": {
+          "id": ["bigint", false, "nextval('pep_directory_sources_id_seq'::regclass)"],
+          "identity": ["varchar(255)", false, null], "fuente_id": ["bigint", true, null],
+          "baseline_observation_id": ["bigint", true, null], "version": ["bigint", false, "0"],
+          "configurable": ["boolean", false, "false"], "eligibility_version": ["bigint", false, "0"],
+          "draft_config_id": ["bigint", true, null], "current_preview_id": ["bigint", true, null], "approved_decision_id": ["bigint", true, null]
+        },
+        "constraints": {
+          "pep_directory_sources_pkey": "PRIMARY KEY (id)", "pep_directory_sources_identity_unique": "UNIQUE (identity)",
+          "pep_directory_sources_fuente_id_foreign": "FOREIGN KEY (fuente_id) REFERENCES fuentes (id) ON UPDATE NO ACTION ON DELETE SET NULL",
+          "pep_source_baseline_fk": "FOREIGN KEY (id, baseline_observation_id) REFERENCES pep_directory_observations (source_id, id) ON UPDATE NO ACTION ON DELETE RESTRICT",
+          "pep_src_draft_fk": "FOREIGN KEY (id, draft_config_id) REFERENCES pep_directory_configurations (source_id, id) ON UPDATE NO ACTION ON DELETE RESTRICT",
+          "pep_src_preview_fk": "FOREIGN KEY (id, current_preview_id) REFERENCES pep_directory_previews (source_id, id) ON UPDATE NO ACTION ON DELETE RESTRICT",
+          "pep_src_approval_fk": "FOREIGN KEY (id, approved_decision_id) REFERENCES pep_directory_configuration_decisions (source_id, id) ON UPDATE NO ACTION ON DELETE RESTRICT",
+          "pep_src_eligibility_ck": "CHECK (eligibility_version >= 0)"
+        },
+        "indexes": {
+          "pep_directory_sources_pkey": "UNIQUE btree (id)", "pep_directory_sources_identity_unique": "UNIQUE btree (identity)",
+          "pep_directory_sources_fuente_id_index": "btree (fuente_id)", "pep_src_live_uq": "UNIQUE btree (fuente_id) WHERE configurable = true AND fuente_id IS NOT NULL"
+        }
+      },
+      "pep_directory_observations": {
+        "columns": {
+          "id": ["bigint", false, "nextval('pep_directory_observations_id_seq'::regclass)"], "source_id": ["bigint", false, null],
+          "submission_id": ["varchar(128)", false, null], "capture_identity": ["varchar(255)", false, null],
+          "content_sha256": ["char(64)", false, null], "provenance": ["json", false, null], "payload": ["json", false, null],
+          "observed_at": ["varchar(64)", false, null], "disposition": ["varchar(255)", false, null],
+          "reasons": ["json", false, null], "received_at": ["timestamptz(6)", false, "CURRENT_TIMESTAMP"],
+          "configuration_id": ["bigint", true, null], "capture_id": ["bigint", true, null], "approval_decision_id": ["bigint", true, null]
+        },
+        "constraints": {
+          "pep_directory_observations_pkey": "PRIMARY KEY (id)",
+          "pep_directory_observations_source_id_foreign": "FOREIGN KEY (source_id) REFERENCES pep_directory_sources (id) ON UPDATE NO ACTION ON DELETE RESTRICT",
+          "pep_directory_observations_disposition_check": "CHECK (disposition IN ('baseline', 'rebaselined', 'compared', 'rejected'))",
+          "pep_obs_submission_unique": "UNIQUE (source_id, submission_id)", "pep_obs_source_id_unique": "UNIQUE (source_id, id)",
+          "pep_obs_config_fk": "FOREIGN KEY (source_id, configuration_id) REFERENCES pep_directory_configurations (source_id, id) ON UPDATE NO ACTION ON DELETE RESTRICT",
+          "pep_obs_capture_fk": "FOREIGN KEY (source_id, capture_id) REFERENCES pep_directory_captures (source_id, id) ON UPDATE NO ACTION ON DELETE RESTRICT",
+          "pep_obs_approval_fk": "FOREIGN KEY (source_id, approval_decision_id) REFERENCES pep_directory_configuration_decisions (source_id, id) ON UPDATE NO ACTION ON DELETE RESTRICT"
+        },
+        "indexes": {"pep_directory_observations_pkey": "UNIQUE btree (id)", "pep_obs_submission_unique": "UNIQUE btree (source_id, submission_id)", "pep_obs_source_id_unique": "UNIQUE btree (source_id, id)"}
+      },
+      "pep_directory_events": {
+        "columns": {
+          "id": ["bigint", false, "nextval('pep_directory_events_id_seq'::regclass)"], "source_id": ["bigint", false, null],
+          "previous_observation_id": ["bigint", true, null], "current_observation_id": ["bigint", false, null],
+          "event_index": ["integer", false, null], "payload": ["json", false, null],
+          "review_state": ["varchar(255)", false, "'pending'::character varying"], "review_version": ["bigint", false, "0"]
+        },
+        "constraints": {
+          "pep_directory_events_pkey": "PRIMARY KEY (id)", "pep_directory_events_review_state_check": "CHECK (review_state IN ('pending', 'confirmed', 'discarded'))",
+          "pep_event_identity_unique": "UNIQUE (current_observation_id, event_index)",
+          "pep_event_previous_fk": "FOREIGN KEY (source_id, previous_observation_id) REFERENCES pep_directory_observations (source_id, id) ON UPDATE NO ACTION ON DELETE RESTRICT",
+          "pep_event_current_fk": "FOREIGN KEY (source_id, current_observation_id) REFERENCES pep_directory_observations (source_id, id) ON UPDATE NO ACTION ON DELETE RESTRICT"
+        },
+        "indexes": {"pep_directory_events_pkey": "UNIQUE btree (id)", "pep_event_identity_unique": "UNIQUE btree (current_observation_id, event_index)", "pep_event_source_review_idx": "btree (source_id, review_state)"}
+      },
+      "pep_directory_reviews": {
+        "columns": {
+          "id": ["bigint", false, "nextval('pep_directory_reviews_id_seq'::regclass)"], "event_id": ["bigint", false, null],
+          "version": ["bigint", false, null], "user_id": ["bigint", true, null], "actor_identity": ["varchar(255)", false, null],
+          "actor_snapshot": ["json", false, null], "decided_at": ["timestamptz(6)", false, "CURRENT_TIMESTAMP"],
+          "reason": ["text", false, null], "prior_state": ["varchar(255)", false, null], "new_state": ["varchar(255)", false, null]
+        },
+        "constraints": {
+          "pep_directory_reviews_pkey": "PRIMARY KEY (id)",
+          "pep_directory_reviews_event_id_foreign": "FOREIGN KEY (event_id) REFERENCES pep_directory_events (id) ON UPDATE NO ACTION ON DELETE RESTRICT",
+          "pep_directory_reviews_user_id_foreign": "FOREIGN KEY (user_id) REFERENCES users (id) ON UPDATE NO ACTION ON DELETE SET NULL",
+          "pep_directory_reviews_prior_state_check": "CHECK (prior_state IN ('pending', 'confirmed', 'discarded'))",
+          "pep_directory_reviews_new_state_check": "CHECK (new_state IN ('pending', 'confirmed', 'discarded'))", "pep_review_version_unique": "UNIQUE (event_id, version)"
+        },
+        "indexes": {"pep_directory_reviews_pkey": "UNIQUE btree (id)", "pep_directory_reviews_user_id_index": "btree (user_id)", "pep_review_version_unique": "UNIQUE btree (event_id, version)"}
+      },
+      "pep_directory_configurations": {
+        "columns": {
+          "id": ["bigint", false, "nextval('pep_directory_configurations_id_seq'::regclass)"], "source_id": ["bigint", false, null],
+          "declaration": ["json", false, null], "canonical_bytes": ["bytea", false, null], "revision": ["varchar(255)", false, null],
+          "binding_url": ["text", false, null], "directory_url": ["text", false, null], "creator_identity": ["varchar(255)", false, null],
+          "creator_snapshot": ["json", false, null], "created_at": ["timestamptz(6)", false, "CURRENT_TIMESTAMP"]
+        },
+        "constraints": {
+          "pep_cfg_pk": "PRIMARY KEY (id)", "pep_cfg_source_uq": "UNIQUE (source_id, id)", "pep_cfg_revision_uq": "UNIQUE (source_id, revision)",
+          "pep_cfg_source_fk": "FOREIGN KEY (source_id) REFERENCES pep_directory_sources (id) ON UPDATE NO ACTION ON DELETE RESTRICT"
+        },
+        "indexes": {"pep_cfg_pk": "UNIQUE btree (id)", "pep_cfg_source_uq": "UNIQUE btree (source_id, id)", "pep_cfg_revision_uq": "UNIQUE btree (source_id, revision)"}
+      },
+      "pep_directory_captures": {
+        "columns": {
+          "id": ["bigint", false, "nextval('pep_directory_captures_id_seq'::regclass)"], "source_id": ["bigint", false, null],
+          "body_bytes": ["bytea", false, null], "content_sha256": ["char(64)", false, null], "metadata": ["json", false, null],
+          "provenance": ["json", false, null], "captured_at": ["timestamptz(6)", false, null]
+        },
+        "constraints": {"pep_cap_pk": "PRIMARY KEY (id)", "pep_cap_source_uq": "UNIQUE (source_id, id)", "pep_cap_source_fk": "FOREIGN KEY (source_id) REFERENCES pep_directory_sources (id) ON UPDATE NO ACTION ON DELETE RESTRICT"},
+        "indexes": {"pep_cap_pk": "UNIQUE btree (id)", "pep_cap_source_uq": "UNIQUE btree (source_id, id)"}
+      },
+      "pep_directory_previews": {
+        "columns": {
+          "id": ["bigint", false, "nextval('pep_directory_previews_id_seq'::regclass)"], "source_id": ["bigint", false, null],
+          "configuration_id": ["bigint", false, null], "capture_id": ["bigint", false, null], "result_bytes": ["bytea", false, null],
+          "result_sha256": ["char(64)", false, null], "wire_payload": ["json", false, null], "validity": ["varchar(32)", false, null],
+          "qualification": ["json", false, null], "eligibility_version": ["bigint", false, null], "created_at": ["timestamptz(6)", false, "CURRENT_TIMESTAMP"]
+        },
+        "constraints": {
+          "pep_pre_pk": "PRIMARY KEY (id)", "pep_pre_source_uq": "UNIQUE (source_id, id)",
+          "pep_pre_source_fk": "FOREIGN KEY (source_id) REFERENCES pep_directory_sources (id) ON UPDATE NO ACTION ON DELETE RESTRICT",
+          "pep_pre_config_fk": "FOREIGN KEY (source_id, configuration_id) REFERENCES pep_directory_configurations (source_id, id) ON UPDATE NO ACTION ON DELETE RESTRICT",
+          "pep_pre_capture_fk": "FOREIGN KEY (source_id, capture_id) REFERENCES pep_directory_captures (source_id, id) ON UPDATE NO ACTION ON DELETE RESTRICT",
+          "pep_pre_eligibility_ck": "CHECK (eligibility_version >= 0)"
+        },
+        "indexes": {"pep_pre_pk": "UNIQUE btree (id)", "pep_pre_source_uq": "UNIQUE btree (source_id, id)"}
+      },
+      "pep_directory_configuration_decisions": {
+        "columns": {
+          "id": ["bigint", false, "nextval('pep_directory_configuration_decisions_id_seq'::regclass)"], "source_id": ["bigint", false, null],
+          "sequence": ["bigint", false, null], "action": ["varchar(32)", false, null], "configuration_id": ["bigint", true, null],
+          "preview_id": ["bigint", true, null], "prior_approval_id": ["bigint", true, null], "new_approval_id": ["bigint", true, null],
+          "actor_kind": ["varchar(16)", false, null], "actor_identity": ["varchar(255)", false, null], "actor_snapshot": ["json", false, null],
+          "reason": ["text", false, null], "decided_at": ["timestamptz(6)", false, "CURRENT_TIMESTAMP"]
+        },
+        "constraints": {
+          "pep_dec_pk": "PRIMARY KEY (id)", "pep_dec_source_uq": "UNIQUE (source_id, id)", "pep_dec_sequence_uq": "UNIQUE (source_id, sequence)",
+          "pep_dec_source_fk": "FOREIGN KEY (source_id) REFERENCES pep_directory_sources (id) ON UPDATE NO ACTION ON DELETE RESTRICT",
+          "pep_dec_config_fk": "FOREIGN KEY (source_id, configuration_id) REFERENCES pep_directory_configurations (source_id, id) ON UPDATE NO ACTION ON DELETE RESTRICT",
+          "pep_dec_preview_fk": "FOREIGN KEY (source_id, preview_id) REFERENCES pep_directory_previews (source_id, id) ON UPDATE NO ACTION ON DELETE RESTRICT",
+          "pep_dec_prior_fk": "FOREIGN KEY (source_id, prior_approval_id) REFERENCES pep_directory_configuration_decisions (source_id, id) ON UPDATE NO ACTION ON DELETE RESTRICT",
+          "pep_dec_new_fk": "FOREIGN KEY (source_id, new_approval_id) REFERENCES pep_directory_configuration_decisions (source_id, id) ON UPDATE NO ACTION ON DELETE RESTRICT",
+          "pep_dec_actor_ck": "CHECK (actor_kind IN ('system', 'human'))", "pep_dec_sequence_ck": "CHECK (sequence > 0)"
+        },
+        "indexes": {"pep_dec_pk": "UNIQUE btree (id)", "pep_dec_source_uq": "UNIQUE btree (source_id, id)", "pep_dec_sequence_uq": "UNIQUE btree (source_id, sequence)"}
+      }
+    },
+    "triggers": {
+      "pep_fuente_invalidate": {
+        "table": "fuentes", "timing": "BEFORE", "events": ["UPDATE", "DELETE"], "level": "ROW", "enabled": "ORIGIN",
+        "function": "pep_invalidate_source", "arguments": [],
+        "scope": "registered configurable source only",
+        "invalidate_on": ["url IS DISTINCT FROM old.url", "tipo IS DISTINCT FROM old.tipo", "activo true to false", "DELETE"],
+        "lock_order": ["live fuente", "pep_directory_sources"], "definition_sha256": null
+      }
+    },
+    "functions": {
+      "pep_invalidate_source": {
+        "schema": "public", "owner": "postgres", "arguments": [], "returns": "trigger", "language": "plpgsql",
+        "security_definer": false, "volatility": "VOLATILE", "search_path": ["pg_catalog", "public"], "body_sha256": null
+      }
+    }
+  }
+}

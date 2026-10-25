@@ -1333,10 +1333,44 @@ def registrar_snapshot_imagenes(
 class PEPMonitor:
     """Orquesta descarga, limpieza, comparacion y alerta por fuente."""
 
-    def __init__(self):
+    def __init__(self, *, shadow_observer=None):
         self.db = DatabaseManager()
         self.http = create_http_session()
         self.running = True
+        self._shadow_observer = shadow_observer
+
+    def _directory_shadow_observer(self):
+        observer = getattr(self, "_shadow_observer", None)
+        if observer is not None:
+            return observer
+        selected = os.getenv("PEP_DIRECTORY_SHADOW_CONFIG")
+        if not selected:
+            return None
+        try:
+            from pep_directory_shadow import load_observer
+            return load_observer(selected)
+        except Exception:
+            # Never interpolate exception/config/URL/credentials into diagnostics.
+            logger.warning("pep_directory_shadow: configuration_failed")
+            return None
+
+    def _directory_shadow_freeze(self, observer, response, fuente):
+        if observer is None:
+            return None
+        try:
+            from pep_directory_shadow import freeze_response
+            return freeze_response(response, fuente)
+        except Exception:
+            logger.warning("pep_directory_shadow: capture_failed")
+            return None
+
+    def _directory_shadow_submit(self, observer, capture):
+        if observer is None or capture is None:
+            return
+        try:
+            observer(capture)
+        except Exception:
+            logger.warning("pep_directory_shadow: observation_failed")
 
     def _cargar_imgs_anterior(self, fuente_id: int) -> list[dict]:
         """Carga metadata de imágenes previas desde snapshot_imagenes."""
@@ -1361,18 +1395,24 @@ class PEPMonitor:
         url = fuente["url"]
         tipo = fuente.get("tipo", "html")
         selector = fuente.get("selector_css")
+        observer = self._directory_shadow_observer()
 
         if tipo == "pdf" or url.lower().endswith(".pdf"):
             # PDF no tiene HTML — retornar vacío
+            if observer is not None:
+                logger.warning("pep_directory_shadow: skipped_pdf")
             return "", "pdf"
 
         if tipo == "js":
+            if observer is not None:
+                logger.warning("pep_directory_shadow: skipped_js_without_metadata")
             html, metodo_js = obtener_html_js(url)
             return html, "js_playwright"
 
         try:
             resp = self.http.get(url, timeout=config.REQUEST_TIMEOUT, verify=verify_para_url(url))
             resp.raise_for_status()
+            capture = self._directory_shadow_freeze(observer, resp, fuente)
             html = resp.text
             # Fallback JS si el HTML tiene poco contenido
             lineas_test, _ = limpiar_html(html, selector)
@@ -1381,7 +1421,10 @@ class PEPMonitor:
                 if html_js:
                     lineas_js, _ = limpiar_html(html_js, selector)
                     if len(lineas_js) > len(lineas_test):
+                        if observer is not None:
+                            logger.warning("pep_directory_shadow: skipped_js_without_metadata")
                         return html_js, "js_fallback"
+            self._directory_shadow_submit(observer, capture)
             return html, "html_estatico"
         except requests.ConnectionError:
             raise

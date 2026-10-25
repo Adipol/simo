@@ -23,6 +23,18 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->app->bind(\App\Services\PepDirectory\PreviewCompiler::class, static function (): \App\Services\PepDirectory\PreviewCompiler {
+            return new \App\Services\PepDirectory\ProcessPreviewCompiler(config('pep_directory.preview_interpreter'));
+        });
+
+        $this->app->bind(\App\Services\PepDirectory\ProcessCaptureTransport::class, static function (): \App\Services\PepDirectory\ProcessCaptureTransport {
+            $interpreter = config('pep_directory.preview_interpreter');
+            return new \App\Services\PepDirectory\ProcessCaptureTransport(
+                is_string($interpreter) ? $interpreter : null,
+                config('pep_directory.capture_enabled', false) === true,
+            );
+        });
+
         $this->app->singleton(PepCatalogService::class);
 
         $this->app->singleton(NegativeExamplesProvider::class, DescartadosAnalisisService::class);
