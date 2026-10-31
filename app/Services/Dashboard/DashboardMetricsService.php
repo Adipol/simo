@@ -406,9 +406,9 @@ class DashboardMetricsService
     {
         // Compare current month vs previous month
         $currentStart = Carbon::now()->startOfMonth();
-        $currentEnd = Carbon::now()->endOfMonth();
-        $previousStart = Carbon::now()->subMonth()->startOfMonth();
-        $previousEnd = Carbon::now()->subMonth()->endOfMonth();
+        $currentEnd = $currentStart->copy()->endOfMonth();
+        $previousStart = $currentStart->copy()->subMonth();
+        $previousEnd = $previousStart->copy()->endOfMonth();
 
         $currentPeps = $this->countByPeriod('PEP', $currentStart, $currentEnd);
         $previousPeps = $this->countByPeriod('PEP', $previousStart, $previousEnd);
