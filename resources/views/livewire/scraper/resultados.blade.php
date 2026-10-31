@@ -1,8 +1,9 @@
-<div class="space-y-4">
+<div class="simo-evidence-page">
 
     {{-- Header: title + pending badge --}}
-    <div class="flex items-center gap-3 mb-1">
-        <h1 class="text-sm font-semibold text-gray-700">Resultados</h1>
+    <header class="space-y-2">
+    <div class="flex items-center gap-3">
+        <h1 class="text-lg font-semibold text-zinc-900">Resultados Scraper</h1>
         @if($this->pendingCount > 0)
             <span class="simo-badge bg-amber-50 text-amber-600 border-amber-200 text-[9px]">
                 {{ $this->pendingCount }} procesando
@@ -10,52 +11,55 @@
         @endif
     </div>
 
+    <p class="text-sm text-zinc-600">Ver los grupos registrados sin perder los títulos originales.</p>
+    </header>
+
     {{-- Toolbar --}}
-    <div class="flex items-center justify-between">
+    <div class="flex items-start justify-between gap-3 flex-wrap">
         <div class="flex items-center gap-2 flex-wrap">
             <input wire:model.live.debounce.400ms="busqueda" type="text"
-                placeholder="Buscar keyword, titulo, URL..."
+                aria-label="Buscar resultados" placeholder="Buscar keyword, titulo, URL..."
                 class="simo-input w-56" />
 
-            <select wire:model.live="filtroPais" class="simo-select">
+            <select aria-label="País" wire:model.live="filtroPais" class="simo-select">
                 <option value="">Todos los paises</option>
                 @foreach($paises as $p)
                     <option value="{{ $p->codigo }}">{{ $p->nombre }}</option>
                 @endforeach
             </select>
 
-            <select wire:model.live="filtroCategoria" class="simo-select">
+            <select aria-label="Categoría" wire:model.live="filtroCategoria" class="simo-select">
                 <option value="">Todas las categorias</option>
                 @foreach($categorias as $cat)
                     <option value="{{ $cat }}">{{ $cat }}</option>
                 @endforeach
             </select>
 
-            <select wire:model.live="filtroLeido" class="simo-select">
+            <select aria-label="Lectura" wire:model.live="filtroLeido" class="simo-select">
                 <option value="">Todos</option>
                 <option value="0">Sin leer</option>
                 <option value="1">Leidos</option>
             </select>
 
-            <select wire:model.live="filtroRelevante" class="simo-select">
+            <select aria-label="Relevancia" wire:model.live="filtroRelevante" class="simo-select">
                 <option value="">Todos</option>
                 <option value="1">Relevantes</option>
                 <option value="null">Sin clasificar</option>
             </select>
 
-            <select wire:model.live="filtroDescartado" class="simo-select">
+            <select aria-label="Descarte" wire:model.live="filtroDescartado" class="simo-select">
                 <option value="0">Activos</option>
                 <option value="1">Descartados</option>
                 <option value="">Todos</option>
             </select>
 
-            <select wire:model.live="filtroArchivado" class="simo-select">
+            <select aria-label="Archivo" wire:model.live="filtroArchivado" class="simo-select">
                 <option value="0">No archivados</option>
                 <option value="1">Archivados</option>
                 <option value="">Todos</option>
             </select>
 
-            <select wire:model.live="filtroGemini" class="simo-select">
+            <select aria-label="Análisis Gemini" wire:model.live="filtroGemini" class="simo-select">
                 <option value="">Gemini: Todos</option>
                 <option value="pending">Sin analizar</option>
                 <option value="pep">PEP confirmado</option>
@@ -89,155 +93,94 @@
         </div>
     @endif
 
-    {{-- Tabla --}}
-    <div class="simo-card p-0 overflow-hidden">
-        <table class="simo-table min-w-full">
-            <thead>
-                <tr>
-                    <th style="width:42%">Keyword / Articulo</th>
-                    <th>Sitio</th>
-                    <th class="text-center" style="width:60px">Score</th>
-                    <th>Fecha</th>
-                    <th>Acciones</th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-50">
-                @forelse($resultados as $r)
-                    <tr wire:key="resultado-{{ $r->id }}" class="{{ !$r->leido && !$r->descartado ? 'bg-indigo-50/30' : 'bg-white' }}">
-                        <td>
-                            <div class="flex items-start gap-2">
-                                @if(!$r->leido && !$r->descartado)
-                                    <span class="mt-1.5 w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0"></span>
-                                @else
-                                    <span class="mt-1.5 w-1.5 h-1.5 shrink-0"></span>
-                                @endif
-                                <div class="min-w-0">
+    <aside class="simo-evidence-notice">
+        <p class="text-sm font-semibold">Conservar la bandeja, abrir las fuentes.</p>
+        <p class="text-xs text-zinc-600">Expanda los registros de cada grupo o use «Comparar fuentes» para revisar la evidencia. Abrir y cerrar no marca como leído ni modifica datos.</p>
+    </aside>
+
+    <section id="results-table" class="simo-evidence-table-card" aria-labelledby="table-title">
+        <header class="simo-evidence-table-heading">
+            <h2 id="table-title" class="text-base font-semibold">Artículos y grupos registrados</h2>
+            <span class="simo-badge bg-zinc-100 text-zinc-600">{{ $resultados->total() }} resultados</span>
+        </header>
+        <div class="simo-evidence-table-scroll" role="region" aria-label="Tabla de resultados, desplazable" tabindex="0">
+            <table class="simo-evidence-table" data-testid="results-table">
+                <caption>Los grupos reflejan relaciones almacenadas, no eventos validados. Se conservan los títulos originales.</caption>
+                <thead><tr>
+                    <th scope="col">Keyword / Artículo</th><th scope="col">Sitio</th><th scope="col">Score</th><th scope="col">Fecha</th><th scope="col">Acciones</th>
+                </tr></thead>
+                <tbody>
+                    @forelse($resultados as $r)
+                        <tr wire:key="resultado-{{ $r->id }}" class="{{ $seleccionado?->id === $r->id ? 'simo-evidence-row-selected' : '' }}">
+                            <td>
+                                <div class="simo-evidence-event">
+                                    <span class="text-xs font-medium text-indigo-600">{{ $r->keyword ?: 'Keyword no registrada' }}</span>
+                                    <p class="text-sm font-semibold text-zinc-900">{{ $r->titulo ?: 'Sin título registrado' }}</p>
                                     <div class="flex items-center gap-1.5 flex-wrap">
-                                        <span class="text-xs font-semibold text-indigo-600">{{ $r->keyword }}</span>
-                                        @if($r->relevante)
-                                            <span class="simo-badge bg-emerald-50 text-emerald-600 text-[9px]">relevante</span>
-                                        @endif
-                                        @if($r->descartado)
-                                            <span class="simo-badge bg-zinc-100 text-zinc-500 border-zinc-200 text-[9px]">descartado</span>
-                                        @endif
-                                        @if($r->archivado_at)
-                                            <span class="simo-badge bg-sky-50 text-sky-600 border-sky-100 text-[9px]">archivado</span>
-                                        @endif
-                                        {{-- Gemini analysis badge --}}
+                                        <span class="text-xs text-zinc-600">{{ $r->leido ? 'Leído' : 'Sin leer' }}</span>
+                                        @if($r->relevante)<span class="simo-badge bg-emerald-50 text-emerald-700 text-[9px]">relevante</span>@endif
+                                        @if($r->descartado)<span class="simo-badge bg-zinc-100 text-zinc-500 text-[9px]">descartado</span>@endif
+                                        @if($r->archivado_at)<span class="simo-badge bg-sky-50 text-sky-700 text-[9px]">archivado</span>@endif
                                         @if(!$r->gemini_analyzed)
-                                            <span class="simo-badge bg-zinc-100 text-zinc-500 border-zinc-200 text-[9px]">Pendiente</span>
+                                            <span class="simo-badge bg-zinc-100 text-zinc-600 text-[9px]">Pendiente</span>
                                         @elseif($r->gemini_is_pep)
                                             <x-simo-badge-categoria :categoria="$r->gemini_categoria" />
-                                            @if($r->gemini_nombre)
-                                                <span class="text-[10px] text-gray-600">{{ Str::limit($r->gemini_nombre, 30) }}</span>
-                                            @endif
+                                            @if($r->gemini_nombre)<span class="text-[10px] text-gray-600">{{ Str::limit($r->gemini_nombre, 30) }}</span>@endif
                                         @else
-                                            <span class="simo-badge bg-zinc-100 text-zinc-400 text-[9px]">No relevante</span>
+                                            <span class="simo-badge bg-zinc-100 text-zinc-600 text-[9px]">No relevante</span>
                                         @endif
-
-                                        {{-- Cluster badge: +N medios (Design D10) --}}
                                         @if(($r->secondaries_count ?? 0) > 0)
-                                            <span x-data="{ open: false }"
-                                                  @click="open = !open"
-                                                  class="simo-badge bg-violet-50 text-violet-600 border-violet-100 cursor-pointer text-[9px]"
-                                                  title="Este artículo agrupa {{ $r->secondaries_count }} fuente(s) similares">
-                                                +{{ $r->secondaries_count }} medios
-                                            </span>
+                                            <span class="simo-badge bg-violet-50 text-violet-600 text-[9px]">+{{ $r->secondaries_count }} medios</span>
                                         @endif
-
                                     </div>
-                                    @if($r->titulo)
-                                        <p class="text-xs text-gray-700 mt-0.5 leading-snug">{{ Str::limit($r->titulo, 90) }}</p>
-                                    @endif
-                                    <a href="{{ $r->url }}" target="_blank"
-                                       class="text-[10px] text-gray-400 hover:text-indigo-500 truncate block max-w-sm mt-0.5 transition-colors">
-                                        {{ Str::limit($r->url, 75) }}
-                                    </a>
                                 </div>
-                            </div>
-                        </td>
-                        <td>
-                            <div class="text-xs font-medium text-gray-700">{{ $r->sitio?->nombre ?? '—' }}</div>
-                            <div class="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                                @if($r->pais)
-                                    <span class="text-[10px] text-gray-400">{{ $r->pais }}</span>
-                                @endif
-                                <x-simo-badge-categoria :categoria="$r->categoria" />
-                            </div>
-                        </td>
-                        <td class="text-center">
-                            <span class="text-sm font-bold {{ $r->getScoreColorClass() }}">
-                                {{ $r->relevance_score }}
-                            </span>
-                            @if($r->found_in_title)
-                                <div class="text-[9px] text-emerald-500 font-medium">titulo</div>
-                            @endif
-                        </td>
-                        <td class="text-xs text-gray-500 whitespace-nowrap">
-                            {{ $r->fecha_encontrado?->format('d/m/y H:i') }}
-                        </td>
-                        <td>
-                            <div class="flex items-center gap-1 flex-wrap">
-                                @if($r->descartado)
-                                    <button wire:click="restaurar({{ $r->id }})"
-                                        class="simo-btn bg-indigo-50 text-indigo-600 hover:bg-indigo-100">
-                                        Restaurar
-                                    </button>
-                                @else
-                                    @if(!$r->leido)
-                                        <button wire:click="marcarLeido({{ $r->id }})"
-                                            class="simo-btn-ghost text-gray-400">
-                                            Leido
-                                        </button>
-                                    @endif
-                                    <button wire:click="marcarRelevante({{ $r->id }}, true)"
-                                        class="simo-btn {{ $r->relevante ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-50 text-gray-500 hover:bg-emerald-50 hover:text-emerald-600' }}">
-                                        Relevante
-                                    </button>
-                                    <button wire:click="descartar({{ $r->id }})"
-                                        wire:confirm="Descartar este articulo? No aparecera en la lista principal pero se puede recuperar."
-                                        class="simo-btn-danger" title="Descartar">
-                                        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
-                                        </svg>
-                                    </button>
-                                    {{-- Archivar / Desarchivar --}}
-                                    @can('gestionar resultados')
-                                        @if($r->archivado_at)
-                                            <button wire:click="desarchivar({{ $r->id }})"
-                                                class="simo-btn bg-sky-50 text-sky-600 hover:bg-sky-100">
-                                                Desarchivar
-                                            </button>
-                                        @else
-                                            <button wire:click="archivar({{ $r->id }})"
-                                                class="simo-btn bg-gray-50 text-gray-500 hover:bg-sky-50 hover:text-sky-600">
-                                                Archivar
-                                            </button>
-                                        @endif
-                                    @endcan
-                                    @if($r->gemini_analyzed)
-                                        <button wire:click="$set('verAnalisisId', {{ $r->id }})"
-                                            class="simo-btn-ghost text-indigo-500 hover:text-indigo-600">
-                                            Ver análisis
-                                        </button>
-                                    @endif
-                                @endif
-                            </div>
-                        </td>
-                    </tr>
-                @empty
-                    <tr>
-                        <td colspan="5" class="py-12 text-center text-sm text-gray-400">
-                            Sin resultados para los filtros aplicados.
-                        </td>
-                    </tr>
-                @endforelse
-            </tbody>
-        </table>
-        <div class="px-5 py-3 border-t border-gray-50">
-            {{ $resultados->links() }}
+                                <details class="simo-evidence-row-sources" data-testid="table-sources" wire:key="table-sources-{{ $r->id }}">
+                                    <summary>Ver u ocultar {{ $fuentesTabla[$r->id]->count() }} registro(s)</summary>
+                                    <ul class="simo-evidence-source-list">
+                                        @foreach($fuentesTabla[$r->id] as $fuente)
+                                            <li wire:key="table-source-{{ $r->id }}-{{ $fuente->id }}">
+                                                <strong>#{{ $fuente->id }} · {{ $fuente->sitio?->nombre ?? 'Sitio no registrado' }} · {{ $loop->first ? 'Primario registrado' : 'Fuente vinculada' }}</strong>
+                                                <p>{{ $fuente->titulo ?: 'Sin título registrado' }}</p>
+                                                <p class="text-zinc-600">{{ $fuente->keyword ?: 'Keyword no registrada' }} · {{ $fuente->fecha_encontrado?->format('d/m/Y H:i') ?? 'Fecha no registrada' }}</p>
+                                            </li>
+                                        @endforeach
+                                    </ul>
+                                    @if($fuentesTabla[$r->id]->count() === 1)<p class="text-xs text-zinc-600 mt-3">Sin fuentes vinculadas. No acredita cobertura exclusiva.</p>@endif
+                                </details>
+                            </td>
+                            <td><p>{{ $r->sitio?->nombre ?? 'Sitio no registrado' }}</p><p class="text-zinc-600 mt-1">{{ $r->pais ?: 'País no registrado' }} · {{ $r->categoria ?: 'Categoría no registrada' }}</p></td>
+                            <td><span class="font-semibold">{{ $r->relevance_score ?? '—' }}</span></td>
+                            <td class="whitespace-nowrap">{{ $r->fecha_encontrado?->format('d/m/Y') ?? 'No registrada' }}<br><span class="text-zinc-600">{{ $r->fecha_encontrado?->format('H:i') }}</span></td>
+                            <td>
+                                <div class="simo-evidence-row-actions">
+                                    <button type="button" wire:click="seleccionarResultado({{ $r->id }})" aria-expanded="{{ $seleccionado?->id === $r->id ? 'true' : 'false' }}"
+                                        @if($seleccionado) aria-controls="evidence-panel" @endif
+                                        class="simo-btn bg-indigo-50 text-indigo-600 hover:bg-indigo-100">Comparar fuentes</button>
+                                    @include('livewire.scraper.partials.result-actions', ['r' => $r])
+                                </div>
+                            </td>
+                        </tr>
+                    @empty
+                        <tr><td colspan="5" class="text-zinc-600">Sin resultados para los filtros aplicados.</td></tr>
+                    @endforelse
+                </tbody>
+            </table>
         </div>
-    </div>
+        <footer class="px-5 py-3 border-t border-zinc-200">{{ $resultados->links() }}</footer>
+    </section>
+
+    @if($seleccionado)
+        @include('livewire.scraper.partials.evidence-panel')
+    @endif
+
+    <details class="simo-evidence-help" data-testid="criteria-help">
+        <summary>Criterios propuestos · no ejecutados</summary>
+        <div class="space-y-3 mt-3 text-xs text-zinc-600 leading-relaxed">
+            <p>Como criterios de revisión: misma persona inequívoca, institución, cargo, acción y fecha compatible. La similitud de títulos no basta. La ventana temporal está por definir.</p>
+            <p>Identidad o fecha ausente requieren revisión; acciones o instituciones incompatibles no deben confundirse. Son criterios informativos de la maqueta: no se calculan recomendaciones ni se ejecutan uniones o separaciones.</p>
+            <p>El agrupamiento actual y Gemini permanecen sin cambios. El primario no acredita autoría ni fuente original; la fecha de hallazgo no es la del evento.</p>
+        </div>
+    </details>
 
     {{-- Modal Personas detectadas --}}
     @if($verAnalisisId && $resultadoAnalisis)

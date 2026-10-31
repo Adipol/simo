@@ -114,8 +114,15 @@ class ResultadosBadgesTest extends TestCase
             'secundario_de' => $primary->id,
         ]);
 
-        Livewire::test(Resultados::class)
+        $component = Livewire::test(Resultados::class)
             ->assertSee('primary-main-kw')
-            ->assertDontSee('secondary-hidden-kw');
+            ->assertSee('secondary-hidden-kw'); // Available inside the primary's native source expansion, not a separate row.
+
+        $dom = new \DOMDocument();
+        $dom->loadHTML('<?xml encoding="utf-8" ?>'.$component->html(), LIBXML_NOERROR | LIBXML_NOWARNING);
+        $xpath = new \DOMXPath($dom);
+        $this->assertSame(1, $xpath->query('//table[@data-testid="results-table"]/tbody/tr')->length);
+        $this->assertSame(0, $xpath->query('//table//td/div[contains(@class,"simo-evidence-event")]//*[contains(text(),"secondary-hidden-kw")]')->length);
+        $component->assertViewHas('resultados', fn (\Illuminate\Pagination\LengthAwarePaginator $rows): bool => ! $rows->getCollection()->contains('id', $secondary->id));
     }
 }
