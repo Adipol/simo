@@ -10,6 +10,7 @@ use App\Models\SitioWeb;
 use App\Services\ResultadoScrapingQueryService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /**
@@ -74,6 +75,33 @@ class ResultadoScrapingQueryServiceTest extends TestCase
             'confianza'             => 85,
             'threshold_passed'      => true,
         ], $overrides));
+    }
+
+    /** @return array<string, array{string}> */
+    public static function searchableFields(): array
+    {
+        return [
+            'keyword' => ['keyword'],
+            'titulo' => ['titulo'],
+            'url' => ['url'],
+            'contexto' => ['contexto'],
+        ];
+    }
+
+    #[DataProvider('searchableFields')]
+    public function test_search_matches_case_insensitive_substrings_and_intersects_filters(string $field): void
+    {
+        $match = [$field => 'https://example.com/prefix-MiXeDNeEdLe-suffix'];
+        $article = $this->makeArticle($match);
+        $this->makeArticle(); // No searchable field matches.
+        $this->makeArticle(array_merge($match, ['pais' => 'PE', 'url' => 'https://example.com/other-MiXeDNeEdLe-country']));
+        $this->makeArticle(array_merge($match, ['descartado' => true, 'url' => 'https://example.com/discarded-MiXeDNeEdLe']));
+        $this->makeArticle(array_merge($match, ['gemini_analyzed' => false, 'url' => 'https://example.com/pending-MiXeDNeEdLe']));
+
+        $results = $this->service->buildQuery(busqueda: 'mixedneedle', filtroPais: 'BO')->pluck('id')->all();
+
+        $this->assertSame([$article->id], $results);
+        $this->assertSame([], $this->service->buildQuery(busqueda: 'absentneedle')->pluck('id')->all());
     }
 
     // ─── Default filter excludes secondaries ──────────────────────────────────

@@ -42,10 +42,10 @@ class ResultadoScrapingQueryService
 
         if ($busqueda !== '') {
             $b = '%'.$busqueda.'%';
-            $q->where(fn (Builder $s): Builder => $s->where('keyword', 'ilike', $b)
-                ->orWhere('titulo', 'ilike', $b)
-                ->orWhere('url', 'ilike', $b)
-                ->orWhere('contexto', 'ilike', $b));
+            $q->where(fn (Builder $s): Builder => $s->whereLike('keyword', $b)
+                ->orWhereLike('titulo', $b)
+                ->orWhereLike('url', $b)
+                ->orWhereLike('contexto', $b));
         }
 
         if ($filtroPais !== '') {

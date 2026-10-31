@@ -51,6 +51,26 @@ Gemini, agrupamiento, modelos, exportador, consultas compartidas y esquema no ca
   El badge histórico `+N medios` conserva el conteo de registros secundarios,
   no acredita que sean N sitios distintos.
 
+## Compatibilidad de búsqueda PostgreSQL / SQLite
+
+La corrección posterior a S9 usa `whereLike` / `orWhereLike` de Laravel 12
+para keyword, título, URL y contexto, en el mismo grupo OR con parámetros
+vinculados y patrón de subcadena (`%texto%`). PostgreSQL conserva `ILIKE`;
+SQLite usa su `LIKE` compatible. Por ejemplo, `mixedneedle` encuentra
+`MiXeDNeEdLe` en cualquiera de esos campos sin eludir los demás filtros.
+No se promete idéntico plegado Unicode entre motores. Listado, paginación y CSV
+siguen compartiendo la misma consulta; no se omiten tests en SQLite.
+
+El harness separado `.scratch/scraper-sqlite-compatibility/` conserva snapshots,
+hashes/autoload y streams. Solo en sus snapshots se retiran las entradas XML
+`DB_DATABASE` y `DB_CONNECTION`: cada runner fija explícitamente su conexión.
+SQLite usa exclusivamente `:memory:` sin socket ni credenciales PostgreSQL,
+con PHP 8.5.12 / SQLite 3.45.1 en imagen descartable derivada; PostgreSQL mantiene
+la imagen PHP original y los controles históricos de identidad/permisos con una
+base vacía nueva por ejecución. Ambos ejecutan sin red, como usuario no root,
+con fuentes/vendor de solo lectura y cachés/storage efímeros, sin `.env` ambiente.
+No se modifican dependencias de aplicación ni el entorno habitual.
+
 ## Verificación aislada
 
 No ejecutar estos tests con la configuración ambiente. El harness exclusivo en
