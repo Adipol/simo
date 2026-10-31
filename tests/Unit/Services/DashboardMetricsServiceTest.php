@@ -456,8 +456,74 @@ class DashboardMetricsServiceTest extends TestCase
 
     // 3.6 getTrendIndicators
 
+    /** @return array<string, array{string, string, string, string, string}> */
+    public static function trendMonthBoundaries(): array
+    {
+        return [
+            'October 31 overflow' => ['2026-10-31', '2026-09-01', '2026-09-30', '2026-10-01', '2026-10-31'],
+            'March 31 common year' => ['2026-03-31', '2026-02-01', '2026-02-28', '2026-03-01', '2026-03-31'],
+            'March 31 leap year' => ['2024-03-31', '2024-02-01', '2024-02-29', '2024-03-01', '2024-03-31'],
+            'January year rollover' => ['2026-01-31', '2025-12-01', '2025-12-31', '2026-01-01', '2026-01-31'],
+            'safe mid-month' => ['2026-10-15', '2026-09-01', '2026-09-30', '2026-10-01', '2026-10-31'],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('trendMonthBoundaries')]
+    public function test_trend_indicators_keep_calendar_months_disjoint(
+        string $today,
+        string $previousStart,
+        string $previousEnd,
+        string $currentStart,
+        string $currentEnd,
+    ): void {
+        $this->travelTo(Carbon::parse($today.' 12:00:00'));
+
+        // Literal calendar boundaries keep the fixture independent of month arithmetic.
+        $dates = [
+            $previousStart.' 00:00:00',
+            $previousEnd.' 12:00:00',
+            $previousEnd.' 23:59:59',
+            $currentStart.' 00:00:00',
+            $currentEnd.' 23:59:59',
+            Carbon::parse($previousStart)->subSecond()->toDateTimeString(),
+            Carbon::parse($currentEnd)->addDay()->startOfDay()->toDateTimeString(),
+        ];
+
+        $user = \App\Models\User::factory()->create();
+
+        foreach ($dates as $date) {
+            $pep = \App\Models\ResultadoScraping::factory()->create([
+                'gemini_analyzed' => true,
+                'gemini_categoria' => 'PEP',
+                'fecha_encontrado' => $date,
+            ]);
+            \App\Models\ResultadoScraping::factory()->create([
+                'gemini_analyzed' => true,
+                'gemini_categoria' => 'OPI',
+                'fecha_encontrado' => $date,
+            ]);
+            DB::table('clasificaciones_feedback')->insert([
+                'resultado_scraping_id' => $pep->id,
+                'usuario_id' => $user->id,
+                'tipo' => 'correcto',
+                'clasificacion_snapshot' => '{}',
+                'created_at' => $date,
+                'updated_at' => $date,
+            ]);
+        }
+
+        $dto = (new DashboardMetricsService)->getTrendIndicators([]);
+        $expected = ['current' => 2, 'previous' => 3, 'delta_pct' => -33.3, 'direction' => 'down'];
+
+        $this->assertSame($expected, $dto->pepsTrend);
+        $this->assertSame($expected, $dto->opisTrend);
+        $this->assertSame($expected, $dto->feedbackTrend);
+    }
+
     public function test_get_trend_indicators_positive_delta(): void
     {
+        $this->travelTo(Carbon::parse('2026-10-31 12:00:00'));
+
         // Current month: 100 PEPs
         \App\Models\ResultadoScraping::factory()->count(100)->create([
             'gemini_analyzed' => true,
@@ -468,7 +534,7 @@ class DashboardMetricsServiceTest extends TestCase
         \App\Models\ResultadoScraping::factory()->count(80)->create([
             'gemini_analyzed' => true,
             'gemini_categoria' => 'PEP',
-            'fecha_encontrado' => now()->subMonth()->startOfMonth()->addDay(),
+            'fecha_encontrado' => now()->startOfMonth()->subMonth()->addDay(),
         ]);
 
         $service = new DashboardMetricsService;
@@ -482,6 +548,8 @@ class DashboardMetricsServiceTest extends TestCase
 
     public function test_get_trend_indicators_division_by_zero_returns_neutral(): void
     {
+        $this->travelTo(Carbon::parse('2026-10-31 12:00:00'));
+
         // Current month: 50 PEPs, previous month: 0 PEPs (no data)
         \App\Models\ResultadoScraping::factory()->count(50)->create([
             'gemini_analyzed' => true,

@@ -52,6 +52,8 @@ class Resultados extends Component
 
     public ?int $verAnalisisId = null;
 
+    public ?int $seleccionadoId = null;
+
     /** @var string[] */
     private const SORT_COLUMNS = ['fecha_encontrado', 'titulo', 'keyword', 'pais', 'categoria', 'relevance_score'];
 
@@ -63,6 +65,11 @@ class Resultados extends Component
     public string $direccion = 'desc';
 
     // ─── Updating hooks ────────────────────────────────────────────────────────
+
+    public function updatingPaginators(): void
+    {
+        $this->seleccionadoId = null;
+    }
 
     public function updatingBusqueda(): void
     {
@@ -246,13 +253,106 @@ class Resultados extends Component
         return $this->getQuery()->paginate(25);
     }
 
+    public function seleccionarResultado(int $id): void
+    {
+        $this->seleccionadoId = $this->resultados->getCollection()->contains('id', $id) ? $id : null;
+        unset($this->seleccionado, $this->fuentesEvidencia, $this->enlacesEvidencia, $this->comparacionesTitulos);
+    }
+
+    public function cerrarComparacion(): void
+    {
+        $this->seleccionadoId = null;
+        unset($this->seleccionado, $this->fuentesEvidencia, $this->enlacesEvidencia, $this->comparacionesTitulos);
+    }
+
+    #[Computed]
+    public function seleccionado(): ?ResultadoScraping
+    {
+        return $this->resultados->getCollection()->firstWhere('id', $this->seleccionadoId);
+    }
+
+    /** @return Collection<int, Collection<int, ResultadoScraping>> */
+    #[Computed]
+    public function fuentesTabla(): Collection
+    {
+        // Batch-load summaries only; per-source analysis remains exclusive to explicit comparison.
+        $rows = $this->resultados->getCollection();
+        $rows->loadMissing(['secondaries.sitio', 'primary.sitio', 'primary.secondaries.sitio']);
+
+        return $rows->mapWithKeys(static function (ResultadoScraping $row): array {
+            $primary = $row->primary ?? $row;
+
+            return [$row->id => collect([$primary])->concat($primary->secondaries->sortBy('id'))->values()];
+        });
+    }
+
+    /** @return Collection<int, ResultadoScraping> */
+    #[Computed]
+    public function fuentesEvidencia(): Collection
+    {
+        $selected = $this->seleccionado;
+        if ($selected === null) {
+            return collect();
+        }
+
+        // Pending mode can expose a secondary. Follow only its recorded parent,
+        // never infer matches or load details for the other chooser rows.
+        $selected->loadMissing('primary');
+        $primary = $selected->primary ?? $selected;
+        $primary->loadMissing(['sitio', 'personas', 'secondaries.sitio', 'secondaries.personas']);
+
+        return collect([$primary])->concat($primary->secondaries->sortBy('id'))->values();
+    }
+
+    /** @return Collection<int, string|null> */
+    #[Computed]
+    public function enlacesEvidencia(): Collection
+    {
+        return $this->fuentesEvidencia->mapWithKeys(static function (ResultadoScraping $fuente): array {
+            $url = $fuente->url;
+            $safe = filter_var($url, FILTER_VALIDATE_URL) !== false
+                && in_array(strtolower((string) parse_url($url, PHP_URL_SCHEME)), ['http', 'https'], true);
+
+            return [$fuente->id => $safe ? $url : null];
+        });
+    }
+
+    /** @return Collection<int, string> */
+    #[Computed]
+    public function comparacionesTitulos(): Collection
+    {
+        $primary = $this->fuentesEvidencia->first();
+
+        return $this->fuentesEvidencia->mapWithKeys(static function (ResultadoScraping $fuente) use ($primary): array {
+            $comparison = 'Título del primario registrado';
+            if ($fuente->id !== $primary?->id) {
+                $comparison = ! $primary?->titulo || ! $fuente->titulo
+                    ? 'Título no disponible para comparar'
+                    : ($fuente->titulo === $primary->titulo ? 'Título idéntico al primario' : 'Título diferente al primario');
+            }
+
+            return [$fuente->id => $comparison];
+        });
+    }
+
     public function render(): View
     {
+        // Actions may remove a row from the current filter/page. Do not retain a
+        // stale ID that could reopen comparison if that row later reappears.
+        if ($this->seleccionadoId !== null && $this->seleccionado === null) {
+            $this->cerrarComparacion();
+        }
+
         return view('livewire.scraper.resultados', [
             'resultados'        => $this->resultados,
             'paises'            => $this->paises,
             'categorias'        => $this->categorias,
             'resultadoAnalisis' => $this->resultadoAnalisis,
+            'fuentesTabla'      => $this->fuentesTabla,
+            'seleccionado'      => $this->seleccionado,
+            'fuentesEvidencia'  => $this->fuentesEvidencia,
+            'enlacesEvidencia'  => $this->enlacesEvidencia,
+            'comparacionesTitulos' => $this->comparacionesTitulos,
         ]);
     }
 }
