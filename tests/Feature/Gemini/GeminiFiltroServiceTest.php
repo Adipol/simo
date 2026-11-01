@@ -130,17 +130,10 @@ class GeminiFiltroServiceTest extends TestCase
 
         $r2->refresh();
         $this->assertTrue($r2->gemini_analyzed);
-        $this->assertTrue($r2->gemini_is_pep);
+        $this->assertFalse($r2->gemini_is_pep);
         $this->assertSame('Captura de líder criminal', $r2->gemini_motivo);
-
-        $p2 = ResultadoPersona::where('resultado_scraping_id', $r2->id)->first();
-        $this->assertNotNull($p2);
-        $this->assertSame('Rodrigo Vargas', $p2->nombre);
-        $this->assertNull($p2->cargo);
-        $this->assertSame('OPI', $p2->categoria);
-        $this->assertSame('desconocido', $p2->entidad_tipo);
-        $this->assertSame(92, $p2->confianza);
-        $this->assertTrue($p2->threshold_passed);
+        $this->assertNull($r2->gemini_confianza);
+        $this->assertSame(0, ResultadoPersona::where('resultado_scraping_id', $r2->id)->count());
 
         $r3->refresh();
         $this->assertTrue($r3->gemini_analyzed);
@@ -524,7 +517,7 @@ class GeminiFiltroServiceTest extends TestCase
         $this->assertTrue($record->gemini_analyzed);
     }
 
-    public function test_persistir_resultado_writes_max_gemini_confianza_for_multiple_personas(): void
+    public function test_persistir_resultado_writes_gemini_confianza_from_pep_only(): void
     {
         config(['services.gemini.api_key' => 'test-key']);
 
@@ -543,7 +536,9 @@ class GeminiFiltroServiceTest extends TestCase
         $this->makeService()->analizarLote(collect([$record]));
 
         $record->refresh();
-        $this->assertSame(95, $record->gemini_confianza);
+        $this->assertSame(50, $record->gemini_confianza);
+        $this->assertFalse($record->gemini_is_pep);
+        $this->assertSame(['PEP'], $record->personas()->pluck('categoria')->all());
     }
 
     public function test_persistir_resultado_writes_null_gemini_confianza_when_no_personas(): void

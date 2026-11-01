@@ -63,7 +63,8 @@ class PromptReglasTest extends TestCase
     {
         $prompt = $this->builder->filtroPEP('Test', 'Bolivia', 'OPI-crimen');
         $this->assertStringContainsString('CONTEXTO DE BÚSQUEDA', $prompt);
-        $this->assertStringContainsString('actor institucional', $prompt);
+        $this->assertStringContainsString('Aplicá los mismos criterios PEP', $prompt);
+        $this->assertStringNotContainsString('actor institucional', $prompt);
     }
 
     public function test_contexto_categoria_designacion(): void

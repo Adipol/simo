@@ -42,13 +42,14 @@ class GeminiPromptBuilderTest extends TestCase
     {
         $prompt = $this->builder->filtroPEP('Test text', 'Bolivia', 'PEP');
 
-        // Should have PEP+, OPI+, NEG, and MULTI examples using personas array format
+        // Keep positive PEP, negative, and multi-person examples using the array format.
         $this->assertStringContainsString('[PEP+]', $prompt);
-        $this->assertStringContainsString('[OPI+]', $prompt);
+        $this->assertStringNotContainsString('[OPI+]', $prompt);
         $this->assertStringContainsString('[NEG]', $prompt);
+        $this->assertStringContainsString('[MULTI]', $prompt);
         $this->assertStringContainsString('"personas"', $prompt);
         $this->assertStringContainsString('PEP', $prompt);
-        $this->assertStringContainsString('OPI', $prompt);
+        $this->assertStringNotContainsString('"categoria":"OPI"', $prompt);
     }
 
     public function test_filtro_pep_includes_country_and_category(): void
@@ -298,7 +299,8 @@ class GeminiPromptBuilderTest extends TestCase
 
         $this->assertStringContainsString('CONTEXTO DE BÚSQUEDA', $prompt);
         $this->assertStringContainsString('OPI-crimen', $prompt);
-        $this->assertStringContainsString('actor institucional', $prompt);
+        $this->assertStringContainsString('Aplicá los mismos criterios PEP', $prompt);
+        $this->assertStringNotContainsString('actor institucional', $prompt);
     }
 
     public function test_prompt_includes_designacion_category_context(): void
