@@ -107,11 +107,9 @@ class AnalizarScrapingConFlashTest extends TestCase
 
         $r2->refresh();
         $this->assertTrue($r2->gemini_analyzed);
-        $this->assertTrue($r2->gemini_is_pep);
-
-        $p2 = ResultadoPersona::where('resultado_scraping_id', $r2->id)->first();
-        $this->assertNotNull($p2);
-        $this->assertSame('OPI', $p2->categoria);
+        $this->assertFalse($r2->gemini_is_pep);
+        $this->assertNull($r2->gemini_confianza);
+        $this->assertSame(0, ResultadoPersona::where('resultado_scraping_id', $r2->id)->count());
 
         $r3->refresh();
         $this->assertTrue($r3->gemini_analyzed);

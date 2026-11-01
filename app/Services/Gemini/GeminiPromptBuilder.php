@@ -30,7 +30,7 @@ class GeminiPromptBuilder
     ) {}
 
     /**
-     * Build a prompt for Gemini Flash to classify PEP/OPI.
+     * Build a prompt for Gemini Flash to classify PEP in scraped news.
      */
     public function filtroPEP(string $texto, string $pais, string $categoria): string
     {
@@ -98,7 +98,7 @@ class GeminiPromptBuilder
 
         return <<<PROMPT
 Sos un experto en análisis de riesgo financiero y compliance AML/CFT en {$pais}.
-Tu tarea: analizar el siguiente texto y determinar si menciona a una persona que sea PEP (Persona Políticamente Expuesta) u OPI (persona vinculada a crimen organizado o bajo investigación judicial).
+Tu tarea: analizar el siguiente texto y determinar si menciona a una persona que sea PEP (Persona Políticamente Expuesta). Incluí únicamente personas que cumplan los criterios PEP.
 
 DEFINICIONES PEP para {$pais}:
 
@@ -112,25 +112,20 @@ PUEDE_SER_PEP (depende del contexto; considerar especialmente si están en estas
 {$puedeSerPep}
 {$entidadesLine}
 
-- OPI: líderes de organizaciones criminales, personas bajo investigación por lavado de activos o narcotráfico
-
 {$reglasClasificacion}
 
-IMPORTANTE: Un artículo puede mencionar MÚLTIPLES personas. Devolvé TODAS las personas PEP/OPI encontradas en el array 'personas'. Si no hay ninguna, devolvé el array vacío.
+IMPORTANTE: Un artículo puede mencionar MÚLTIPLES personas. Devolvé TODAS las personas PEP encontradas en el array 'personas'. Si no hay ninguna, devolvé el array vacío. La actividad criminal o una investigación judicial por sí solas no califican a una persona como PEP.
 
 Devolvé ÚNICAMENTE el siguiente JSON, sin explicaciones adicionales:
-{"personas":[{"nombre":string,"cargo":string|null,"categoria":"PEP"|"OPI","entidad_tipo":"publica"|"privada"|"desconocido"|null,"confianza":0-100,"evento":"designacion"|"renuncia"|"crimen"|null,"motivo":string}],"motivo_general":string}
+{"personas":[{"nombre":string,"cargo":string|null,"categoria":"PEP","entidad_tipo":"publica"|"privada"|"desconocido"|null,"confianza":0-100,"evento":"designacion"|"renuncia"|"crimen"|null,"motivo":string}],"motivo_general":string}
 
 EJEMPLOS:
 
 [PEP+] "El ministro de Economía Juan Pérez firmó el decreto de aumento salarial"
 → {"personas":[{"nombre":"Juan Pérez","cargo":"Ministro de Economía","categoria":"PEP","entidad_tipo":"publica","confianza":95,"evento":"designacion","motivo":"Cargo ejecutivo de alto nivel"}],"motivo_general":"Artículo sobre acción ministerial"}
 
-[OPI+] "El líder de la organización criminal Rodrigo Vargas fue capturado en Operativo Sur"
-→ {"personas":[{"nombre":"Rodrigo Vargas","cargo":null,"categoria":"OPI","entidad_tipo":"desconocido","confianza":92,"evento":"crimen","motivo":"Líder de organización criminal"}],"motivo_general":"Captura de líder criminal"}
-
 [NEG] "El delantero Carlos Torres anotó el gol del campeonato en el estadio Luna"
-→ {"personas":[],"motivo_general":"Texto deportivo sin mención de cargos públicos ni actividad criminal"}
+→ {"personas":[],"motivo_general":"Texto deportivo sin mención de cargos públicos"}
 
 [MULTI] "Se designa a Rubén Arce como Ministro de Economía, tras la renuncia de Carlos Álvarez"
 → {"personas":[{"nombre":"Rubén Arce","cargo":"Ministro de Economía","categoria":"PEP","entidad_tipo":"publica","confianza":95,"evento":"designacion","motivo":"Designado como nuevo ministro"},{"nombre":"Carlos Álvarez","cargo":"Ministro de Economía","categoria":"PEP","entidad_tipo":"publica","confianza":90,"evento":"renuncia","motivo":"Renuncia al cargo de ministro"}],"motivo_general":"Cambio de autoridades en cartera ministerial"}
@@ -153,29 +148,25 @@ PROMPT;
 
         return <<<PROMPT
 Sos un experto en análisis de riesgo financiero y compliance AML/CFT en {$pais}.
-Tu tarea: analizar el siguiente texto y determinar si menciona a una persona que sea PEP (Persona Políticamente Expuesta) u OPI (persona vinculada a crimen organizado o bajo investigación judicial).
+Tu tarea: analizar el siguiente texto y determinar si menciona a una persona que sea PEP (Persona Políticamente Expuesta). Incluí únicamente personas que cumplan los criterios PEP.
 
 DEFINICIONES:
 - PEP: ministros, legisladores, jueces, directores de entes públicos, militares de alto rango, embajadores
-- OPI: líderes de organizaciones criminales, personas bajo investigación por lavado de activos o narcotráfico
 
 {$reglasClasificacion}
 
-IMPORTANTE: Un artículo puede mencionar MÚLTIPLES personas. Devolvé TODAS las personas PEP/OPI encontradas en el array 'personas'. Si no hay ninguna, devolvé el array vacío.
+IMPORTANTE: Un artículo puede mencionar MÚLTIPLES personas. Devolvé TODAS las personas PEP encontradas en el array 'personas'. Si no hay ninguna, devolvé el array vacío. La actividad criminal o una investigación judicial por sí solas no califican a una persona como PEP.
 
 Devolvé ÚNICAMENTE el siguiente JSON, sin explicaciones adicionales:
-{"personas":[{"nombre":string,"cargo":string|null,"categoria":"PEP"|"OPI","entidad_tipo":"publica"|"privada"|"desconocido"|null,"confianza":0-100,"evento":"designacion"|"renuncia"|"crimen"|null,"motivo":string}],"motivo_general":string}
+{"personas":[{"nombre":string,"cargo":string|null,"categoria":"PEP","entidad_tipo":"publica"|"privada"|"desconocido"|null,"confianza":0-100,"evento":"designacion"|"renuncia"|"crimen"|null,"motivo":string}],"motivo_general":string}
 
 EJEMPLOS:
 
 [PEP+] "El ministro de Economía Juan Pérez firmó el decreto de aumento salarial"
 → {"personas":[{"nombre":"Juan Pérez","cargo":"Ministro de Economía","categoria":"PEP","entidad_tipo":"publica","confianza":95,"evento":"designacion","motivo":"Cargo ejecutivo de alto nivel"}],"motivo_general":"Artículo sobre acción ministerial"}
 
-[OPI+] "El líder de la organización criminal Rodrigo Vargas fue capturado en Operativo Sur"
-→ {"personas":[{"nombre":"Rodrigo Vargas","cargo":null,"categoria":"OPI","entidad_tipo":"desconocido","confianza":92,"evento":"crimen","motivo":"Líder de organización criminal"}],"motivo_general":"Captura de líder criminal"}
-
 [NEG] "El delantero Carlos Torres anotó el gol del campeonato en el estadio Luna"
-→ {"personas":[],"motivo_general":"Texto deportivo sin mención de cargos públicos ni actividad criminal"}
+→ {"personas":[],"motivo_general":"Texto deportivo sin mención de cargos públicos"}
 
 [MULTI] "Se designa a Rubén Arce como Ministro de Economía, tras la renuncia de Carlos Álvarez"
 → {"personas":[{"nombre":"Rubén Arce","cargo":"Ministro de Economía","categoria":"PEP","entidad_tipo":"publica","confianza":95,"evento":"designacion","motivo":"Designado como nuevo ministro"},{"nombre":"Carlos Álvarez","cargo":"Ministro de Economía","categoria":"PEP","entidad_tipo":"publica","confianza":90,"evento":"renuncia","motivo":"Renuncia al cargo de ministro"}],"motivo_general":"Cambio de autoridades en cartera ministerial"}
@@ -329,7 +320,7 @@ NEGATIVES;
     private function buildContextoCategoria(string $categoria): string
     {
         return match ($categoria) {
-            'OPI-crimen' => "CONTEXTO DE BÚSQUEDA: Este artículo fue detectado por palabras clave de categoría 'crimen'. Verificá que la persona mencionada sea un actor institucional (funcionario, investigador, autoridad), NO una víctima, testigo o civil detenido.\n",
+            'OPI-crimen' => "CONTEXTO DE BÚSQUEDA: La categoría histórica 'crimen' no determina la clasificación. Aplicá los mismos criterios PEP; una investigación judicial o actividad criminal por sí sola no califica.\n",
             'PEP-designacion' => "CONTEXTO DE BÚSQUEDA: Este artículo fue detectado por palabras clave de categoría 'designacion'. Verificá que el artículo confirme efectivamente la designación a un cargo público específico.\n",
             'PEP-renuncia' => "CONTEXTO DE BÚSQUEDA: Este artículo fue detectado por palabras clave de categoría 'renuncia'. Verificá que la persona mencionada efectivamente ocupaba un cargo público antes de la renuncia.\n",
             default => '',

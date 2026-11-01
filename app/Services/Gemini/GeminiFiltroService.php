@@ -11,6 +11,7 @@ use App\Models\ResultadoPersona;
 use App\Models\ResultadoScraping;
 use App\Services\Gemini\DTOs\FiltroResultadoDTO;
 use App\Services\Gemini\DTOs\GeminiResponseDTO;
+use App\Services\Gemini\DTOs\PersonaDetectadaDTO;
 use App\Services\Normalization\NombreNormalizador;
 use App\Services\Normalization\NombreNormalizadorInterface;
 use Illuminate\Support\Collection;
@@ -63,6 +64,14 @@ class GeminiFiltroService
             $geminiResponse = $this->gemini->sendWithMetadata($prompt, $model);
 
             $dto = FiltroResultadoDTO::fromArray($geminiResponse->content);
+            // News analyses accept only PEP; leave the shared DTO contract unchanged.
+            $dto = new FiltroResultadoDTO(
+                personas: array_values(array_filter(
+                    $dto->personas,
+                    fn (PersonaDetectadaDTO $persona): bool => $persona->categoria === 'PEP',
+                )),
+                motivoGeneral: $dto->motivoGeneral,
+            );
 
             $this->persistirResultado($record, $dto, $geminiResponse, $model);
         } catch (GeminiInvalidResponseException|GeminiBadRequestException $e) {
