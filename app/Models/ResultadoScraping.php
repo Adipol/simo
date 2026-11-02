@@ -87,6 +87,16 @@ class ResultadoScraping extends Model
     // Scopes
     // =========================================================================
 
+    public function scopePendienteAnalisisScraper(Builder $query): void
+    {
+        $query->where('gemini_analyzed', false)
+            ->where(function (Builder $eligible): void {
+                $eligible->whereNull('deepseek_title_status')
+                    ->orWhere('deepseek_title_status', '!=', 'unrelated')
+                    ->orWhereNotNull('deepseek_bypass_at');
+            });
+    }
+
     public function scopeArchivado(Builder $query): void
     {
         $query->whereNotNull('archivado_at');

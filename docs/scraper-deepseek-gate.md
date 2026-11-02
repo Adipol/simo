@@ -1,6 +1,6 @@
-# Scraper title gate: foundation only
+# Scraper title gate before Gemini
 
-T1 adds a disabled-by-default DeepSeek title client and nullable storage. **It does not filter the running pipeline.** No deployment, activation, historical processing, token reporting or Gemini behavior change is included.
+T1 provides the disabled-by-default title client/storage; T2 integrates reversible filtering into the Scraper job. Relevant/doubtful titles and failures reach deep Gemini; unrelated articles remain stored and unanalysed, without a human review queue. No deployment, activation, historical title backfill or new token reporting is included. Cambio/Pro and Gaceta are unchanged.
 
 ## Configuration contract
 
@@ -16,7 +16,7 @@ Application code reads `services.deepseek_title_gate`, separate from `services.g
 
 `batch_size` is fixed at `1`. `DeepSeekTitleSettings::configured()` means enabled and structurally configured, **not API success**. Canonical decimal environment strings are accepted for integers; booleans, fractions, negatives and overflow are rejected. No health request is made.
 
-Activation remains unauthorized. The later integration must require a deliberate fixed boundary for new articles (`id > activationAfterId`). For example, boundary 100 must not classify article 100 or earlier. Do not automatically reset the boundary when workers restart. Reactivation needs an explicit boundary decision to avoid classifying historical/off-period backlog.
+Activation remains unauthorized. The integration requires a deliberate fixed boundary for new articles (`id > activationAfterId`). For example, boundary 100 must not classify article 100 or earlier. Do not automatically reset the boundary when workers restart. Reactivation needs an explicit boundary decision to avoid classifying historical/off-period backlog.
 
 ## Frozen client contract
 
@@ -43,11 +43,38 @@ TLS verification remains enabled, redirects are disabled, connect/request/read t
 
 The migration adds no defaults, historical UPDATE or backfill. Existing manual/Gemini/persona state is untouched. Rollback of this migration removes only the newly added fields and their status index; it loses title-attempt history and is not the normal operational disable switch.
 
-## Deferred integration
+## T2 routing and pending work
 
-- **T2:** shared eligibility/count query, per-record locking, persist-before-Gemini retries, R/D/error → deep Gemini, retained unrelated articles, lexical-prefilter bypass only on agreed routes, legacy/disabled and Cambio/Gaceta preservation. No exactly-once guarantee across process death; queue lease/timeout still needs integration validation.
-- **T3:** authorized manual bypass, escaped unsent view, configuration and stored last-attempt health. A key alone must never be displayed as verified healthy.
-- **T4:** independent verification, broader regressions and activation/rollback review. Isolated SQLite evidence does not establish PostgreSQL production compatibility.
+`ResultadoScraping::pendienteAnalisisScraper()` is the shared job selection, self-chain and Scraper command-count scope:
+
+`gemini_analyzed = false AND (status IS NULL OR status != unrelated OR bypass_at IS NOT NULL)`.
+
+The OR is grouped. Existing archived, discarded and secondary pending articles are not newly excluded. The Pro command branch is untouched. UI counters will adopt this scope in T3; they are not changed here.
+
+Inside each article lock, the gate re-reads eligibility and skips any row with `gemini_analyzed_at` already set, even if its boolean is false. It never resets existing analysis fields.
+
+| State after fresh read | Route |
+|---|---|
+| `deepseek_bypass_at` set | No title request; deep Gemini without lexical prefilter; keep the stored title decision |
+| Persisted `unrelated`, no bypass | Held, even when the title gate is disabled; no Gemini or manual/persona/discard/archive changes |
+| Persisted R/D/technical_error/invalid_response | Reuse decision; deep Gemini without lexical prefilter, regardless of current enable switch |
+| No decision, enabled, explicit valid boundary, ID greater than boundary | Classify once and persist title fields before deciding whether to call Gemini |
+| Disabled, ID equal to/below boundary, or missing/invalid boundary | Legacy Gemini path with its existing lexical prefilter; no title attempt |
+
+For example, boundary 100 classifies article 101 but not 100. An enabled gate with a valid boundary but a missing key persists `technical_error/not_configured` for new articles and goes directly to Gemini: invalid readiness must not silently reinstate the lexical prefilter. Missing/invalid activation is invalid configuration and makes no active title calls. Readiness does not prove API health.
+
+`GeminiFiltroService::analizarLote(Collection $records, bool $bypassLexicalPrefilter = false)` adds only an explicit lexical bypass. Existing callers retain the default. Deep prompts, PEP-only DTO filtering, thresholds, usage logging and result persistence remain unchanged; DeepSeek does not write Gemini usage logs. `ScraperTitleGate::process(int $id)` owns the locked route, including future stored manual bypasses; T3 must authorize and persist that marker before dispatch, not call the title client again.
+
+## Concurrency and operational prerequisites
+
+- Every job-selected article, including legacy ones, uses `Cache::lock('scraper-title-gate:'.$id, $lease)`. Use a shared cache store with working atomic locks across workers; local array stores only demonstrate behavior in isolated tests.
+- The per-record lease is `max(360, 3 * titleTimeout + geminiTextTimeout + 60)` seconds: strictly above the existing job timeout of 300 seconds and a conservative title transport/deep-call budget. Gemini text transport uses `services.gemini.timeout` (default 45 seconds), one HTTP request and no internal retry; job retry/backoff remains unchanged. Keep configured HTTP budgets below the job timeout. The lease covers one record, not an entire batch.
+- Active gating with a valid boundary uses the fixed batch size of one, including missing-key fail-open cases. Disabled/missing-boundary paths retain the legacy cap of ten. Persisted decisions still govern those batches.
+- Busy locks skip network calls. Remaining eligible work self-chains using the existing Flash delay, with a minimum of one second to prevent immediate busy-lock loops. Lock-backend exceptions propagate normally; there is no unlocked fallback.
+- **Existing deployment prerequisite:** queue `retry_after` must exceed the job's 300-second timeout (the job documents 360 seconds). The database/Redis defaults in `config/queue.php` remain 90 seconds and are not repaired here. Verify the effective lease and worker timeout before any later activation; no queue/deployment settings were changed or inspected live.
+- No database transaction spans a network call. Normal retries reuse the persisted title decision. This is **not exactly-once execution across process death**: a crash after a provider response but before persistence can repeat that request; a crash during Gemini persistence can retain existing partial-write limitations. All writers of a future bypass must respect fresh-state/idempotence rules.
+
+Operational disable affects only future unclassified articles: it neither releases stored unrelated decisions nor erases history. Reactivation requires an explicit boundary choice; do not automatically classify off-period backlog. UI/manual-send and API-health work remains T3; independent broader/PostgreSQL verification and activation review remain T4. Isolated SQLite evidence does not establish production compatibility.
 
 ## Offline verification
 

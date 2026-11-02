@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\Models\ResultadoScraping;
-use App\Services\Gemini\GeminiFiltroService;
+use App\Services\Scraper\ScraperTitleGate;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -47,18 +47,21 @@ class AnalizarScrapingConFlash implements ShouldQueue
             return;
         }
 
-        // Batch cap: 10×~5-10s HTTP calls ≈ 50-100s, well within the 300s job timeout.
-        $records = $this->pendingQuery()->limit(10)->get();
+        $gate = app(ScraperTitleGate::class);
+        // Active title gating handles one article; disabled/legacy keeps the cap of ten.
+        $records = $this->pendingQuery()->limit($gate->batchSize())->get();
 
         if ($records->isEmpty()) {
             return;
         }
 
-        app(GeminiFiltroService::class)->analizarLote($records);
+        foreach ($records as $record) {
+            $gate->process($record->id);
+        }
 
         if ($this->hayMasPendientes()) {
             self::dispatch()
-                ->delay(now()->addSeconds(config('services.gemini.flash_delay', 4)))
+                ->delay(now()->addSeconds(max(1, (int) config('services.gemini.flash_delay', 4))))
                 ->onQueue('gemini');
         }
     }
@@ -72,12 +75,12 @@ class AnalizarScrapingConFlash implements ShouldQueue
 
     private function pendingQuery(): \Illuminate\Database\Eloquent\Builder
     {
-        return ResultadoScraping::where('gemini_analyzed', false)
+        return ResultadoScraping::pendienteAnalisisScraper()
             ->orderBy('fecha_encontrado', 'desc');
     }
 
     private function hayMasPendientes(): bool
     {
-        return ResultadoScraping::where('gemini_analyzed', false)->exists();
+        return ResultadoScraping::pendienteAnalisisScraper()->exists();
     }
 }
