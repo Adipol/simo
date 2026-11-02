@@ -27,6 +27,9 @@ class ResultadoScraping extends Model
         'gemini_nombre', 'gemini_nombre_normalizado', 'gemini_cargo',
         'gemini_categoria', 'gemini_entidad_tipo', 'gemini_confianza', 'gemini_motivo',
         'secundario_de', 'dedupe_processed_at',
+        'deepseek_title_status', 'deepseek_title_reason', 'deepseek_title_evidence',
+        'deepseek_title_error_code', 'deepseek_title_attempted_at', 'deepseek_title_model',
+        'deepseek_title_prompt_version', 'deepseek_bypass_at',
     ];
 
     protected $casts = [
@@ -43,6 +46,8 @@ class ResultadoScraping extends Model
         'gemini_confianza'   => 'integer',
         'secundario_de'      => 'integer',
         'dedupe_processed_at' => 'datetime',
+        'deepseek_title_attempted_at' => 'datetime',
+        'deepseek_bypass_at' => 'datetime',
     ];
 
     public function sitio(): BelongsTo
@@ -81,6 +86,17 @@ class ResultadoScraping extends Model
     // =========================================================================
     // Scopes
     // =========================================================================
+
+    public function scopePendienteAnalisisScraper(Builder $query): void
+    {
+        $query->where('gemini_analyzed', false)
+            ->whereNull('gemini_analyzed_at')
+            ->where(function (Builder $eligible): void {
+                $eligible->whereNull('deepseek_title_status')
+                    ->orWhere('deepseek_title_status', '!=', 'unrelated')
+                    ->orWhereNotNull('deepseek_bypass_at');
+            });
+    }
 
     public function scopeArchivado(Builder $query): void
     {

@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Models\ResultadoScraping;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Validator;
 
 class ResultadoScrapingQueryService
 {
@@ -21,7 +22,12 @@ class ResultadoScrapingQueryService
         string $filtroIds = '',
         string $ordenar = 'fecha_encontrado',
         string $direccion = 'desc',
+        string $filtroDeepSeek = '',
     ): Builder {
+        Validator::make(['filtroDeepSeek' => $filtroDeepSeek], [
+            'filtroDeepSeek' => ['nullable', 'in:held'],
+        ])->validate();
+
         $q = ResultadoScraping::with('sitio')
             ->withCount(['secondaries as secondaries_count'])
             ->orderBy($ordenar, $direccion);
@@ -93,7 +99,17 @@ class ResultadoScrapingQueryService
         //
         // 'not_pep': articles with no threshold_passed personas (no confirmed classification)
 
-        if ($filtroGemini === 'pending') {
+        if ($filtroDeepSeek === 'held') {
+            $q->where('deepseek_title_status', 'unrelated')
+                ->whereNull('deepseek_bypass_at')
+                ->where('gemini_analyzed', false)
+                ->whereNull('gemini_analyzed_at');
+        }
+
+        if ($filtroDeepSeek === 'held' && $filtroGemini === '') {
+            // Only the implicit analyzed/primary defaults are lifted. All explicit
+            // filters above and explicit Gemini selections below still intersect.
+        } elseif ($filtroGemini === 'pending') {
             $q->where('gemini_analyzed', false);
         } elseif ($filtroGemini === 'pep') {
             $q->where('gemini_analyzed', true)
