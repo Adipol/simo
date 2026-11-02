@@ -1,4 +1,10 @@
 <div class="flex items-center gap-1 flex-wrap">
+    @can('gestionar resultados')
+        @if($r->deepseek_title_status === 'unrelated' && $r->deepseek_bypass_at === null && !$r->gemini_analyzed && $r->gemini_analyzed_at === null)
+            <button wire:click="enviarAGemini({{ $r->id }})" wire:loading.attr="disabled"
+                class="simo-btn bg-indigo-50 text-indigo-600 hover:bg-indigo-100">Enviar a Gemini</button>
+        @endif
+    @endcan
     @if($r->descartado)
         <button wire:click="restaurar({{ $r->id }})"
             class="simo-btn bg-indigo-50 text-indigo-600 hover:bg-indigo-100">
