@@ -90,6 +90,7 @@ class ResultadoScraping extends Model
     public function scopePendienteAnalisisScraper(Builder $query): void
     {
         $query->where('gemini_analyzed', false)
+            ->whereNull('gemini_analyzed_at')
             ->where(function (Builder $eligible): void {
                 $eligible->whereNull('deepseek_title_status')
                     ->orWhere('deepseek_title_status', '!=', 'unrelated')
