@@ -90,6 +90,48 @@ class ScraperTitleGateDispatchTest extends TestCase
         $this->assertSame(3, ResultadoScraping::where('gemini_analyzed', false)->count());
     }
 
+    public function test_timestamp_completed_row_does_not_starve_older_pending_articles(): void
+    {
+        config(['services.deepseek_title_gate' => [
+            'enabled' => true, 'api_key' => 'fake', 'model' => 'deepseek-flash',
+            'activation_after_id' => 0, 'timeout' => 20, 'batch_size' => 1,
+        ]]);
+        $older = $this->record(['fecha_encontrado' => now()->subMinutes(2)]);
+        $next = $this->record(['fecha_encontrado' => now()->subMinute()]);
+        $historical = $this->record([
+            'fecha_encontrado' => now(), 'gemini_analyzed_at' => now()->subDay(),
+        ]);
+        $before = $historical->fresh()->getRawOriginal();
+        Http::fake(['api.deepseek.com/*' => function ($request) {
+            $input = json_decode($request['messages'][1]['content'], true, flags: JSON_THROW_ON_ERROR);
+            return Http::response(['model' => 'deepseek-flash', 'choices' => [[
+                'finish_reason' => 'stop', 'message' => ['content' => json_encode(['resultados' => [[
+                    'id' => $input['id'], 'decision' => 'unrelated', 'evidencia' => 'partido', 'motivo' => 'Deportes',
+                ]]], JSON_THROW_ON_ERROR)],
+            ]]]);
+        }]);
+
+        (new AnalizarScrapingConFlash)->handle();
+        $this->assertSame('unrelated', $next->fresh()->deepseek_title_status);
+        $this->assertNull($older->fresh()->deepseek_title_status);
+        Queue::assertPushed(AnalizarScrapingConFlash::class, 1);
+        Queue::fake();
+        (new AnalizarScrapingConFlash)->handle();
+        $this->assertSame('unrelated', $older->fresh()->deepseek_title_status);
+        Queue::assertNothingPushed();
+        Http::assertSentCount(2);
+        $this->assertSame($before, $historical->fresh()->getRawOriginal());
+
+        // Only held or timestamp-completed records remain: both entry points stop.
+        $this->artisan('simo:analizar-gemini', ['--flash-only' => true])
+            ->expectsOutput('Flash: 0 pendientes')->assertExitCode(0);
+        (new AnalizarScrapingConFlash)->handle();
+        Queue::assertNothingPushed();
+        Http::assertSentCount(2);
+        $this->assertSame($before, $historical->fresh()->getRawOriginal());
+        $this->assertSame(3, ResultadoScraping::where('gemini_analyzed', false)->count());
+    }
+
     private function record(array $overrides = []): ResultadoScraping
     {
         return ResultadoScraping::withoutEvents(fn (): ResultadoScraping => ResultadoScraping::factory()->create(array_merge([
