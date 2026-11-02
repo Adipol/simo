@@ -8,6 +8,9 @@ use App\Models\Pais;
 use App\Models\ResultadoScraping;
 use App\Services\Export\ResultadosCsvExporter;
 use App\Services\ResultadoScrapingQueryService;
+use App\Services\Scraper\ManualTitleGateBypass;
+use App\Services\Scraper\TitleGateHealth;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Contracts\View\View;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
@@ -46,6 +49,9 @@ class Resultados extends Component
 
     #[Url]
     public string $filtroGemini = '';
+
+    #[Url]
+    public string $filtroDeepSeek = '';
 
     #[Url(as: 'ids', except: '')]
     public string $filtroIds = '';
@@ -111,6 +117,42 @@ class Resultados extends Component
         $this->resetPage();
     }
 
+    public function mount(): void
+    {
+        $this->validateTitleGateFilter();
+    }
+
+    public function updatingFiltroDeepSeek(): void
+    {
+        $this->resetPage();
+    }
+
+    public function updatedFiltroDeepSeek(): void
+    {
+        $this->validateTitleGateFilter();
+    }
+
+    private function validateTitleGateFilter(): void
+    {
+        $validator = Validator::make(['filtroDeepSeek' => $this->filtroDeepSeek], [
+            'filtroDeepSeek' => ['nullable', 'in:held'],
+        ]);
+        if ($validator->fails()) {
+            // Reject forged URL/updates without letting invalid state reach render SQL.
+            $this->filtroDeepSeek = '';
+            $this->addError('filtroDeepSeek', 'Seleccione un filtro DeepSeek válido.');
+        } else {
+            $this->resetValidation('filtroDeepSeek');
+        }
+    }
+
+    public function limpiarFiltros(): void
+    {
+        $this->reset('busqueda', 'filtroPais', 'filtroCategoria', 'filtroLeido', 'filtroRelevante',
+            'filtroDescartado', 'filtroArchivado', 'filtroGemini', 'filtroDeepSeek', 'filtroIds');
+        $this->resetPage();
+    }
+
     public function updatingFiltroIds(): void
     {
         $this->resetPage();
@@ -158,6 +200,20 @@ class Resultados extends Component
         ResultadoScraping::where('id', $id)->update(['archivado_at' => null]);
     }
 
+    public function enviarAGemini(int $id): void
+    {
+        $this->authorize('gestionar resultados');
+        $result = app(ManualTitleGateBypass::class)->send($id);
+        session()->flash('titleGateMessage', match ($result) {
+            'scheduled' => 'Análisis programado en Gemini; se procesará con los pendientes.',
+            'busy' => 'El artículo está siendo procesado. Reintente en unos momentos.',
+            'unavailable' => 'Gemini está deshabilitado o sin configurar. Solicite su habilitación antes de enviar.',
+            'dispatch_failed' => 'Envío manual guardado, pero no se pudo programar el trabajo. El escaneo periódico podrá recuperarlo.',
+            default => 'El artículo ya no admite este envío; actualice la lista.',
+        });
+        unset($this->resultados, $this->pendingCount, $this->fuentesTabla);
+    }
+
     public function exportarCsv(): StreamedResponse
     {
         $exporter = new ResultadosCsvExporter;
@@ -188,6 +244,7 @@ class Resultados extends Component
             filtroIds: $this->filtroIds,
             ordenar: $ordenar,
             direccion: $direccion,
+            filtroDeepSeek: $this->filtroDeepSeek,
         );
     }
 
@@ -197,7 +254,7 @@ class Resultados extends Component
      * Count of articles pending Gemini analysis (Design D9).
      *
      * Counts only:
-     *  - gemini_analyzed = false (not yet processed)
+     *  - pendienteAnalisisScraper (not processed or held by DeepSeek)
      *  - descartado = false (not discarded)
      *  - archivado_at IS NULL (not archived)
      *  - secundario_de IS NULL (only primary articles)
@@ -208,12 +265,18 @@ class Resultados extends Component
     #[Computed]
     public function pendingCount(): int
     {
-        return ResultadoScraping::query()
-            ->where('gemini_analyzed', false)
+        return ResultadoScraping::pendienteAnalisisScraper()
             ->where('descartado', false)
             ->whereNull('archivado_at')
             ->whereNull('secundario_de')
             ->count();
+    }
+
+    /** @return array<string, bool|string|null> */
+    #[Computed]
+    public function titleGateHealth(): array
+    {
+        return app(TitleGateHealth::class)->status();
     }
 
     #[Computed]

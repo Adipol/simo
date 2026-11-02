@@ -12,7 +12,12 @@
     </div>
 
     <p class="text-sm text-zinc-600">Ver los grupos registrados sin perder los títulos originales.</p>
+    @include('livewire.scraper.partials.title-gate-status')
     </header>
+
+    @if(session('titleGateMessage'))
+        <p role="status" class="text-sm text-zinc-600">{{ session('titleGateMessage') }}</p>
+    @endif
 
     {{-- Toolbar --}}
     <div class="flex items-start justify-between gap-3 flex-wrap">
@@ -58,6 +63,13 @@
                 <option value="1">Archivados</option>
                 <option value="">Todos</option>
             </select>
+
+            <select aria-label="Filtro DeepSeek" wire:model.live="filtroDeepSeek" class="simo-select">
+                <option value="">DeepSeek: Todos</option>
+                <option value="held">No enviadas por DeepSeek</option>
+            </select>
+            @error('filtroDeepSeek')<span role="alert" class="text-xs text-red-600">Seleccione un filtro DeepSeek válido.</span>@enderror
+            <button wire:click="limpiarFiltros" class="simo-btn-ghost text-gray-500">Limpiar filtros</button>
 
             <select aria-label="Análisis Gemini" wire:model.live="filtroGemini" class="simo-select">
                 <option value="">Gemini: Todos</option>
@@ -121,7 +133,9 @@
                                         @if($r->relevante)<span class="simo-badge bg-emerald-50 text-emerald-700 text-[9px]">relevante</span>@endif
                                         @if($r->descartado)<span class="simo-badge bg-zinc-100 text-zinc-500 text-[9px]">descartado</span>@endif
                                         @if($r->archivado_at)<span class="simo-badge bg-sky-50 text-sky-700 text-[9px]">archivado</span>@endif
-                                        @if(!$r->gemini_analyzed)
+                                        @if($r->deepseek_title_status === 'unrelated' && $r->deepseek_bypass_at === null && !$r->gemini_analyzed && $r->gemini_analyzed_at === null)
+                                            <span class="simo-badge bg-amber-50 text-amber-600 text-[9px]">No enviadas por DeepSeek</span>
+                                        @elseif(!$r->gemini_analyzed)
                                             <span class="simo-badge bg-zinc-100 text-zinc-600 text-[9px]">Pendiente</span>
                                         @elseif($r->gemini_is_pep)
                                             <x-simo-badge-categoria :categoria="$r->gemini_categoria" />
@@ -133,6 +147,10 @@
                                             <span class="simo-badge bg-violet-50 text-violet-600 text-[9px]">+{{ $r->secondaries_count }} medios</span>
                                         @endif
                                     </div>
+                                    @if(in_array($r->deepseek_title_status, ['relevant', 'doubtful', 'unrelated'], true))
+                                        <p class="text-xs text-zinc-600">DeepSeek: {{ match($r->deepseek_title_status) { 'relevant' => 'Relacionado', 'doubtful' => 'Dudoso', default => 'Sin relación' } }} · {{ $r->deepseek_title_reason }}</p>
+                                        <p class="text-xs text-zinc-600">Evidencia del título: {{ $r->deepseek_title_evidence }}</p>
+                                    @endif
                                 </div>
                                 <details class="simo-evidence-row-sources" data-testid="table-sources" wire:key="table-sources-{{ $r->id }}">
                                     <summary>Ver u ocultar {{ $fuentesTabla[$r->id]->count() }} registro(s)</summary>

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 return [
 
     /*
@@ -37,6 +39,15 @@ return [
 
     'dedupe' => [
         'enabled' => env('DEDUPE_ENABLED', true),
+    ],
+
+    'deepseek_title_gate' => [
+        'enabled' => env('DEEPSEEK_TITLE_GATE_ENABLED', false),
+        'api_key' => env('DEEPSEEK_API_KEY'),
+        'model' => env('DEEPSEEK_TITLE_MODEL', 'deepseek-flash'),
+        'activation_after_id' => env('DEEPSEEK_TITLE_ACTIVATION_AFTER_ID'),
+        'timeout' => env('DEEPSEEK_TITLE_TIMEOUT', 20),
+        'batch_size' => 1,
     ],
 
     'gemini' => [
