@@ -1,6 +1,6 @@
-# Scraper title gate: foundation only
+# Scraper title gate before Gemini
 
-T1 adds a disabled-by-default DeepSeek title client and nullable storage. **It does not filter the running pipeline.** No deployment, activation, historical processing, token reporting or Gemini behavior change is included.
+T1 provides the disabled-by-default title client/storage; T2 integrates reversible filtering into the Scraper job; T3 adds optional access, authorized manual forwarding and recorded API-attempt status. Relevant/doubtful titles and failures reach deep Gemini; unrelated articles remain stored and unanalysed, without a human review queue. No deployment, activation, historical title backfill or new token reporting is included. Cambio/Pro and Gaceta are unchanged.
 
 ## Configuration contract
 
@@ -16,7 +16,7 @@ Application code reads `services.deepseek_title_gate`, separate from `services.g
 
 `batch_size` is fixed at `1`. `DeepSeekTitleSettings::configured()` means enabled and structurally configured, **not API success**. Canonical decimal environment strings are accepted for integers; booleans, fractions, negatives and overflow are rejected. No health request is made.
 
-Activation remains unauthorized. The later integration must require a deliberate fixed boundary for new articles (`id > activationAfterId`). For example, boundary 100 must not classify article 100 or earlier. Do not automatically reset the boundary when workers restart. Reactivation needs an explicit boundary decision to avoid classifying historical/off-period backlog.
+Activation remains unauthorized. The integration requires a deliberate fixed boundary for new articles (`id > activationAfterId`). For example, boundary 100 must not classify article 100 or earlier. Do not automatically reset the boundary when workers restart. Reactivation needs an explicit boundary decision to avoid classifying historical/off-period backlog.
 
 ## Frozen client contract
 
@@ -39,16 +39,69 @@ TLS verification remains enabled, redirects are disabled, connect/request/read t
 
 ## Additive storage
 
-`TitleGateResult::toPersistenceAttributes()` returns only the seven `deepseek_title_*` fields, setting `deepseek_title_attempted_at` at mapping time. The caller owns persistence; the client does not write the database. Callers should map immediately after the attempt. The nullable fields are status, reason, evidence, error_code, attempted_at, model and prompt_version. Nullable `deepseek_bypass_at` is reserved for the later authorized bypass. The status index supports future pending/unsent queries.
+`TitleGateResult::toPersistenceAttributes()` returns only the seven `deepseek_title_*` fields, setting `deepseek_title_attempted_at` at mapping time. The caller owns persistence; the client does not write the database. Callers should map immediately after the attempt. The nullable fields are status, reason, evidence, error_code, attempted_at, model and prompt_version. Nullable `deepseek_bypass_at` records an authorized manual bypass. The status index supports pending/unsent queries.
 
 The migration adds no defaults, historical UPDATE or backfill. Existing manual/Gemini/persona state is untouched. Rollback of this migration removes only the newly added fields and their status index; it loses title-attempt history and is not the normal operational disable switch.
 
-## Deferred integration
+## T2 routing and pending work
 
-- **T2:** shared eligibility/count query, per-record locking, persist-before-Gemini retries, R/D/error → deep Gemini, retained unrelated articles, lexical-prefilter bypass only on agreed routes, legacy/disabled and Cambio/Gaceta preservation. No exactly-once guarantee across process death; queue lease/timeout still needs integration validation.
-- **T3:** authorized manual bypass, escaped unsent view, configuration and stored last-attempt health. A key alone must never be displayed as verified healthy.
-- **T4:** independent verification, broader regressions and activation/rollback review. Isolated SQLite evidence does not establish PostgreSQL production compatibility.
+`ResultadoScraping::pendienteAnalisisScraper()` is the shared job selection, self-chain and Scraper command-count scope:
+
+`gemini_analyzed = false AND (status IS NULL OR status != unrelated OR bypass_at IS NOT NULL)`.
+
+The OR is grouped. Existing archived, discarded and secondary pending articles are not newly excluded. The Pro command branch is untouched. The Resultados pending counter also uses this scope, retaining its existing non-discarded, non-archived and primary-only constraints.
+
+Inside each article lock, the gate re-reads eligibility and skips any row with `gemini_analyzed_at` already set, even if its boolean is false. It never resets existing analysis fields.
+
+| State after fresh read | Route |
+|---|---|
+| `deepseek_bypass_at` set | No title request; deep Gemini without lexical prefilter; keep the stored title decision |
+| Persisted `unrelated`, no bypass | Held, even when the title gate is disabled; no Gemini or manual/persona/discard/archive changes |
+| Persisted R/D/technical_error/invalid_response | Reuse decision; deep Gemini without lexical prefilter, regardless of current enable switch |
+| No decision, enabled, explicit valid boundary, ID greater than boundary | Classify once and persist title fields before deciding whether to call Gemini |
+| Disabled, ID equal to/below boundary, or missing/invalid boundary | Legacy Gemini path with its existing lexical prefilter; no title attempt |
+
+For example, boundary 100 classifies article 101 but not 100. An enabled gate with a valid boundary but a missing key persists `technical_error/not_configured` for new articles and goes directly to Gemini: invalid readiness must not silently reinstate the lexical prefilter. Missing/invalid activation is invalid configuration and makes no active title calls. Readiness does not prove API health.
+
+`GeminiFiltroService::analizarLote(Collection $records, bool $bypassLexicalPrefilter = false)` adds only an explicit lexical bypass. Existing callers retain the default. Deep prompts, PEP-only DTO filtering, thresholds, usage logging and result persistence remain unchanged; DeepSeek does not write Gemini usage logs. `ScraperTitleGate::process(int $id)` owns the locked route, including stored manual bypasses; the manual-send service authorizes and persists that marker before dispatch, without calling the title client again.
+
+## Concurrency and operational prerequisites
+
+- Every job-selected article, including legacy ones, uses `Cache::lock('scraper-title-gate:'.$id, $lease)`. Use a shared cache store with working atomic locks across workers; local array stores only demonstrate behavior in isolated tests.
+- The per-record lease is `max(360, 3 * titleTimeout + geminiTextTimeout + 60)` seconds: strictly above the existing job timeout of 300 seconds and a conservative title transport/deep-call budget. Gemini text transport uses `services.gemini.timeout` (default 45 seconds), one HTTP request and no internal retry; job retry/backoff remains unchanged. Keep configured HTTP budgets below the job timeout. The lease covers one record, not an entire batch.
+- Active gating with a valid boundary uses the fixed batch size of one, including missing-key fail-open cases. Disabled/missing-boundary paths retain the legacy cap of ten. Persisted decisions still govern those batches.
+- Busy locks skip network calls. Remaining eligible work self-chains using the existing Flash delay, with a minimum of one second to prevent immediate busy-lock loops. Lock-backend exceptions propagate normally; there is no unlocked fallback.
+- **Existing deployment prerequisite:** queue `retry_after` must exceed the job's 300-second timeout (the job documents 360 seconds). The database/Redis defaults in `config/queue.php` remain 90 seconds and are not repaired here. Verify the effective lease and worker timeout before any later activation; no queue/deployment settings were changed or inspected live.
+- No database transaction spans a network call. Normal retries reuse the persisted title decision. This is **not exactly-once execution across process death**: a crash after a provider response but before persistence can repeat that request; a crash during Gemini persistence can retain existing partial-write limitations. The manual bypass uses the same article mutex and a conditional state update.
+
+Operational disable affects only future unclassified articles: it neither releases stored unrelated decisions nor erases history. Reactivation requires an explicit boundary choice; do not automatically classify off-period backlog. The local verification record below covers the broader and PostgreSQL checks; any later deployment or activation requires separate authorization. Isolated SQLite evidence does not establish production compatibility.
+
+## Optional access and manual forwarding
+
+In Resultados Scraper, select **“No enviadas por DeepSeek”** (`filtroDeepSeek=held` in the URL). This shows unrelated, unanalysed articles without a bypass or analysis timestamp, including secondary sources. Only the implicit analyzed/primary defaults are lifted; explicit search, country, category, read, relevance, discard/archive and Gemini filters still intersect. Conflicting filters can therefore produce an empty list. The default view is unchanged, pagination resets when the option changes, and the existing export uses the same filtered query. This is optional access, not a required human-review queue. Reasons and evidence are escaped when rendered.
+
+**“Enviar a Gemini”** requires `gestionar resultados`, checked on the server as well as the button. The service validates the ID, requires enabled/configured Gemini, takes the same article lock, and conditionally sets only `deepseek_bypass_at` for an eligible held article. It preserves the title decision, manual flags, analysis data and personas. Repeated clicks, already-analyzed/ineligible articles and busy locks cannot schedule a second bypass. A busy article can be retried later; unavailable Gemini leaves it unchanged.
+
+A successful action reports **“Análisis programado en Gemini; se procesará con los pendientes.”** This schedules the existing global Scraper job, not an immediate analysis or guaranteed priority. If dispatch fails, the marker stays durable and the UI reports that scheduling failed; the existing periodic scanner can recover the now-eligible article. Recovery depends on that scanner and the queue operating normally. Manual forwarding skips both another DeepSeek request and the lexical prefilter, but retains Gemini's PEP-only analysis and confidence thresholds.
+
+## Recorded API status
+
+The DeepSeek indicator separates disabled/not-configured/ready configuration from persisted attempt history. **“Configuración lista (no prueba disponibilidad actual)”** never means a successful live health check. With valid configuration but no recorded attempts it shows **“Configurada; aún sin llamadas verificadas”**.
+
+The latest recorded attempt determines **“Última llamada validada”**, **“Último intento fallido”**, or unknown status. A malformed response is labeled **“Respuesta no válida.”** The most recent validated-call timestamp is shown separately as historical evidence, so an older success cannot mask a newer failure. Attempt timestamps reflect DTO persistence mapping, not a live probe. No HTTP request, credential, raw provider error or new token statistic enters this UI; existing shared Gemini telemetry remains unchanged.
 
 ## Offline verification
 
 The task-owned `.scratch/deepseek-gate-tests/check.py` creates immutable named source snapshots and verifies main-checkout Composer lock/package compatibility before mounting vendor read-only. Receipts include commands, manifest hashes, outputs and exit codes. Docker runs without networking, with read-only mounts, non-root UID/GID 999, sanitized environment and tmpfs runtime paths. A guard proves effective SQLite `:memory:` configuration and PDO target before migrations. No host environment files, cached application configuration or storage database is copied. RED snapshots intentionally lack the implementation; GREEN and regression snapshots must match the reviewed source hashes.
+
+## Verification record (local, not deployment approval)
+
+- Full PHP 8.5.12/SQLite suite with real Vite assets: **1482 tests, 4619 assertions, zero errors/failures**, exit 0. **81 tests skipped and one incomplete** remain explicit: PostgreSQL-only checks and opt-in PEP directory/interpreter checks were not enabled; the incomplete assertion concerns an existing PostgreSQL partial index. This is not an all-tests-executed claim.
+- PHP 8.5.12/PostgreSQL 17 focused regressions: **267 tests, 1267 assertions**, exit 0. Separate guarded disposable databases verified historical migration preservation and actual two-process contention using the database cache lock. This does not prove concurrent manual bypass or exactly-once execution after process death.
+- PHP 8.4.25/SQLite: **266 tests, 1221 assertions**, exit 0, before the added compatibility test. No combined PHP 8.4/PostgreSQL execution is claimed.
+- PostgreSQL differential against base `3215bfb4f2fb2d404da1964471e5c85264ab03dd`: exact matched observable outputs and empty scenario stderr for the sibling Pro command, disabled/legacy Flash commands, ten successful deep calls and ordered usage rows, configured 17-second self-chain delay, default query IDs and CSV export.
+- Frontend dependencies were installed from the unchanged lockfile in a new isolated directory, without lifecycle scripts. Native build dependencies were checked offline, then actual Vite assets were built offline. Existing dependencies and application files were not changed. This proves the build and server-side render tests, not browser visual/E2E behavior.
+
+Evidence remains under `.scratch/deepseek-gate-tests/`: `t4-r7-run-receipt.json` and its raw full-suite/build outputs, R2 PostgreSQL receipts, and R4 differential receipts. Earlier failed attempts are retained: missing assets/fixture, harness isolation/capture errors and mismatched local dependencies were not silently reported as successful. R7 resolved the complete-suite asset prerequisite; earlier partial evidence remains distinguishable.
+
+Live provider accuracy, production cache/queue configuration, actual activation boundaries, concurrent manual bypass and browser behavior remain outside this local verification. No live provider request, production migration, deployment, publication or activation was performed. Before any later deployment, verify shared atomic cache locks and effective queue `retry_after > 300`; before activation, explicitly choose the new-article boundary.

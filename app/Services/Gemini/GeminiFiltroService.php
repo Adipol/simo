@@ -27,7 +27,7 @@ class GeminiFiltroService
         private NombreNormalizadorInterface $normalizador = new NombreNormalizador,
     ) {}
 
-    public function analizarLote(Collection $records): void
+    public function analizarLote(Collection $records, bool $bypassLexicalPrefilter = false): void
     {
         foreach ($records as $record) {
             // Idempotency guard: skip already-analyzed records.
@@ -35,13 +35,13 @@ class GeminiFiltroService
                 continue;
             }
 
-            $this->procesarRegistro($record);
+            $this->procesarRegistro($record, $bypassLexicalPrefilter);
         }
     }
 
-    private function procesarRegistro(ResultadoScraping $record): void
+    private function procesarRegistro(ResultadoScraping $record, bool $bypassLexicalPrefilter = false): void
     {
-        if (! $this->preFiltro->shouldAnalyzeWithGemini($record)) {
+        if (! $bypassLexicalPrefilter && ! $this->preFiltro->shouldAnalyzeWithGemini($record)) {
             $record->update([
                 'gemini_analyzed' => true,
                 'gemini_analyzed_at' => now(),

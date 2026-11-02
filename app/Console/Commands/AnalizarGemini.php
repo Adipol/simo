@@ -30,7 +30,7 @@ class AnalizarGemini extends Command
         $proOnly = $this->option('pro-only');
 
         if (! $proOnly) {
-            $flashPending = ResultadoScraping::where('gemini_analyzed', false)->count();
+            $flashPending = ResultadoScraping::pendienteAnalisisScraper()->count();
             $this->line("Flash: {$flashPending} pendientes");
 
             if ($flashPending > 0) {
