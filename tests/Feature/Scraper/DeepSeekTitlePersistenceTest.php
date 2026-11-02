@@ -17,11 +17,17 @@ class DeepSeekTitlePersistenceTest extends TestCase
 
     public function test_additive_migration_leaves_existing_article_untouched(): void
     {
+        // Exercise the CI configuration explicitly rather than relying on ambient flags.
+        config(['services.gemini.enabled' => true, 'queue.default' => 'sync']);
+        Http::preventStrayRequests();
         $files = glob(database_path('migrations/*_add_deepseek_title_gate_to_resultados_scraping.php'));
         $this->assertCount(1, $files, 'The additive title-gate migration must exist.');
         $migration = require $files[0];
         $migration->down();
-        $record = ResultadoScraping::factory()->create(['notas' => 'Conservar']);
+        // Historical fixture creation must not run current-schema observers.
+        $record = ResultadoScraping::withoutEvents(
+            fn (): ResultadoScraping => ResultadoScraping::factory()->create(['notas' => 'Conservar']),
+        );
         $before = $record->fresh()->getRawOriginal();
         $migration->up();
         $after = $record->fresh()->getRawOriginal();
