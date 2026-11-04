@@ -85,7 +85,7 @@
 
         {{-- Footer del panel --}}
         <div class="relative z-10">
-            <p class="text-white/20 text-xs">© {{ date('Y') }} SIMO. Uso interno.</p>
+            <p class="text-white/20 text-xs">© {{ date('Y') }} SIMO. Powered by jeat</p>
         </div>
     </div>
 
